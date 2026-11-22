@@ -62,21 +62,48 @@ lighter :: (colour: Draw.RGBA, by: f32 -> Draw.RGBA) #pure {
 // Fonts
 
 Fonts :: struct {
-    life:   Draw.Font            // the life totals
-    small:  Draw.Font            // commander damage, the capsule's count
-    label:  Draw.Font            // the number grid's buttons
-    output: Draw.Font            // the number grid's number
-    icon:   Draw.Font            // Mana's, for the damage icon
+    life:      Draw.Font         // the life totals
+    life_size: i32               // ...its size
+    small:     Draw.Font         // commander damage
+    label:     Draw.Font         // the number grid's buttons
+    output:    Draw.Font         // the number grid's number
+    icon:      Draw.Font         // Mana's, for the damage icon
+}
+
+// How many steps of size a cell has for the life totals: the size moves in
+// these as a line's end is dragged, so only a few sizes' glyphs are ever
+// drawn (each size's are kept for good once drawn).
+LIFE_STEPS :: 8
+
+// The life totals' size for a layout: as big as the smallest part has room
+// for (every part's the same), from 1 to 6 cells, in steps of an eighth of
+// a cell.
+life_size_of :: (layout: Layout -> i32) #pure {
+    cell := cell_of(layout)
+    *room: f32 = 1e30
+    for seat: layout.seats[:layout.count] { room = Math.min(room, seat.room) }
+    wanted := Math.clamp(room * 1.15, cell, 6 * cell)
+    step := cell / LIFE_STEPS
+    return i32'Math.round(Math.round(wanted / step) * step)
+}
+
+// The life totals' font made again, if the layout wants another size: as a
+// line's end is dragged, each frame.
+resize_life :: (fonts: *Fonts, family: string, layout: Layout) [os_error: Draw.Draw_Error] {
+    size := life_size_of(layout)
+    if size == fonts.life_size then return
+    fonts.life.destroy()
+    if big := Draw.load_font(family, size, 500) { fonts.life = big } else if os_error { fail: os_error }
+    fonts.life_size = size
 }
 
 // The fonts for a layout, the text in a family.
 load_fonts :: (family: string, layout: Layout -> fonts: Fonts) [os_error: Draw.Draw_Error] {
     fonts = ⟨⟩
     cell := cell_of(layout)
-    *room: f32 = 1e30
-    for seat: layout.seats[:layout.count] { room = Math.min(room, seat.room) }
-    life := i32'Math.clamp(room * 1.15, cell, 6 * cell)
+    life := life_size_of(layout)
     if big := Draw.load_font(family, life, 500) { fonts.life = big } else if os_error { fail: os_error }
+    fonts.life_size = life
     if small := Draw.load_font(family, i32'(cell * 0.42), 600) { fonts.small = small } else if os_error { fail: os_error }
     if label := Draw.load_font(family, i32'(cell * 0.45), 500) { fonts.label = label } else if os_error { fail: os_error }
     if output := Draw.load_font(family, i32'(cell * 0.8), 500) { fonts.output = output } else if os_error { fail: os_error }
@@ -689,6 +716,8 @@ main :: (args: [] string) [failed: string] {
         if screen.moving_end >= 0 {
             splits[game.players].move_split(screen.moving_end, share_at(size, mouse))
             layout = lay_out(size, splits[game.players])
+            // (the life totals sized to the parts as they move)
+            if fonts.resize_life(TEXT_FAMILIES[family], layout) is os_error then fail: failed = "no font: «os_error»"
         }
         if w.mouse.buttons[.LEFT].RELEASED {
             if screen.drag.active {
@@ -705,8 +734,6 @@ main :: (args: [] string) [failed: string] {
             }
             if screen.moving_end >= 0 {
                 screen.moving_end = -1
-                // (the parts' sizes changed, so the life totals' too)
-                if fonts.reload_fonts(TEXT_FAMILIES[family], layout) is os_error then fail: failed = "no font: «os_error»"
                 if Defaults.set(`scratch "splits.«game.players»", splits[game.players]) is os_error { }
             }
             if screen.counts.open and screen.counts.held {

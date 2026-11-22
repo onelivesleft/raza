@@ -95,6 +95,23 @@ dragged_ends_stay_between :: () #test {
     assert(!splits_fit(Splits⟨⟩, 4), "none aren't any count's")
 }
 
+// The life totals' size follows the smallest part as a line's end is
+// dragged: smaller as a part's squeezed, and always a whole step of a cell.
+life_size_follows_the_parts :: () #test {
+    *splits := equal_splits(4, LANDSCAPE)
+    before := lay_out(LANDSCAPE, splits)
+    step := cell_of(before) / LIFE_STEPS
+    start := life_size_of(before)
+    // (the right part, one of the two smallest, squeezed to half its edge)
+    splits.move_split(0, splits.at[0] + 0.1)
+    after := life_size_of(lay_out(LANDSCAPE, splits))
+    assert(after < start, "a squeezed part's life is smaller: «start», then «after»")
+    for size: [2] i32⟨start, after⟩ {
+        nearest := Math.round(f32'size / step) * step
+        assert(Math.abs(f32'size - nearest) <= 0.5, "«size» is a whole number of steps of «step», to the pixel")
+    }
+}
+
 // Each damage icon is in its own part, and away from the capsule.
 icons_are_in_their_parts :: () #test {
     for players: 2 <= MAX_PLAYERS {
