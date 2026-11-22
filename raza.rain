@@ -8,7 +8,7 @@
 // each: touched, the other counts show above and below it, to drag to for
 // a new game), and will hold the settings; the corner button switches the
 // text between Crimson Pro and EB Garamond. The game, the font and each
-// count's lines are kept from one run to the next (Stored's, the registry's).
+// count's lines are kept from one run to the next (Defaults', the registry's).
 //
 //     rain -run raza.rain
 
@@ -22,7 +22,7 @@ Raza :: program {
 #import System
 #import Wide
 #import Arguments
-#import Stored
+#import Defaults
 
 #include "layout.rain"
 #include "game.rain"
@@ -590,14 +590,14 @@ main :: (args: [] string) [failed: string] {
     if c := Draw.create_canvas(w.size, w.handle) { canvas = c } else if os_error { fail: failed = "no canvas: «os_error»" }
 
     // The game, the font and each count of players' lines (splits[n] for n
-    // players), as they were left last time (Stored's: the registry's), or
+    // players), as they were left last time (Defaults': the registry's), or
     // a new game of four, Crimson Pro, and lines as equal_splits starts them.
-    *game := Stored.get("game", new_game(4))
+    *game := Defaults.get("game", new_game(4))
     if game.players < 2 or game.players > MAX_PLAYERS then game = new_game(4)
     *history: [..] Game
-    *family := Math.clamp(Stored.get("font", i64'0), 0, 1)
+    *family := Math.clamp(Defaults.get("font", i64'0), 0, 1)
     *splits: [MAX_PLAYERS + 1] Splits
-    for n: 2 <= MAX_PLAYERS { splits[n] = Stored.get(`scratch "splits.«n»", Splits⟨⟩) }
+    for n: 2 <= MAX_PLAYERS { splits[n] = Defaults.get(`scratch "splits.«n»", Splits⟨⟩) }
     // (what was last stored, to store again only what's changed)
     *stored_game := game
     *stored_family := family
@@ -707,7 +707,7 @@ main :: (args: [] string) [failed: string] {
                 screen.moving_end = -1
                 // (the parts' sizes changed, so the life totals' too)
                 if fonts.reload_fonts(TEXT_FAMILIES[family], layout) is os_error then fail: failed = "no font: «os_error»"
-                if Stored.set(`scratch "splits.«game.players»", splits[game.players]) is os_error { }
+                if Defaults.set(`scratch "splits.«game.players»", splits[game.players]) is os_error { }
             }
             if screen.counts.open and screen.counts.held {
                 screen.counts.held = false
@@ -727,11 +727,11 @@ main :: (args: [] string) [failed: string] {
 
         // What changed this frame, stored (a failure to store isn't the game's).
         if game != stored_game {
-            if Stored.set("game", game) is os_error { }
+            if Defaults.set("game", game) is os_error { }
             stored_game = game
         }
         if family != stored_family {
-            if Stored.set("font", family) is os_error { }
+            if Defaults.set("font", family) is os_error { }
             stored_family = family
         }
 
