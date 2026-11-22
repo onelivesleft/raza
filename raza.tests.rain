@@ -7,6 +7,11 @@ near_point :: (a: V2, b: V2 -> bool) {
     return Math.length(a - b) < 0.5
 }
 
+// A count of players laid out as they start.
+laid_out :: (players: i64, size: V2 -> Layout) {
+    return lay_out(size, equal_splits(players, size))
+}
+
 // Every point of the screen is in one part, and one only.
 covers_the_screen_once :: (layout: Layout) {
     for y: 0 < 24 {
@@ -21,32 +26,45 @@ covers_the_screen_once :: (layout: Layout) {
 
 lays_out_every_count :: () #test {
     for players: 2 <= MAX_PLAYERS {
-        covers_the_screen_once(lay_out(players, LANDSCAPE))
-        covers_the_screen_once(lay_out(players, PORTRAIT))
+        covers_the_screen_once(laid_out(players, LANDSCAPE))
+        covers_the_screen_once(laid_out(players, PORTRAIT))
+    }
+}
+
+// As they start, every part has the same area, at every count, either way up.
+parts_start_equal :: () #test {
+    for players: 2 <= MAX_PLAYERS {
+        for size: [2] V2⟨LANDSCAPE, PORTRAIT⟩ {
+            layout := laid_out(players, size)
+            each := size.x * size.y / f32'players
+            for seat, k: layout.seats[:players] {
+                area := area_of(seat.outline[:seat.count])
+                assert(Math.abs(area - each) < each * 0.005, "«players» players on «size»: part «k» is «area», not «each»")
+            }
+        }
     }
 }
 
 // Two players have the halves, top and bottom, each facing its own side.
 two_have_the_halves :: () #test {
-    layout := lay_out(2, PORTRAIT)
+    layout := laid_out(2, PORTRAIT)
     sides := [2] Side⟨layout.seats[0].side, layout.seats[1].side⟩
     assert(sides[0] == .BOTTOM and sides[1] == .TOP, "«sides»")
     assert(near_point(layout.ends[0], ⟨1440, 1080⟩) and near_point(layout.ends[1], ⟨0, 1080⟩), "«layout.ends[:2]»")
     assert(layout.seats[1].angle == f32'Math.PI, "the top's text is upside down")
 }
 
-// Three players: lines to the bottom corners and up to the top's middle.
-three_meet_the_bottom_corners :: () #test {
-    layout := lay_out(3, LANDSCAPE)
+// Three players: a line up to the top's middle, the others equal from it.
+three_start_from_the_top :: () #test {
+    layout := laid_out(3, LANDSCAPE)
     assert(near_point(layout.ends[0], ⟨1080, 0⟩), "up to the top's middle: «layout.ends[0]»")
-    assert(near_point(layout.ends[1], ⟨2160, 1440⟩) and near_point(layout.ends[2], ⟨0, 1440⟩), "to the bottom corners: «layout.ends[:3]»")
     sides := [3] Side⟨layout.seats[0].side, layout.seats[1].side, layout.seats[2].side⟩
     assert(sides[0] == .RIGHT and sides[1] == .BOTTOM and sides[2] == .LEFT, "«sides»")
 }
 
 // Four players: an X between the corners, one at each side.
 four_are_an_x :: () #test {
-    layout := lay_out(4, LANDSCAPE)
+    layout := laid_out(4, LANDSCAPE)
     for end: layout.ends[:4] {
         at_corner := (Math.abs(end.x) < 0.5 or Math.abs(end.x - 2160) < 0.5) and (Math.abs(end.y) < 0.5 or Math.abs(end.y - 1440) < 0.5)
         assert(at_corner, "«end» is a corner")
@@ -56,17 +74,54 @@ four_are_an_x :: () #test {
     assert(seen[0] and seen[1] and seen[2] and seen[3], "one at each side")
 }
 
+// The edge's shares go round and back: a point of the edge is the share
+// it's at, and a point inside is the nearest side's.
+shares_go_round :: () #test {
+    for share: [7] f32⟨0, 0.1, 0.3, 0.45, 0.62, 0.8, 0.99⟩ {
+        back := share_at(LANDSCAPE, edge_at(LANDSCAPE, share))
+        assert(Math.abs(back - share) < 0.0001, "«share» back as «back»")
+    }
+    assert(near_point(edge_at(LANDSCAPE, share_at(LANDSCAPE, ⟨2100, 700⟩)), ⟨2160, 700⟩), "nearest the right")
+}
+
+// A line's end dragged past its neighbour stops short of it.
+dragged_ends_stay_between :: () #test {
+    *splits := equal_splits(4, LANDSCAPE)
+    next := splits.at[1]
+    splits.move_split(0, next + 0.1)
+    assert(splits_fit(splits, 4), "still in order: «splits.at[:4]»")
+    assert(Math.abs(wrapped_share(next - splits.at[0]) - LEAST_SPLIT) < 0.0001, "stopped LEAST_SPLIT short: «splits.at[0]»")
+    assert(!splits_fit(splits, 5), "they're four players' lines, not five's")
+    assert(!splits_fit(Splits⟨⟩, 4), "none aren't any count's")
+}
+
 // Each damage icon is in its own part, and away from the capsule.
 icons_are_in_their_parts :: () #test {
     for players: 2 <= MAX_PLAYERS {
-        layout := lay_out(players, LANDSCAPE)
+        layout := laid_out(players, LANDSCAPE)
         for seat, k: layout.seats[:players] {
             if at := seat_at(layout, seat.icon) { assert(at == k, "«players» players: «k»'s icon is in «at»'s part") }
             else if absent { assert(false, "«players» players: «k»'s icon is off the screen") }
-            if part := capsule_part_at(layout, seat.icon) is not absent {
+            if part := capsule_part_at(layout, seat.icon, players) is not absent {
                 assert(false, "«players» players: «k»'s icon is under the capsule's «part»")
             }
         }
+    }
+}
+
+// The other counts' rows are each found where they're drawn, the current
+// count has none, and they're clear of the screen's edge.
+counts_are_where_drawn :: () #test {
+    layout := laid_out(4, LANDSCAPE)
+    for count: 2 <= MAX_PLAYERS {
+        row := count_row(layout, 4, count)
+        if count == 4 {
+            if at := count_at(layout, 4, row) is not absent then assert(false, "the current count's no row, but «at»'s is there")
+            continue
+        }
+        if at := count_at(layout, 4, row) { assert(at == count, "«count»'s row is «at»'s") }
+        else if absent { assert(false, "«count»'s row isn't found") }
+        assert(row.y > 0 and row.y < LANDSCAPE.y, "«count»'s row is on the screen")
     }
 }
 
@@ -95,7 +150,7 @@ drags_grow_then_ask :: () #test {
 // A drag aimed half way into another part does some damage there; one
 // into its own part, or off the board, misses.
 aims_at_other_parts :: () #test {
-    layout := lay_out(4, LANDSCAPE)
+    layout := laid_out(4, LANDSCAPE)
     game := new_game(4)
     target := layout.seats[0]
     if to, amount := aim(layout, game, 1, target.middle) {

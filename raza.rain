@@ -2,10 +2,13 @@
 // table. Each player has a part of the screen, their life total in it
 // facing them, and a damage icon toward the centre: dragged into another
 // player's part, it deals that player commander damage, more the further it
-// goes (up to 20, then a number to pick, 21 to start with). The capsule in
-// the middle changes how many play (2 to 6, a new game), undoes, and will
-// hold the settings; the corner button switches the text between Crimson
-// Pro and EB Garamond.
+// goes (up to 20, then a number to pick, 21 to start with). The parts start
+// equal in area, and a line between two is moved by dragging its end along
+// the edge. The capsule in the middle undoes, shows how many play (a person
+// each: touched, the other counts show above and below it, to drag to for
+// a new game), and will hold the settings; the corner button switches the
+// text between Crimson Pro and EB Garamond. The game, the font and each
+// count's lines are kept from one run to the next (Stored's, the registry's).
 //
 //     rain -run raza.rain
 
@@ -19,6 +22,7 @@ Raza :: program {
 #import System
 #import Wide
 #import Arguments
+#import Stored
 
 #include "layout.rain"
 #include "game.rain"
@@ -193,21 +197,70 @@ picker_part_at :: (layout: Layout, picker: Picker, at: V2 -> Picker_Part) #pure 
 // The capsule in the middle, and the font button in the corner
 
 Capsule_Part :: enum u8 {
-    PLAYERS
     UNDO
+    PLAYERS
     SETTINGS
 }
 
-capsule_centre :: (layout: Layout, part: Capsule_Part -> V2) #pure {
+// A person a player is shown as (in cells), and how far apart a row of
+// them are.
+PERSON_STEP :: 0.28
+
+// How wide a row of people is, in cells.
+people_width :: (players: i64 -> f32) #pure {
+    return f32'players * PERSON_STEP
+}
+
+// How wide the players' button is, in cells: its people, with room round them.
+players_width :: (players: i64 -> f32) #pure {
+    return Math.max(people_width(players) + 0.4, 1)
+}
+
+// The capsule's buttons' middles, in a row at the screen's centre: undo,
+// the players (as wide as its people), settings.
+capsule_centre :: (layout: Layout, part: Capsule_Part, players: i64 -> V2) #pure {
     cell := cell_of(layout)
-    return layout.centre + V2⟨(f32'i64'part - 1) * 1.2 * cell, 0⟩
+    half := players_width(players) / 2
+    offset: f32 = if part is { case .UNDO: -(half + 0.6); case .PLAYERS: 0; case .SETTINGS: half + 0.6 }
+    return layout.centre + V2⟨offset * cell, 0⟩
+}
+
+// The capsule's half width, in cells.
+capsule_half_width :: (players: i64 -> f32) #pure {
+    return players_width(players) / 2 + 1.25
 }
 
 // The capsule's button at a point, or absent.
-capsule_part_at :: (layout: Layout, at: V2 -> Capsule_Part) [absent] {
+capsule_part_at :: (layout: Layout, at: V2, players: i64 -> Capsule_Part) [absent] {
     cell := cell_of(layout)
-    for part: [3] Capsule_Part⟨.PLAYERS, .UNDO, .SETTINGS⟩ {
-        if Math.length(at - capsule_centre(layout, part)) <= 0.55 * cell then return part
+    for part: [3] Capsule_Part⟨.UNDO, .PLAYERS, .SETTINGS⟩ {
+        centre := capsule_centre(layout, part, players)
+        half_width := if part == .PLAYERS then players_width(players) / 2 else 0.5
+        if Math.abs(at.x - centre.x) <= half_width * cell and Math.abs(at.y - centre.y) <= 0.6 * cell then return part
+    }
+    fail: absent
+}
+
+// The count of players picked from: touched, the players' button shows
+// each other count above or below it (fewer above), to drag to and let go
+// on; let go on the button itself, it stays open for a second touch.
+Count_Picker :: struct {
+    open: bool
+    held: bool               // the button's down since it opened
+}
+
+// Where a count's row is, beside the current count's (the button's).
+count_row :: (layout: Layout, players: i64, count: i64 -> V2) #pure {
+    return capsule_centre(layout, .PLAYERS, players) + V2⟨0, f32'(count - players) * 1.1 * cell_of(layout)⟩
+}
+
+// The count whose row a point is on, other than the current, or absent.
+count_at :: (layout: Layout, players: i64, at: V2 -> i64) [absent] {
+    cell := cell_of(layout)
+    for count: 2 <= MAX_PLAYERS {
+        if count == players then continue
+        row := count_row(layout, players, count)
+        if Math.abs(at.x - row.x) <= players_width(count) / 2 * cell and Math.abs(at.y - row.y) <= 0.55 * cell then return count
     }
     fail: absent
 }
@@ -342,18 +395,32 @@ draw_picker :: (canvas: *Draw.Canvas, layout: Layout, fonts: Fonts, picker: Pick
     canvas.draw_line(placed(origin, angle, cross + V2⟨-s, s⟩), placed(origin, angle, cross + V2⟨s, -s⟩), stroke, INK)
 }
 
-draw_capsule :: (canvas: *Draw.Canvas, layout: Layout, game: Game, fonts: Fonts, can_undo: bool) {
+// A row of people, a count of them, centred on a point.
+draw_people :: (canvas: *Draw.Canvas, centre: V2, count: i64, cell: f32, colour: Draw.RGBA) {
+    left := centre.x - people_width(count) / 2 * cell
+    for i: 0 < count {
+        x := left + (f32'i + 0.5) * PERSON_STEP * cell
+        // (a head, and shoulders: a pill wider than it's tall)
+        canvas.fill_circle(V2⟨x, centre.y - 0.11 * cell⟩, 0.065 * cell, colour)
+        canvas.fill_rounded_rect(V2⟨x - 0.11 * cell, centre.y - 0.01 * cell⟩, V2⟨0.22 * cell, 0.15 * cell⟩, 0.075 * cell, colour)
+    }
+}
+
+draw_capsule :: (canvas: *Draw.Canvas, layout: Layout, game: Game, screen: Screen_State) {
     cell := cell_of(layout)
     c := layout.centre
-    canvas.fill_rounded_rect(c - V2⟨1.85 * cell, 0.6 * cell⟩, V2⟨3.7 * cell, 1.2 * cell⟩, 0.6 * cell, CAPSULE)
-    // The players: a person and how many.
-    p := capsule_centre(layout, .PLAYERS)
-    canvas.fill_circle(p + V2⟨-0.2 * cell, -0.16 * cell⟩, 0.11 * cell, INK)
-    canvas.fill_rounded_rect(p + V2⟨-0.36 * cell, -0.01 * cell⟩, V2⟨0.32 * cell, 0.24 * cell⟩, 0.1 * cell, INK)
-    draw_centred(canvas, fonts.small, p + V2⟨0.16 * cell, 0⟩, 0, "«game.players»", INK)
+    half := capsule_half_width(game.players) * cell
+    canvas.fill_rounded_rect(c - V2⟨half, 0.6 * cell⟩, V2⟨2 * half, 1.2 * cell⟩, 0.6 * cell, CAPSULE)
+    // The players: a person each.
+    p := capsule_centre(layout, .PLAYERS, game.players)
+    if screen.counts.open {
+        width := players_width(game.players) * cell
+        canvas.fill_rounded_rect(p - V2⟨width / 2, 0.5 * cell⟩, V2⟨width, cell⟩, 0.5 * cell, lighter(CAPSULE, 0.12))
+    }
+    draw_people(canvas, p, game.players, cell, INK)
     // Undo: an arrow round to the left.
-    u := capsule_centre(layout, .UNDO)
-    undo_ink := if can_undo then INK else lighter(CAPSULE, 0.25)
+    u := capsule_centre(layout, .UNDO, game.players)
+    undo_ink := if screen.can_undo then INK else lighter(CAPSULE, 0.25)
     r := 0.22 * cell
     stroke := 0.09 * cell
     half_pi := f32'Math.PI / 2
@@ -366,7 +433,7 @@ draw_capsule :: (canvas: *Draw.Canvas, layout: Layout, game: Game, fonts: Fonts,
     head := u + V2⟨-r, 0⟩
     canvas.fill_polygon(⟨head + V2⟨-0.13 * cell, -0.02 * cell⟩, head + V2⟨0.13 * cell, -0.02 * cell⟩, head + V2⟨0, 0.15 * cell⟩⟩, undo_ink)
     // Settings (to come): a gear, faded.
-    g := capsule_centre(layout, .SETTINGS)
+    g := capsule_centre(layout, .SETTINGS, game.players)
     gear := lighter(CAPSULE, 0.3)
     for i: 0 < 8 {
         a := f32'i / 8 * 4 * half_pi
@@ -383,19 +450,55 @@ draw_font_button :: (canvas: *Draw.Canvas, layout: Layout, fonts: Fonts) {
     draw_centred(canvas, fonts.label, at + size / 2, 0, "Aa", INK)
 }
 
-draw :: (canvas: *Draw.Canvas, layout: Layout, game: Game, fonts: Fonts, drag: Drag, picker: Picker, mouse: V2, can_undo: bool) {
+// The other counts of players, a row each above or below the capsule's
+// (fewer above), the one under the finger lit.
+draw_counts :: (canvas: *Draw.Canvas, layout: Layout, game: Game, screen: Screen_State) {
+    cell := cell_of(layout)
+    *hovered: i64 = 0
+    if at := count_at(layout, game.players, screen.mouse) is not absent then hovered = at
+    for count: 2 <= MAX_PLAYERS {
+        if count == game.players then continue
+        row := count_row(layout, game.players, count)
+        width := players_width(count) * cell
+        fill := if count == hovered then lighter(CAPSULE, 0.3) else CAPSULE
+        canvas.fill_rounded_rect(row - V2⟨width / 2, 0.5 * cell⟩, V2⟨width, cell⟩, 0.5 * cell, fill)
+        draw_people(canvas, row, count, cell, INK)
+    }
+}
+
+// What's happening on the screen besides the game: what's being dragged,
+// and what's open.
+Screen_State :: struct {
+    drag:       Drag
+    picker:     Picker
+    counts:     Count_Picker
+    moving_end: i64 = -1         // the line whose end is being dragged along the edge
+    mouse:      V2
+    can_undo:   bool
+}
+
+draw :: (canvas: *Draw.Canvas, layout: Layout, game: Game, fonts: Fonts, screen: Screen_State) {
+    cell := cell_of(layout)
     canvas.clear(BACKGROUND)
     *targeted: i64 = -1
-    if drag.active {
-        if to, _ := aim(layout, game, drag.from, mouse) is not missed then targeted = to
+    if screen.drag.active {
+        if to, _ := aim(layout, game, screen.drag.from, screen.mouse) is not missed then targeted = to
     }
     for k: 0 < layout.count { draw_seat(canvas, layout, game, fonts, k, k == targeted) }
-    // The lines between the parts.
-    for end: layout.ends[:layout.count] { canvas.draw_line(layout.centre, end, 5, BACKGROUND) }
-    draw_capsule(canvas, layout, game, fonts, can_undo)
+    // The lines between the parts, and a handle at each's end to move it by.
+    for end, k: layout.ends[:layout.count] {
+        moving := k == screen.moving_end
+        width: f32 = if moving then 9 else 5
+        line := if moving then INK else BACKGROUND
+        handle := if moving then INK else lighter(BACKGROUND, 0.12)
+        canvas.draw_line(layout.centre, end, width, line)
+        canvas.fill_circle(end, 0.22 * cell, handle)
+    }
+    draw_capsule(canvas, layout, game, screen)
     draw_font_button(canvas, layout, fonts)
-    if drag.active then draw_drag(canvas, layout, game, fonts, drag, mouse)
-    if picker.open then draw_picker(canvas, layout, fonts, picker)
+    if screen.counts.open then draw_counts(canvas, layout, game, screen)
+    if screen.drag.active then draw_drag(canvas, layout, game, fonts, screen.drag, screen.mouse)
+    if screen.picker.open then draw_picker(canvas, layout, fonts, screen.picker)
 }
 
 ////////////////////////////////
@@ -425,7 +528,8 @@ save_snapshots :: (folder: string) [failed: string] {
         if c := Draw.create_canvas(size) { canvas = c } else if os_error { fail: failed = "no canvas: «os_error»" }
         defer canvas.destroy()
         game := sample_game(counts[i])
-        layout := lay_out(game.players, V2⟨f32'size[0], f32'size[1]⟩)
+        screen_size := V2⟨f32'size[0], f32'size[1]⟩
+        layout := lay_out(screen_size, equal_splits(game.players, screen_size))
         *fonts: Fonts
         if fonts.reload_fonts(TEXT_FAMILIES[i % 2], layout) is os_error then fail: failed = "no font: «os_error»"
         // Half way from where the line comes into the first's part to its
@@ -434,14 +538,18 @@ save_snapshots :: (folder: string) [failed: string] {
         entry := entry_point(layout.seats[1].icon, target.middle, target.outline[:target.count])
         inner := Math.dot(entry - layout.centre, target.toward)
         finger := entry + target.toward * (target.reach - inner) * 0.5
-        draw(canvas, layout, game, fonts, ⟨true, 1⟩, ⟨⟩, finger, true)
+        draw(canvas, layout, game, fonts, ⟨drag: ⟨true, 1⟩, mouse: finger, can_undo: true⟩)
         path := `scratch "«folder»/«names[i]».png"
         if canvas.save_png(path) is os_error then fail: failed = "can't write «path»: «os_error»"
         if counts[i] == 4 {
             picker := Picker⟨true, 1, 0, DEFAULT_PICKED / 10, DEFAULT_PICKED % 10⟩
-            draw(canvas, layout, game, fonts, ⟨⟩, picker, finger, true)
+            draw(canvas, layout, game, fonts, ⟨picker: picker, mouse: finger, can_undo: true⟩)
             grid_path := `scratch "«folder»/raza_grid.png"
             if canvas.save_png(grid_path) is os_error then fail: failed = "can't write «grid_path»: «os_error»"
+            // The counts open, the finger on six's row.
+            draw(canvas, layout, game, fonts, ⟨counts: ⟨true, true⟩, mouse: count_row(layout, 4, 6), can_undo: true⟩)
+            counts_path := `scratch "«folder»/raza_counts.png"
+            if canvas.save_png(counts_path) is os_error then fail: failed = "can't write «counts_path»: «os_error»"
         }
     }
 }
@@ -481,92 +589,157 @@ main :: (args: [] string) [failed: string] {
     *canvas: Draw.Canvas
     if c := Draw.create_canvas(w.size, w.handle) { canvas = c } else if os_error { fail: failed = "no canvas: «os_error»" }
 
-    *game := new_game(4)
+    // The game, the font and each count of players' lines (splits[n] for n
+    // players), as they were left last time (Stored's: the registry's), or
+    // a new game of four, Crimson Pro, and lines as equal_splits starts them.
+    *game := Stored.get("game", new_game(4))
+    if game.players < 2 or game.players > MAX_PLAYERS then game = new_game(4)
     *history: [..] Game
-    *family: i64 = 0
-    *layout := lay_out(game.players, V2⟨f32'w.size[0], f32'w.size[1]⟩)
+    *family := Math.clamp(Stored.get("font", i64'0), 0, 1)
+    *splits: [MAX_PLAYERS + 1] Splits
+    for n: 2 <= MAX_PLAYERS { splits[n] = Stored.get(`scratch "splits.«n»", Splits⟨⟩) }
+    // (what was last stored, to store again only what's changed)
+    *stored_game := game
+    *stored_family := family
+    *layout: Layout
     *fonts: Fonts
-    if fonts.reload_fonts(TEXT_FAMILIES[family], layout) is os_error then fail: failed = "no font: «os_error»"
-    *drag: Drag
-    *picker: Picker
+    *fonts_for := V2⟨0, 0⟩           // the size the fonts were made for (0: none yet)
+    *fonts_players: i64 = 0          // ...and the count of players
+    *screen: Screen_State
 
     while Window.update_windows() {
         if w.close_requested then w.destroy()
         if !w.is_open then break
-        // A new size, or a new count of players, lays the screen out again.
         size := V2⟨f32'w.size[0], f32'w.size[1]⟩
         if canvas.size != w.size {
             if canvas.resize(w.size) is os_error then fail: failed = "can't resize the canvas"
         }
-        if size != layout.size or game.players != layout.count {
-            layout = lay_out(game.players, size)
+        // The screen laid out each frame (its lines may be moving), and its
+        // fonts made again for a new size or count, or once a line's let go.
+        if !splits_fit(splits[game.players], game.players) then splits[game.players] = equal_splits(game.players, size)
+        layout = lay_out(size, splits[game.players])
+        if size != fonts_for or game.players != fonts_players {
             if fonts.reload_fonts(TEXT_FAMILIES[family], layout) is os_error then fail: failed = "no font: «os_error»"
+            fonts_for = size
+            fonts_players = game.players
         }
         mouse := V2⟨f32'w.mouse.position[0], f32'w.mouse.position[1]⟩
+        screen.mouse = mouse
+        cell := cell_of(layout)
 
         if w.keys[.F11].PRESSED then w.set_fullscreen(!w.is_fullscreen)
         if w.keys[.ESCAPE].PRESSED {
-            if picker.open then picker.open = false else if w.is_fullscreen then w.set_fullscreen(false)
+            if screen.picker.open then screen.picker.open = false
+            else if screen.counts.open then screen.counts.open = false
+            else if w.is_fullscreen then w.set_fullscreen(false)
         }
         if w.keys[.Z].PRESSED and w.modifiers.CONTROL and history.count > 0 then game = history.pop()
 
         if w.mouse.buttons[.LEFT].PRESSED {
-            if picker.open {
-                part := picker_part_at(layout, picker, mouse)
+            if screen.picker.open {
+                part := picker_part_at(layout, screen.picker, mouse)
                 if part is {
-                case tens: picker.tens = tens
-                case units: picker.units = units
+                case tens: screen.picker.tens = tens
+                case units: screen.picker.units = units
                 case accept:
-                    value := picker.tens * 10 + picker.units
+                    value := screen.picker.tens * 10 + screen.picker.units
                     if value > 0 {
                         history.add(game)
-                        game.deal(picker.from, picker.to, value)
+                        game.deal(screen.picker.from, screen.picker.to, value)
                     }
-                    picker.open = false
-                case cancel, outside: picker.open = false
+                    screen.picker.open = false
+                case cancel, outside: screen.picker.open = false
                 case panel: _
                 }
+            }
+            else if screen.counts.open {
+                // (open from a touch let go on the button: a second touch picks, or closes it)
+                if count := count_at(layout, game.players, mouse) is not absent {
+                    history.add(game)
+                    game = new_game(count)
+                }
+                screen.counts.open = false
             }
             else if in_font_button(layout, mouse) {
                 family = 1 - family
                 if fonts.reload_fonts(TEXT_FAMILIES[family], layout) is os_error then fail: failed = "no font: «os_error»"
             }
-            else if part := capsule_part_at(layout, mouse) is not absent {
+            else if part := capsule_part_at(layout, mouse, game.players) is not absent {
                 if part is {
-                case .PLAYERS:
-                    history.add(game)
-                    next := if game.players >= MAX_PLAYERS then 2 else game.players + 1
-                    game = new_game(next)
                 case .UNDO:
                     if history.count > 0 then game = history.pop()
+                case .PLAYERS:
+                    screen.counts = ⟨open: true, held: true⟩
                 case .SETTINGS: _
                 }
             }
+            else if end := end_at(layout, mouse, 0.6 * cell) is not absent {
+                screen.moving_end = end
+            }
             else {
                 for k: 0 < layout.count {
-                    if !is_out(game, k) and Math.length(mouse - layout.seats[k].icon) <= 0.5 * cell_of(layout) {
-                        drag = ⟨true, k⟩
+                    if !is_out(game, k) and Math.length(mouse - layout.seats[k].icon) <= 0.5 * cell {
+                        screen.drag = ⟨true, k⟩
                     }
                 }
             }
         }
-        if w.mouse.buttons[.LEFT].RELEASED and drag.active {
-            if to, amount := aim(layout, game, drag.from, mouse) is not missed {
-                if amount is {
-                case damage:
+        // A line's end follows the finger along the edge, kept between its
+        // neighbours.
+        if screen.moving_end >= 0 {
+            splits[game.players].move_split(screen.moving_end, share_at(size, mouse))
+            layout = lay_out(size, splits[game.players])
+        }
+        if w.mouse.buttons[.LEFT].RELEASED {
+            if screen.drag.active {
+                if to, amount := aim(layout, game, screen.drag.from, mouse) is not missed {
+                    if amount is {
+                    case damage:
+                        history.add(game)
+                        game.deal(screen.drag.from, to, damage)
+                    case asked:
+                        screen.picker = ⟨true, screen.drag.from, to, DEFAULT_PICKED / 10, DEFAULT_PICKED % 10⟩
+                    }
+                }
+                screen.drag.active = false
+            }
+            if screen.moving_end >= 0 {
+                screen.moving_end = -1
+                // (the parts' sizes changed, so the life totals' too)
+                if fonts.reload_fonts(TEXT_FAMILIES[family], layout) is os_error then fail: failed = "no font: «os_error»"
+                if Stored.set(`scratch "splits.«game.players»", splits[game.players]) is os_error { }
+            }
+            if screen.counts.open and screen.counts.held {
+                screen.counts.held = false
+                if count := count_at(layout, game.players, mouse) is not absent {
                     history.add(game)
-                    game.deal(drag.from, to, damage)
-                case asked:
-                    picker = ⟨true, drag.from, to, DEFAULT_PICKED / 10, DEFAULT_PICKED % 10⟩
+                    game = new_game(count)
+                    screen.counts.open = false
+                }
+                else {
+                    // (let go on the button itself: it stays open for a second touch)
+                    *on_button := false
+                    if over := capsule_part_at(layout, mouse, game.players) is not absent { on_button = over == .PLAYERS }
+                    if !on_button then screen.counts.open = false
                 }
             }
-            drag.active = false
         }
 
-        draw(canvas, layout, game, fonts, drag, picker, mouse, history.count > 0)
+        // What changed this frame, stored (a failure to store isn't the game's).
+        if game != stored_game {
+            if Stored.set("game", game) is os_error { }
+            stored_game = game
+        }
+        if family != stored_family {
+            if Stored.set("font", family) is os_error { }
+            stored_family = family
+        }
+
+        screen.can_undo = history.count > 0
+        draw(canvas, layout, game, fonts, screen)
         canvas.present(w.handle, vsync: true)
         scratch.reset()
-        if !drag.active {
+        if !screen.drag.active and screen.moving_end < 0 and !screen.counts.held {
             if _ := Window.wait_for_input(milliseconds: 1000) is timed_out { }
         }
     }

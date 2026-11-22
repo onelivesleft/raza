@@ -2,12 +2,13 @@
 // of the table, and each player has a part of it from the screen's centre
 // out to their side, with their life total facing them.
 //
-// Two players have the top and bottom halves. More have parts between
-// lines from the centre at equal angles, one straight up when there's an
-// odd number of them (half a step round from it when there's an even), each
-// line that comes near a corner moved onto it: three players have lines to
-// the two bottom corners and up to the top's middle, four an X between the
-// corners.
+// The parts are split by lines from the centre to the screen's edge, each
+// line's end a place on the edge (Splits). To start with, one line goes
+// straight up when there's an odd number of players (half a step round from
+// it, moved onto a corner if it's near one, when there's an even), and the
+// rest are placed so every part has the same area: two players have the
+// halves, four an X between the corners. A player drags a line's end along
+// the edge to move it.
 
 MAX_PLAYERS :: 6
 
@@ -15,13 +16,17 @@ MAX_PLAYERS :: 6
 // lines, and the corners between them.
 MAX_OUTLINE :: 8
 
-// How near (in radians) a line from the centre must come to a corner to be
-// moved onto it.
+// How near (in radians) the first line from the centre must come to a
+// corner to be moved onto it.
 SNAP :: 0.27
 
 // How far from a part's middle toward the screen's centre its damage icon
 // is, as a share of the way.
 ICON_ALONG :: 0.5
+
+// The least share of the way round the edge a part keeps when a line's end
+// is dragged toward the next.
+LEAST_SPLIT :: 0.04
 
 // The side of the screen a player sits at.
 Side :: enum u8 {
@@ -29,6 +34,14 @@ Side :: enum u8 {
     RIGHT
     BOTTOM
     LEFT
+}
+
+// Where the lines from the centre meet the screen's edge: each a share of
+// the way round it, clockwise from its top-left corner (0 up to 1), in
+// order round. Shares, so they're the same on a screen of another size.
+Splits :: struct {
+    count: i64
+    at:    [MAX_PLAYERS] f32
 }
 
 // A player's part of the screen.
@@ -49,10 +62,15 @@ Layout :: struct {
     centre: V2
     count:  i64
     seats:  [MAX_PLAYERS] Seat
+    splits: Splits
     ends:   [MAX_PLAYERS] V2     // where each line from the centre meets the screen's edge
 }
 
-// The angle a turned to lie from 0 up to TAU.
+// The share a turned to lie from 0 up to 1 (or an angle, from 0 up to TAU).
+wrapped_share :: (s: f32 -> f32) #pure {
+    return s - Math.floor(s)
+}
+
 wrapped :: (a: f32 -> f32) #pure {
     tau := f32'Math.TAU
     return a - tau * Math.floor(a / tau)
@@ -63,14 +81,129 @@ turn_between :: (a: f32, b: f32 -> f32) #pure {
     return wrapped(b - a + f32'Math.PI) - f32'Math.PI
 }
 
-// Where a line from the centre at angle (y down) meets the edge of a
-// screen half wide and high each way.
+////////////////////////////////
+// The edge, as shares of the way round
+
+perimeter_of :: (size: V2 -> f32) #pure {
+    return 2 * (size.x + size.y)
+}
+
+// The four corners' shares: top-right, bottom-right, bottom-left (top-left is 0).
+corner_shares :: (size: V2 -> [3] f32) #pure {
+    p := perimeter_of(size)
+    return ⟨size.x / p, (size.x + size.y) / p, (2 * size.x + size.y) / p⟩
+}
+
+// The point of the edge a share of the way round.
+edge_at :: (size: V2, share: f32 -> V2) #pure {
+    s := wrapped_share(share) * perimeter_of(size)
+    if s < size.x then return ⟨s, 0⟩
+    if s < size.x + size.y then return ⟨size.x, s - size.x⟩
+    if s < 2 * size.x + size.y then return ⟨size.x - (s - size.x - size.y), size.y⟩
+    return ⟨0, size.y - (s - 2 * size.x - size.y)⟩
+}
+
+// The share of the way round of the point of the edge nearest p.
+share_at :: (size: V2, p: V2 -> f32) #pure {
+    perimeter := perimeter_of(size)
+    x := Math.clamp(p.x, 0, size.x)
+    y := Math.clamp(p.y, 0, size.y)
+    // (the side it's nearest)
+    to_top := y
+    to_right := size.x - x
+    to_bottom := size.y - y
+    to_left := x
+    least := Math.min(Math.min(to_top, to_right), Math.min(to_bottom, to_left))
+    s := if least == to_top then x
+         else if least == to_right then size.x + y
+         else if least == to_bottom then size.x + size.y + (size.x - x)
+         else 2 * size.x + size.y + (size.y - y)
+    return wrapped_share(s / perimeter)
+}
+
+// The area a part gains for each pixel its edge goes along a side: half the
+// side's distance from the centre (a thin triangle from the centre).
+area_rate :: (size: V2, share: f32 -> f32) #pure {
+    corners := corner_shares(size)
+    s := wrapped_share(share)
+    on_side := (s >= corners[0] and s < corners[1]) or s >= corners[2]
+    return if on_side then size.x / 4 else size.y / 4
+}
+
+// The share past from at which a part from from has an area.
+share_after_area :: (size: V2, from: f32, area: f32 -> f32) #pure {
+    perimeter := perimeter_of(size)
+    corners := [5] f32⟨0, corner_shares(size)[0], corner_shares(size)[1], corner_shares(size)[2], 1⟩
+    *at := wrapped_share(from)
+    *left := area
+    *travelled: f32 = 0
+    for _: 0 < 9 {
+        // the next corner past at
+        *next: f32 = 1
+        for c: corners { if c > at + 0.000_001 { next = c; break } }
+        rate := area_rate(size, at + 0.000_001)
+        length := (next - at) * perimeter
+        if left <= rate * length {
+            return wrapped_share(from + travelled + left / rate / perimeter)
+        }
+        left -= rate * length
+        travelled += next - at
+        at = wrapped_share(next)
+    }
+    return wrapped_share(from + travelled)
+}
+
+// Where the edge meets a line from the centre at an angle (y down).
 edge_point :: (centre: V2, half: V2, angle: f32 -> V2) #pure {
     d := V2⟨Math.cos(angle), Math.sin(angle)⟩
     across := if Math.abs(d.x) > 0.000_001 then half.x / Math.abs(d.x) else 1e30
     down := if Math.abs(d.y) > 0.000_001 then half.y / Math.abs(d.y) else 1e30
     return centre + d * Math.min(across, down)
 }
+
+// The lines a count of players starts with on a screen of a size: the
+// first straight up (odd) or half a step round (even, onto a near corner),
+// the rest so each part has the same area.
+equal_splits :: (players: i64, size: V2 -> splits: Splits) #pure {
+    n := Math.clamp(players, 2, MAX_PLAYERS)
+    splits = ⟨count: n⟩
+    half := size / 2
+    half_pi := f32'Math.PI / 2
+    step := f32'Math.TAU / f32'n
+    *first := if n % 2 == 0 then -half_pi + step / 2 else -half_pi
+    corners := [4] f32⟨Math.atan2(-half.y, half.x), Math.atan2(half.y, half.x), Math.atan2(half.y, -half.x), Math.atan2(-half.y, -half.x)⟩
+    for c: corners { if Math.abs(turn_between(first, c)) < SNAP then first = c }
+    splits.at[0] = share_at(size, edge_point(half, half, first))
+    each := size.x * size.y / f32'n
+    for k: 1 < n { splits.at[k] = share_after_area(size, splits.at[k - 1], each) }
+}
+
+// Splits that can be used for a count of players: as many lines, each
+// further round than the last, none closer than LEAST_SPLIT to the next.
+splits_fit :: (splits: Splits, players: i64 -> bool) #pure {
+    if splits.count != players then return false
+    *total: f32 = 0
+    for k: 0 < players {
+        gap := wrapped_share(splits.at[(k + 1) % players] - splits.at[k])
+        if gap < LEAST_SPLIT * 0.5 then return false
+        total += gap
+    }
+    return Math.abs(total - 1) < 0.001
+}
+
+// A line's end moved to a share of the way round (dragged), kept between
+// its neighbours (LEAST_SPLIT from each).
+move_split :: (splits: *Splits, k: i64, share: f32) {
+    n := splits.count
+    previous := splits.at[(k + n - 1) % n]
+    next := splits.at[(k + 1) % n]
+    span := wrapped_share(next - previous)
+    along := Math.clamp(wrapped_share(share - previous), LEAST_SPLIT, span - LEAST_SPLIT)
+    splits.at[k] = wrapped_share(previous + along)
+}
+
+////////////////////////////////
+// The parts
 
 // The nearest a point comes to the segment from a to b.
 distance_to_segment :: (p: V2, a: V2, b: V2 -> f32) #pure {
@@ -92,6 +225,16 @@ inside :: (p: V2, points: [] V2 -> bool) #pure {
         }
     }
     return crossings % 2 == 1
+}
+
+// A polygon's area.
+area_of :: (points: [] V2 -> f32) #pure {
+    *twice: f32 = 0
+    for a, i: points {
+        b := points[(i + 1) % points.count]
+        twice += a.x * b.y - b.x * a.y
+    }
+    return Math.abs(twice) / 2
 }
 
 // The polygon's centroid (its area's centre).
@@ -130,27 +273,17 @@ toward_of :: (side: Side -> V2) #pure {
     }
 }
 
-// The players' parts of a screen of a size.
-lay_out :: (players: i64, size: V2 -> layout: Layout) #pure {
-    n := Math.clamp(players, 2, MAX_PLAYERS)
+// The players' parts of a screen of a size, split as splits says.
+lay_out :: (size: V2, splits: Splits -> layout: Layout) #pure {
+    n := splits.count
     centre := size / 2
-    half := size / 2
-    layout = ⟨size: size, centre: centre, count: n⟩
-    half_pi := f32'Math.PI / 2
-    step := f32'Math.TAU / f32'n
-    start := if n % 2 == 0 then -half_pi + step / 2 else -half_pi
-    corners := [4] f32⟨Math.atan2(-half.y, half.x), Math.atan2(half.y, half.x), Math.atan2(half.y, -half.x),
-                       Math.atan2(-half.y, -half.x)⟩
-    *angles: [MAX_PLAYERS] f32
+    layout = ⟨size: size, centre: centre, count: n, splits: splits⟩
+    for k: 0 < n { layout.ends[k] = edge_at(size, splits.at[k]) }
+    corners := corner_shares(size)
+    all_corners := [4] f32⟨0, corners[0], corners[1], corners[2]⟩
     for k: 0 < n {
-        *a := start + step * f32'k
-        for c: corners { if Math.abs(turn_between(a, c)) < SNAP then a = c }
-        angles[k] = a
-        layout.ends[k] = edge_point(centre, half, a)
-    }
-    for k: 0 < n {
-        from := angles[k]
-        span := wrapped(angles[(k + 1) % n] - from)
+        from := splits.at[k]
+        span := wrapped_share(splits.at[(k + 1) % n] - from)
         *seat: Seat
         seat.outline[0] = centre
         seat.outline[1] = layout.ends[k]
@@ -158,9 +291,9 @@ lay_out :: (players: i64, size: V2 -> layout: Layout) #pure {
         // The corners between its lines, in order round.
         *between: [4] f32
         *found: i64 = 0
-        for c: corners {
-            r := wrapped(c - from)
-            if r > 0.001 and r < span - 0.001 {
+        for c: all_corners {
+            r := wrapped_share(c - from)
+            if r > 0.000_01 and r < span - 0.000_01 {
                 *j := found
                 while j > 0 and between[j - 1] > r {
                     between[j] = between[j - 1]
@@ -171,7 +304,7 @@ lay_out :: (players: i64, size: V2 -> layout: Layout) #pure {
             }
         }
         for r: between[:found] {
-            seat.outline[count] = edge_point(centre, half, from + r)
+            seat.outline[count] = edge_at(size, from + r)
             count += 1
         }
         seat.outline[count] = layout.ends[(k + 1) % n]
@@ -212,6 +345,14 @@ lay_out :: (players: i64, size: V2 -> layout: Layout) #pure {
 seat_at :: (layout: Layout, p: V2 -> i64) [absent] {
     for seat, k: layout.seats[:layout.count] {
         if inside(p, seat.outline[:seat.count]) then return k
+    }
+    fail: absent
+}
+
+// The line whose end is within reach of a point, or absent.
+end_at :: (layout: Layout, p: V2, reach: f32 -> i64) [absent] {
+    for end, k: layout.ends[:layout.count] {
+        if Math.length(p - end) <= reach then return k
     }
     fail: absent
 }
