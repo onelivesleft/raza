@@ -1,0 +1,232 @@
+// Where each player's part of the screen is: the tablet lies in the middle
+// of the table, and each player has a part of it from the screen's centre
+// out to their side, with their life total facing them.
+//
+// Two players have the top and bottom halves. More have parts between
+// lines from the centre at equal angles, one straight up when there's an
+// odd number of them (half a step round from it when there's an even), each
+// line that comes near a corner moved onto it: three players have lines to
+// the two bottom corners and up to the top's middle, four an X between the
+// corners.
+
+MAX_PLAYERS :: 6
+
+// The most points a part's outline has: the centre, the two ends of its
+// lines, and the corners between them.
+MAX_OUTLINE :: 8
+
+// How near (in radians) a line from the centre must come to a corner to be
+// moved onto it.
+SNAP :: 0.27
+
+// How far from a part's middle toward the screen's centre its damage icon
+// is, as a share of the way.
+ICON_ALONG :: 0.5
+
+// The side of the screen a player sits at.
+Side :: enum u8 {
+    TOP
+    RIGHT
+    BOTTOM
+    LEFT
+}
+
+// A player's part of the screen.
+Seat :: struct {
+    outline: [MAX_OUTLINE] V2    // from the screen's centre round to its edge and back
+    count:   i64                 // how many of outline's points it has
+    middle:  V2                  // its life total's centre: the outline's centroid
+    icon:    V2                  // its damage icon's centre, toward the screen's centre
+    side:    Side                // the side its player sits at
+    toward:  V2                  // from the screen's centre toward its player
+    angle:   f32                 // its text's turn (Draw's), the right way up for its player
+    room:    f32                 // from middle to the nearest edge of its outline
+    reach:   f32                 // how far toward its player it goes: its outline's furthest point along toward
+}
+
+Layout :: struct {
+    size:   V2
+    centre: V2
+    count:  i64
+    seats:  [MAX_PLAYERS] Seat
+    ends:   [MAX_PLAYERS] V2     // where each line from the centre meets the screen's edge
+}
+
+// The angle a turned to lie from 0 up to TAU.
+wrapped :: (a: f32 -> f32) #pure {
+    tau := f32'Math.TAU
+    return a - tau * Math.floor(a / tau)
+}
+
+// How far from a to b the shortest way round, from -PI up to PI.
+turn_between :: (a: f32, b: f32 -> f32) #pure {
+    return wrapped(b - a + f32'Math.PI) - f32'Math.PI
+}
+
+// Where a line from the centre at angle (y down) meets the edge of a
+// screen half wide and high each way.
+edge_point :: (centre: V2, half: V2, angle: f32 -> V2) #pure {
+    d := V2⟨Math.cos(angle), Math.sin(angle)⟩
+    across := if Math.abs(d.x) > 0.000_001 then half.x / Math.abs(d.x) else 1e30
+    down := if Math.abs(d.y) > 0.000_001 then half.y / Math.abs(d.y) else 1e30
+    return centre + d * Math.min(across, down)
+}
+
+// The nearest a point comes to the segment from a to b.
+distance_to_segment :: (p: V2, a: V2, b: V2 -> f32) #pure {
+    along := b - a
+    length_squared := Math.dot(along, along)
+    t := if length_squared > 0 then Math.clamp(Math.dot(p - a, along) / length_squared, 0, 1) else 0
+    return Math.length(p - (a + along * t))
+}
+
+// Whether a point is inside a polygon (a line out from it crosses its
+// edges an odd number of times).
+inside :: (p: V2, points: [] V2 -> bool) #pure {
+    *crossings := 0
+    for a, i: points {
+        b := points[(i + 1) % points.count]
+        if (a.y > p.y) != (b.y > p.y) {
+            x := a.x + (p.y - a.y) / (b.y - a.y) * (b.x - a.x)
+            if p.x < x then crossings += 1
+        }
+    }
+    return crossings % 2 == 1
+}
+
+// The polygon's centroid (its area's centre).
+centroid :: (points: [] V2 -> V2) #pure {
+    *area: f32 = 0
+    *sum := V2⟨0, 0⟩
+    for a, i: points {
+        b := points[(i + 1) % points.count]
+        cross := a.x * b.y - b.x * a.y
+        area += cross
+        sum = sum + (a + b) * cross
+    }
+    if Math.abs(area) < 0.000_001 then return points[0]
+    return sum / (3 * area)
+}
+
+// Which way up a player's text is at their side: the bottom's is as the
+// screen is, the top's upside down, the left's turned a quarter clockwise
+// (running down) and the right's a quarter the other way.
+angle_of :: (side: Side -> f32) #pure {
+    half_pi := f32'Math.PI / 2
+    return if side is {
+    case .BOTTOM: 0
+    case .LEFT: half_pi
+    case .TOP: 2 * half_pi
+    case .RIGHT: -half_pi
+    }
+}
+
+toward_of :: (side: Side -> V2) #pure {
+    return if side is {
+    case .TOP: V2⟨0, -1⟩
+    case .RIGHT: V2⟨1, 0⟩
+    case .BOTTOM: V2⟨0, 1⟩
+    case .LEFT: V2⟨-1, 0⟩
+    }
+}
+
+// The players' parts of a screen of a size.
+lay_out :: (players: i64, size: V2 -> layout: Layout) #pure {
+    n := Math.clamp(players, 2, MAX_PLAYERS)
+    centre := size / 2
+    half := size / 2
+    layout = ⟨size: size, centre: centre, count: n⟩
+    half_pi := f32'Math.PI / 2
+    step := f32'Math.TAU / f32'n
+    start := if n % 2 == 0 then -half_pi + step / 2 else -half_pi
+    corners := [4] f32⟨Math.atan2(-half.y, half.x), Math.atan2(half.y, half.x), Math.atan2(half.y, -half.x),
+                       Math.atan2(-half.y, -half.x)⟩
+    *angles: [MAX_PLAYERS] f32
+    for k: 0 < n {
+        *a := start + step * f32'k
+        for c: corners { if Math.abs(turn_between(a, c)) < SNAP then a = c }
+        angles[k] = a
+        layout.ends[k] = edge_point(centre, half, a)
+    }
+    for k: 0 < n {
+        from := angles[k]
+        span := wrapped(angles[(k + 1) % n] - from)
+        *seat: Seat
+        seat.outline[0] = centre
+        seat.outline[1] = layout.ends[k]
+        *count: i64 = 2
+        // The corners between its lines, in order round.
+        *between: [4] f32
+        *found: i64 = 0
+        for c: corners {
+            r := wrapped(c - from)
+            if r > 0.001 and r < span - 0.001 {
+                *j := found
+                while j > 0 and between[j - 1] > r {
+                    between[j] = between[j - 1]
+                    j -= 1
+                }
+                between[j] = r
+                found += 1
+            }
+        }
+        for r: between[:found] {
+            seat.outline[count] = edge_point(centre, half, from + r)
+            count += 1
+        }
+        seat.outline[count] = layout.ends[(k + 1) % n]
+        seat.count = count + 1
+        points := seat.outline[:seat.count]
+        seat.middle = centroid(points)
+        seat.icon = seat.middle + (centre - seat.middle) * ICON_ALONG
+        // Its side: the one most of its edge is on.
+        *lengths: [4] f32
+        for i: 1 < seat.count - 1 {
+            a := points[i]
+            b := points[i + 1]
+            mid := (a + b) / 2
+            on := if Math.abs(mid.y) < 1 then Side.TOP else if Math.abs(mid.y - size.y) < 1 then Side.BOTTOM
+                  else if Math.abs(mid.x) < 1 then Side.LEFT else Side.RIGHT
+            lengths[i64'on] += Math.length(b - a)
+        }
+        *best := Side.TOP
+        for candidate: [4] Side⟨.TOP, .RIGHT, .BOTTOM, .LEFT⟩ {
+            if lengths[i64'candidate] > lengths[i64'best] then best = candidate
+        }
+        seat.side = best
+        seat.toward = toward_of(best)
+        seat.angle = angle_of(best)
+        *room: f32 = 1e30
+        *reach: f32 = 0
+        for a, i: points {
+            room = Math.min(room, distance_to_segment(seat.middle, a, points[(i + 1) % points.count]))
+            reach = Math.max(reach, Math.dot(a - centre, seat.toward))
+        }
+        seat.room = room
+        seat.reach = reach
+        layout.seats[k] = seat
+    }
+}
+
+// The seat a point is in, or absent (outside the screen).
+seat_at :: (layout: Layout, p: V2 -> i64) [absent] {
+    for seat, k: layout.seats[:layout.count] {
+        if inside(p, seat.outline[:seat.count]) then return k
+    }
+    fail: absent
+}
+
+// A point of a frame turned angle about origin (x along its text, y down
+// for its reader), on the screen; and a point of the screen in the frame.
+placed :: (origin: V2, angle: f32, local: V2 -> V2) #pure {
+    c := Math.cos(angle)
+    s := Math.sin(angle)
+    return ⟨origin.x + local.x * c - local.y * s, origin.y + local.x * s + local.y * c⟩
+}
+
+local_of :: (origin: V2, angle: f32, point: V2 -> V2) #pure {
+    d := point - origin
+    c := Math.cos(angle)
+    s := Math.sin(angle)
+    return ⟨d.x * c + d.y * s, -d.x * s + d.y * c⟩
+}

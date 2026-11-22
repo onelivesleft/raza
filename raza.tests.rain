@@ -1,0 +1,124 @@
+// Raza's tests: the layout's parts and the game's rules.
+
+LANDSCAPE :: V2⟨2160, 1440⟩
+PORTRAIT  :: V2⟨1440, 2160⟩
+
+near_point :: (a: V2, b: V2 -> bool) {
+    return Math.length(a - b) < 0.5
+}
+
+// Every point of the screen is in one part, and one only.
+covers_the_screen_once :: (layout: Layout) {
+    for y: 0 < 24 {
+        for x: 0 < 24 {
+            p := V2⟨(f32'x + 0.5) / 24 * layout.size.x, (f32'y + 0.5) / 24 * layout.size.y⟩
+            *count := 0
+            for seat: layout.seats[:layout.count] { if inside(p, seat.outline[:seat.count]) then count += 1 }
+            assert(count == 1, "«p» is in «count» parts of «layout.count»")
+        }
+    }
+}
+
+lays_out_every_count :: () #test {
+    for players: 2 <= MAX_PLAYERS {
+        covers_the_screen_once(lay_out(players, LANDSCAPE))
+        covers_the_screen_once(lay_out(players, PORTRAIT))
+    }
+}
+
+// Two players have the halves, top and bottom, each facing its own side.
+two_have_the_halves :: () #test {
+    layout := lay_out(2, PORTRAIT)
+    sides := [2] Side⟨layout.seats[0].side, layout.seats[1].side⟩
+    assert(sides[0] == .BOTTOM and sides[1] == .TOP, "«sides»")
+    assert(near_point(layout.ends[0], ⟨1440, 1080⟩) and near_point(layout.ends[1], ⟨0, 1080⟩), "«layout.ends[:2]»")
+    assert(layout.seats[1].angle == f32'Math.PI, "the top's text is upside down")
+}
+
+// Three players: lines to the bottom corners and up to the top's middle.
+three_meet_the_bottom_corners :: () #test {
+    layout := lay_out(3, LANDSCAPE)
+    assert(near_point(layout.ends[0], ⟨1080, 0⟩), "up to the top's middle: «layout.ends[0]»")
+    assert(near_point(layout.ends[1], ⟨2160, 1440⟩) and near_point(layout.ends[2], ⟨0, 1440⟩), "to the bottom corners: «layout.ends[:3]»")
+    sides := [3] Side⟨layout.seats[0].side, layout.seats[1].side, layout.seats[2].side⟩
+    assert(sides[0] == .RIGHT and sides[1] == .BOTTOM and sides[2] == .LEFT, "«sides»")
+}
+
+// Four players: an X between the corners, one at each side.
+four_are_an_x :: () #test {
+    layout := lay_out(4, LANDSCAPE)
+    for end: layout.ends[:4] {
+        at_corner := (Math.abs(end.x) < 0.5 or Math.abs(end.x - 2160) < 0.5) and (Math.abs(end.y) < 0.5 or Math.abs(end.y - 1440) < 0.5)
+        assert(at_corner, "«end» is a corner")
+    }
+    *seen: [4] bool
+    for seat: layout.seats[:4] { seen[i64'seat.side] = true }
+    assert(seen[0] and seen[1] and seen[2] and seen[3], "one at each side")
+}
+
+// Each damage icon is in its own part, and away from the capsule.
+icons_are_in_their_parts :: () #test {
+    for players: 2 <= MAX_PLAYERS {
+        layout := lay_out(players, LANDSCAPE)
+        for seat, k: layout.seats[:players] {
+            if at := seat_at(layout, seat.icon) { assert(at == k, "«players» players: «k»'s icon is in «at»'s part") }
+            else if absent { assert(false, "«players» players: «k»'s icon is off the screen") }
+            if part := capsule_part_at(layout, seat.icon) is not absent {
+                assert(false, "«players» players: «k»'s icon is under the capsule's «part»")
+            }
+        }
+    }
+}
+
+// A turn there and back is where it began.
+frames_turn_back :: () #test {
+    for angle: [4] f32⟨0, f32'Math.PI / 2, f32'Math.PI, -f32'Math.PI / 2⟩ {
+        p := V2⟨30, -12⟩
+        back := local_of(⟨100, 50⟩, angle, placed(⟨100, 50⟩, angle, p))
+        assert(near_point(back, p), "«angle»: «back»")
+    }
+}
+
+// A drag's damage, or 0 for one that asks.
+damage_of :: (amount: Drag_Amount -> i32) {
+    return if amount is { case damage: damage; case asked: 0 }
+}
+
+// A drag's damage grows from 1 to 20 across a part, then asks.
+drags_grow_then_ask :: () #test {
+    assert(damage_of(amount_for(0)) == 1 and damage_of(amount_for(-1)) == 1, "1 at the edge, and before it")
+    assert(damage_of(amount_for(QUESTION_FROM / 2)) > 1, "more further in")
+    assert(damage_of(amount_for(QUESTION_FROM - 0.001)) == MOST_BY_DRAG, "20 at the last")
+    assert(damage_of(amount_for(QUESTION_FROM)) == 0 and damage_of(amount_for(1.5)) == 0, "then it asks")
+}
+
+// A drag aimed half way into another part does some damage there; one
+// into its own part, or off the board, misses.
+aims_at_other_parts :: () #test {
+    layout := lay_out(4, LANDSCAPE)
+    game := new_game(4)
+    target := layout.seats[0]
+    if to, amount := aim(layout, game, 1, target.middle) {
+        assert(to == 0 and damage_of(amount) > 0, "«to», «amount»")
+    }
+    else if missed {
+        assert(false, "it hits the first player's part")
+    }
+    if _, _ := aim(layout, game, 1, layout.seats[1].middle) is not missed then assert(false, "its own part misses")
+}
+
+// Commander damage is life lost too, and 21 from one commander is out.
+deals_commander_damage :: () #test {
+    *game := new_game(4)
+    assert(game.life[3] == STARTING_LIFE and !is_out(game, 3))
+    game.deal(0, 3, 10)
+    game.deal(1, 3, 10)
+    assert(game.life[3] == 20 and game.commander[3][0] == 10 and !is_out(game, 3), "20 from two isn't lethal")
+    game.deal(0, 3, 11)
+    assert(is_out(game, 3), "21 from one is")
+    *poor := new_game(2)
+    poor.deal(1, 0, STARTING_LIFE)
+    assert(is_out(poor, 0), "no life left")
+    poor.deal(0, 0, 5)
+    assert(poor.life[0] == 0, "no damage to oneself")
+}

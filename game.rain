@@ -1,0 +1,52 @@
+// The game: each player's life, and the damage each commander has done to
+// each player.
+
+STARTING_LIFE :: 40
+LETHAL_COMMANDER_DAMAGE :: 21
+
+Game :: struct {
+    players:   i64 = 4
+    life:      [MAX_PLAYERS] i32
+    // commander[to][from]: what from's commander has done to to.
+    commander: [MAX_PLAYERS] [MAX_PLAYERS] i32
+}
+
+// A game begun: everyone at the starting life, no damage done.
+new_game :: (players: i64 -> game: Game) #pure {
+    game = ⟨players: Math.clamp(players, 2, MAX_PLAYERS)⟩
+    for *l: game.life { l = STARTING_LIFE }
+}
+
+// Whether a player has lost: no life left, or a commander's lethal damage.
+is_out :: (game: Game, player: i64 -> bool) #pure {
+    if game.life[player] <= 0 then return true
+    for d: game.commander[player][:game.players] {
+        if d >= LETHAL_COMMANDER_DAMAGE then return true
+    }
+    return false
+}
+
+// Commander damage from one player's commander to another: it's life lost
+// too.
+deal :: (game: *Game, from: i64, to: i64, amount: i32) {
+    if amount <= 0 or from == to then return
+    game.commander[to][from] += amount
+    game.life[to] -= amount
+}
+
+// What a drag that's reached a share of the way across a player's part
+// does: 1 just inside, up to 20 near its far edge, and in the last strip a
+// number to pick (asked).
+QUESTION_FROM :: 0.88
+MOST_BY_DRAG :: 20
+
+Drag_Amount :: union {
+    damage: i32
+    asked
+}
+
+amount_for :: (share: f32 -> Drag_Amount) #pure {
+    if share >= QUESTION_FROM then return Drag_Amount.asked
+    steps := i32'Math.floor(Math.max(share, 0) / QUESTION_FROM * f32'MOST_BY_DRAG)
+    return Drag_Amount.damage(Math.clamp(steps + 1, 1, MOST_BY_DRAG))
+}
