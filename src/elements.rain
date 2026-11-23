@@ -738,34 +738,9 @@ braided :: (start: V2, bend: V2, end: V2, i: i64, n: i64, cell: f32 -> V2) #pure
 // icons, draw_damage_icons'.)
 draw_elements :: (canvas: *Draw.Canvas, layer: *Draw.Canvas, layout: Layout, game: Game, screen: Screen_State, elements: Elements, volleys: Volleys) {
     // (nothing lit, no light to add: no drag, no volley)
-    if !screen.drag.active and volleys.list.count == 0 then return
+    if volleys.list.count == 0 then return
     cell := cell_of(layout)
     layer.clear(Draw.rgb(0x000000))
-    // A drag's stream: each of the dragger's elements drawn out from their
-    // spot to whoever they're over (bent toward the finger), braided.
-    if screen.drag.active {
-        from := screen.drag.from
-        seat := layout.seats[from]
-        if Math.length(screen.mouse - seat.icon) >= 0.5 * cell {
-            start, bend, end := stream_path(layout, game, from, screen.mouse)
-            *list: [6] Element
-            n := elements_of(game.identity[from], list)
-            for element, i: list[:n] {
-                if element == .OIL {
-                    // (black's: a single strand from its nest, its tip
-                    // following the finger, writhing)
-                    draw_tendril(canvas, ⟨start: start, bend: braided(start, bend, screen.mouse, i, n, cell), end: screen.mouse, up: seat.toward * -1,
-                                          reach: 0.5 * cell, time: elements.clock[from] + f32'i * 7.3, stir: 1, seed: f32'(from * 3 + i) * 1.7⟩)
-                    continue
-                }
-                shape := STREAM_SHAPES[element]
-                f := Field⟨start: start, bend: braided(start, bend, end, i, n, cell), end: end, up: seat.toward * -1, reach: shape.reach * cell * 0.55,
-                           width_from: shape.width_from, width_to: shape.width_to, time: elements.clock[from] + f32'i * 7.3, stir: 1,
-                           seed: f32'(from * 3 + i) * 1.7, form: shape.form⟩
-                draw_field(canvas, layer, element, f)
-            }
-        }
-    }
     for v: volleys.list {
         if v.black { draw_black_volley(canvas, layer, layout, game, elements, v) } else { draw_volley(canvas, layer, layout, game, elements, v) }
     }

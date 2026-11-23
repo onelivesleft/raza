@@ -108,6 +108,10 @@ players_face_between_their_lines :: () #test {
             if at := seat_at(layout, layout.centre + seat.toward * 100) { assert(at == k, "«n» players: part «k» faces into «at»'s") }
             else if absent { assert(false, "«n» players: part «k» faces off the screen") }
             assert(Math.abs(turn_between(seat.angle, text_angle(seat.toward))) < 0.001, "«n» players: part «k»'s text is turned to its facing")
+            offset := seat.middle - layout.centre
+            sideways := Math.abs(offset.x * seat.toward.y - offset.y * seat.toward.x)
+            assert(sideways <= Math.length(offset) * FACING_STEP, "life position follows its orientation within font angle rounding")
+            assert(inside(seat.middle, seat.outline[:seat.count]), "centred life stays inside its region")
         }
     }
 }
@@ -473,27 +477,32 @@ dragged_lines_pass_under_the_finger :: () #test {
     if aimed := share_through(layout, layout.centre) is not absent then assert(false, "the centre aims nowhere, not «aimed»")
 }
 
-// The settings' buttons are each at its place in the pill: Reset at the far
-// left (undo's place), the motion's button in the middle (the players'),
-// Quit where the system's button is (the right end); the pill's other
-// places, or past it, put its buttons back.
+// The settings' buttons are each where it's drawn, in the channel the
+// table opens: Reset a place left of undo, the motion's button a place
+// right of the system's, and Quit the system's button itself; the pill's
+// other buttons, or anywhere else, close the table.
 settings_buttons_are_where_drawn :: () #test {
     layout := laid_out(4, LANDSCAPE)
     pitch := CAPSULE_PITCH * cell_of(layout)
     at :: (layout: Layout, place: V2, pitch: f32 -> Settings_Part) { return settings_part_at(layout, layout.centre + place * pitch) }
-    if settings_part_at(layout, capsule_centre(layout, .PLAYERS)) is {
+    if at(layout, ⟨3, 0⟩, pitch) is {
     case animation: _
-    case reset, quit, close: assert(false, "the middle moves the motion on")
+    case reset, quit, close: assert(false, "right of the system's button moves the motion on")
     }
-    if settings_part_at(layout, capsule_centre(layout, .UNDO)) is {
+    if at(layout, ⟨-3, 0⟩, pitch) is {
     case reset: _
-    case animation, quit, close: assert(false, "the far left resets")
+    case animation, quit, close: assert(false, "left of undo resets")
     }
     if settings_part_at(layout, capsule_centre(layout, .SYSTEM)) is {
     case quit: _
-    case animation, reset, close: assert(false, "the system's button's place quits")
+    case animation, reset, close: assert(false, "the system's button quits")
     }
-    blanks := [5] V2⟨⟨-1, 0⟩, ⟨1, 0⟩, ⟨0, -1⟩, ⟨2, 1⟩, ⟨0, 2⟩⟩
+    // (the settings' buttons are past the pill's ends, in the channel)
+    reach := CAPSULE_REACH * cell_of(layout)
+    assert(Math.abs(RESET_PLACE.x) * pitch - SETTINGS_BUTTON * cell_of(layout) > reach, "Reset clear of the pill")
+    assert(Math.abs(ANIMATION_PLACE.x) * pitch - SETTINGS_BUTTON * cell_of(layout) > reach, "the motion's button clear of the pill")
+    assert(SETTINGS_BUTTON < SETTINGS_SPLIT_HALF, "each fits the channel")
+    blanks := [6] V2⟨⟨-2, 0⟩, ⟨-1, 0⟩, ⟨0, 0⟩, ⟨1, 0⟩, ⟨2, 1⟩, ⟨0, 2⟩⟩
     for blank: blanks {
         if at(layout, blank, pitch) is {
         case close: _
@@ -1233,4 +1242,17 @@ dividers_stop_before_attack_buttons_touch_channels :: () #test {
             }
         }
     }
+}
+life_is_centred_in_the_asymmetric_bottom_region :: () #test {
+    size := V2⟨2880, 1800⟩
+    *splits: Splits = ⟨count: 5⟩
+    for edge, i: [5] V2⟨⟨1440, 0⟩, ⟨2880, 420⟩, ⟨2880, 1130⟩, ⟨1240, 1800⟩, ⟨0, 420⟩⟩ {
+        splits.at[i] = share_at(size, edge)
+    }
+    layout := lay_out(size, splits)
+    seat := layout.seats[2]
+    first := distance_to_segment(seat.middle, layout.centre, layout.ends[2])
+    second := distance_to_segment(seat.middle, layout.centre, layout.ends[3])
+    assert(Math.abs(first - second) < 0.01, "the 88 has equal clearance to its two channels")
+    assert(seat.middle.x < 2000 and seat.middle.y > 1450, "the counter moves down and left from the area centroid")
 }

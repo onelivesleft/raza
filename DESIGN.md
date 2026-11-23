@@ -94,16 +94,16 @@ stays behind what's on it.
 throws**, each colour as its own element, as combat damage or a spell's.
 
 - **Two damage icons per player**, at their damage spot, side by side as
-  they see it, each on a dark round chip turned to face them: crossed swords
+  they see it, each on a dark round chip turned to face them: Mana ms-battle
   on their left for combat damage (commander damage: it takes life and
-  counts toward the 21 from that commander), a flame on their right for a
+  counts toward the 21 from that commander), Mana ms-sorcery on their right for a
   spell's (or an ability's, or another creature's: life alone, never
   toward the 21, as the rules count only a commander's combat damage).
   Both drag the same way with the same range (1 to 9 out to the life total,
   past it the picker); the one dragged from is lit. Nothing else is drawn
   there at rest (the resting element fields and their motes are gone).
-- **Each colour's element** is what's drawn as the damage is selected and
-  thrown (the stream and the volley, below):
+- **Each colour's element** is what's drawn as the damage is
+  thrown (the volley, below):
   - white: a sun's light, its depths a starfield's (Star Nest, by Pablo
     Roman Andrioli, MIT licence);
   - blue: water;
@@ -116,25 +116,15 @@ throws**, each colour as its own element, as combat damage or a spell's.
 - **Light glows.** The sun's and fire's light go into a light layer added
   with bloom (Draw's `add_light`).
 
-## Selecting: the stream while dragging
+## Selecting: the arrow while dragging
 
-The stream always ends at the life total of the player the finger is over,
-wherever over them it is (the finger bends it); over no one, at the finger.
-The amount is shown by the finger, facing the dragger, and the aimed-at life
-total pulses. Each of the dragger's elements is drawn along it (several
-braid), as its own:
-
-- blue: a thin hose's spray, fanning out, breaking into droplets;
-- red: crackling lightning, a jagged bolt striking anew many times a
-  second, forking;
-- white: a beam of light;
-- green: gusts streaming along it;
-- black: a single tendril from its nest, its tip following the finger,
-  writhing;
-- colourless: its metal drawn out, thinning.
-
-The stream sheds each element's motes along it.
-
+A white arrow with a black outline starts just above the pressed attack
+button in its player's frame. It curves up from the button, over the table,
+and down onto the chosen victim's life total. A soft down-right shadow falls
+over everything beneath it, including the table, controls and life counts.
+The arrow is drawn after those layers. Its shaft is as wide as an attack button. It appears immediately on dragging, pointing at the finger until an eligible victim is selected. Its shadow lifts only through the arch, with both ends touching the table. The amount remains beside the finger, facing the attacker.
+Selection emits no element streams or particles; released attacks retain
+their elemental volleys and impacts.
 ## The attack: the volley on release
 
 The game changes at release (so undo is simple); what's shown counts down as
@@ -188,14 +178,17 @@ channels' cosine bowl going down from the surface to it, each shaded where
 it faces away from the light at the top left and warmly lit where it faces
 it. Drawn by a shader of its own (`recess_shade`) from its shape's distance.
 
-The power button puts the settings in the pill itself, the screen behind
-darkened: the pill's buttons fade out over the first half (0.11 s in all),
-and the settings' fade in over the second, at the pill's places: Reset at
-the far left; the motion in the middle, one button showing what it is
-(pause, or play's triangles: ▶ slow, ▶▶ medium, ▶▶▶ fast), each tap the
-next, round from pause to fast and back; and Quit, the power icon on red,
-at the right end, where the power button is. A tap anywhere else, in the
-pill or outside it, or Escape, puts the pill's buttons back.
+The power button splits the table along its horizontal seam, as the
+players' button splits it along the upright one: the halves above and below
+slide apart (0.16 s), each walled where it's cut and taking its half of the
+pill's outline with it, the upper one's shadow falling into the channel,
+while the pill stays where it is, its buttons as they are (the count slider
+seen through the players' button). In the steel channel that opens, each
+on a chip of the pill's floor: Reset, a place left of undo; and the motion,
+a place right of the power button, one button showing what it is (pause, or
+play's triangles: ▶ slow, ▶▶ medium, ▶▶▶ fast), each tap the next, round
+from pause to fast and back. The power button, touched again, quits. A tap
+anywhere else, or Escape, closes the table.
 
 ## Ideas kept for later
 

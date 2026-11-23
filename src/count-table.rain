@@ -114,8 +114,7 @@ COUNT_RING :: Count_Ring(Draw.SHADER_TARGET)
 
 draw_count_ring :: (canvas: *Draw.Canvas, layout: Layout, screen: Screen_State) {
     cell := cell_of(layout)
-    shows := Math.clamp(1 - 2 * screen.settings_shown, 0, 1)
-    if shows <= 0 then return
+    shows: f32 = 1
     shift := count_split_offset(cell, screen.counts_shown)
     middle := capsule_centre(layout, .PLAYERS)
     reach := V2⟨COUNT_RING_RADIUS * cell + shift, COUNT_RING_RADIUS * cell⟩ + V2⟨0.18, 0.18⟩ * cell
@@ -124,20 +123,130 @@ draw_count_ring :: (canvas: *Draw.Canvas, layout: Layout, screen: Screen_State) 
     canvas.draw_shader(middle - reach, reach * 2, COUNT_RING.code, COUNT_RING.bindings.ring, params)
 }
 
+////////////////////////////////
+// The settings: the system's button splits the table along its horizontal
+// seam, the halves above and below sliding apart (SETTINGS_SPLIT_HALF
+// cells each), while the pill stays where it is, its buttons as they are.
+// In the steel channel that opens, Reset to the left of undo and the
+// motion's button to the right of the system's (settings_place's).
+
+SETTINGS_SPLIT_HALF :: CAPSULE_HALF + 0.06
+
+settings_split_offset :: (cell: f32, opened: f32 -> f32) #pure {
+    t := Math.clamp(opened, 0, 1)
+    return SETTINGS_SPLIT_HALF * cell * t * t * (3 - 2 * t)
+}
+
+Settings_Split_Params :: struct {
+    screen: V4       // size, the seam's y, how far each half has moved
+    pill:   V4       // the pill's middle, half width, half height (its ends round)
+    button: V4       // the players' button's middle, its hole's radius, the edges' bevel
+    shadow: V4       // down-right offset, softness, opacity
+}
+
+// The table split: the pill as it is (the players' button's hole cut in
+// it), and the halves above and below the seam moved apart, each its edges
+// (the seam's, and the pill's half cut out of it) walled as the channels
+// between players are.
+settings_split_shade :: (from: Draw.Quad_Between, split: Shader.Uniforms(Settings_Split_Params), table: Shader.Texture_2D, filtering: Shader.Sampler -> colour: V4) {
+    p := from.pixel
+    size := split.screen.xy
+    // (the pill, staying)
+    hole := if split.button.z > 0 then Math.length(p - split.button.xy) - split.button.z else 1000000.0
+    kept := Math.clamp(0.5 - pill_at(p, split.pill), 0, 1) * Math.clamp(hole + 0.5, 0, 1)
+    pill := Shader.sample_level(table, filtering, p / size, 0) * kept
+    // (the half this side of the seam, moved away from it)
+    side: f32 = if p.y < split.screen.z then -1 else 1
+    s := split.screen.w
+    source := p - V2⟨0, side * s⟩
+    seam_distance := if s > 0.01 then side * (source.y - split.screen.z) else 1000000.0
+    notch := pill_at(source, split.pill)
+    depth := Math.min(seam_distance, notch)
+    *slab := V4⟨0, 0, 0, 0⟩
+    if depth > -0.5 {
+        coverage := Math.clamp(depth + 0.5, 0, 1)
+        surface := Shader.sample_level(table, filtering, source / size, 0)
+        across := Math.clamp(depth / Math.max(split.button.w, 1), 0, 1)
+        wall := Math.sin(across * f32'Math.PI)
+        floor := (1 + Math.cos(across * f32'Math.PI)) * 0.5
+        *outward := V2⟨0, 0 - side⟩
+        if notch < seam_distance {
+            gx := pill_at(source + V2⟨0.5, 0⟩, split.pill) - pill_at(source - V2⟨0.5, 0⟩, split.pill)
+            gy := pill_at(source + V2⟨0, 0.5⟩, split.pill) - pill_at(source - V2⟨0, 0.5⟩, split.pill)
+            outward = Math.normalize(V2⟨0 - gx, 0 - gy⟩ + V2⟨0.00001, 0⟩)
+        }
+        facing := Math.dot(outward, PART_LIGHT)
+        shaded := surface.xyz * (1 - floor * 0.68) * (1 + Math.min(facing, 0) * wall * 0.48)
+        rgb := Math.mix(shaded, PART_WARM, Math.max(facing, 0) * wall * 0.38)
+        slab = V4⟨rgb.x, rgb.y, rgb.z, 1⟩ * coverage
+    }
+    return pill + slab * (1 - pill.w)
+}
+// How far a point is outside the pill (pill: its middle, half width, half
+// height; negative inside).
+pill_at :: (q: V2, pill: V4 -> f32) #pure {
+    return round_box_distance(q - pill.xy, pill.zw, pill.w)
+}
+
+Settings_Split :: shader { vertex: Draw.quad_place; fragment: settings_split_shade }
+SETTINGS_SPLIT :: Settings_Split(Draw.SHADER_TARGET)
+
+// The upper half's shadow, cast down and to the right into the channel.
+settings_shadow_shade :: (from: Draw.Quad_Between, split: Shader.Uniforms(Settings_Split_Params) -> colour: V4) {
+    p := from.pixel - split.shadow.xy
+    below := p.y - (split.screen.z - split.screen.w)
+    alpha := (1 - Math.smoothstep(0 - split.shadow.z, split.shadow.z, below)) * split.shadow.w
+    return ⟨0, 0, 0, alpha⟩
+}
+Settings_Shadow :: shader { vertex: Draw.quad_place; fragment: settings_shadow_shade }
+SETTINGS_SHADOW :: Settings_Shadow(Draw.SHADER_TARGET)
+
+// The steel under the table, plain (count_bed's, with no groove).
+draw_steel :: (canvas: *Draw.Canvas, layout: Layout) {
+    cell := cell_of(layout)
+    params := Count_Bed_Params⟨⟨-100000, -100000, 1, 1⟩, ⟨cell * 6, cell * 0.018, 0, 0⟩⟩
+    canvas.draw_shader_image(⟨0, 0⟩, layout.size, COUNT_BED.code, COUNT_BED.bindings.bed, params, under_table_image, COUNT_BED.bindings.steel,
+                             COUNT_BED.bindings.filtering)
+}
+
+// The table drawn split along its horizontal seam, opened a share of the
+// way: the steel, the count slider seen through the players' button, the
+// settings' buttons in the channel, the upper half's shadow, then the
+// table's halves and the pill.
+draw_settings_split :: (canvas: *Draw.Canvas, layout: Layout, screen: Screen_State, game: Game) {
+    cell := cell_of(layout)
+    s := settings_split_offset(cell, screen.settings_shown)
+    draw_steel(canvas, layout)
+    draw_count_bed(canvas, layout, 0)
+    draw_counts(canvas, layout, screen, game)
+    draw_settings(canvas, layout, screen.motion, 1)
+    button := capsule_centre(layout, .PLAYERS)
+    params := Settings_Split_Params⟨⟨layout.size.x, layout.size.y, layout.centre.y, s⟩,
+                                    ⟨layout.centre.x, layout.centre.y, CAPSULE_REACH * cell, CAPSULE_HALF * cell⟩,
+                                    ⟨button.x, button.y, COUNT_RING_RADIUS * cell, BEVEL_CELLS * cell⟩,
+                                    ⟨0.18 * cell, 0.14 * cell, Math.max(0.10 * cell, 1), Math.smoothstep(0, 0.3 * cell, s) * 0.42⟩⟩
+    canvas.draw_shader(⟨0, 0⟩, layout.size, SETTINGS_SHADOW.code, SETTINGS_SHADOW.bindings.split, params)
+    canvas.draw_shader_canvas(⟨0, 0⟩, layout.size, SETTINGS_SPLIT.code, SETTINGS_SPLIT.bindings.split, params,
+                              count_table_canvas, SETTINGS_SPLIT.bindings.table, SETTINGS_SPLIT.bindings.filtering)
+}
+
 draw :: (canvas: *Draw.Canvas, layer: *Draw.Canvas, layout: Layout, game: Game, fonts: Fonts, screen: Screen_State, motes: Particles.System,
          elements: Elements, volleys: Volleys = ⟨⟩) {
     cell := cell_of(layout)
     shift := count_split_offset(cell, screen.counts_shown)
-    if prepare_count_table(canvas.size) {
+    if screen.settings_shown > 0 and prepare_count_table(canvas.size) {
+        draw_table(count_table_canvas, layer, layout, game, fonts, screen, motes, elements, volleys)
+        draw_settings_split(canvas, layout, screen, game)
+    }
+    else if prepare_count_table(canvas.size) {
         draw_table(count_table_canvas, layer, layout, game, fonts, screen, motes, elements, volleys)
         // The stationary mechanism is revealed by the opening, not painted on top.
         canvas.clear(Draw.rgb(0x101318))
         draw_count_bed(canvas, layout, shift)
         draw_counts(canvas, layout, screen, game)
         button := capsule_centre(layout, .PLAYERS)
-        hole_shown := Math.clamp(1 - 2 * screen.settings_shown, 0, 1)
         params := Count_Split_Params⟨⟨layout.size.x, layout.size.y, layout.centre.x, shift⟩,
-                                     ⟨button.x, button.y, COUNT_RING_RADIUS * cell * hole_shown, BEVEL_CELLS * cell⟩,
+                                     ⟨button.x, button.y, COUNT_RING_RADIUS * cell, BEVEL_CELLS * cell⟩,
                                      ⟨0.22 * cell, 0.14 * cell, Math.max(0.10 * cell, 1), Math.smoothstep(0, 0.3 * cell, shift) * 0.42⟩⟩
         canvas.draw_shader(⟨0, 0⟩, layout.size, COUNT_GULLEY_SHADOW.code, COUNT_GULLEY_SHADOW.bindings.split, params)
         canvas.draw_shader_canvas(⟨0, 0⟩, layout.size, COUNT_SPLIT.code, COUNT_SPLIT.bindings.split, params,
@@ -146,9 +255,9 @@ draw :: (canvas: *Draw.Canvas, layer: *Draw.Canvas, layout: Layout, game: Game, 
     else {
         draw_table(canvas, layer, layout, game, fonts, screen, motes, elements, volleys)
         button := capsule_centre(layout, .PLAYERS)
-        shows := Math.clamp(1 - 2 * screen.settings_shown, 0, 1)
-        draw_metal_bar(canvas, button, V2⟨BAR_WIDTH, BAR_WIDTH⟩ * cell, shows)
-        draw_people(canvas, button, game.players, cell, Draw.rgba(0x171C22, shows))
+        draw_metal_bar(canvas, button, V2⟨BAR_WIDTH, BAR_WIDTH⟩ * cell, 1)
+        draw_people(canvas, button, game.players, cell, Draw.rgb(0x171C22))
+        if screen.settings_shown > 0 then draw_settings(canvas, layout, screen.motion, screen.settings_shown)
     }
     draw_count_ring(canvas, layout, screen)
     if screen.drag.active then draw_drag(canvas, layout, game, fonts, screen.drag, screen.mouse, ARTIFACT, motes.time)

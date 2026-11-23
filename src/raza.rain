@@ -51,6 +51,7 @@ Raza :: program {
 #include "background-tuning.rain"
 #include "frames.rain"
 #include "count-table.rain"
+#include "target-arrow.rain"
 #include "materials.rain"
 #include "motes.rain"
 #include "elements.rain"
@@ -420,8 +421,8 @@ clearance :: (p: V2, points: [] V2 -> f32) #pure {
 // DAMAGE_ICON_APART cells from the spot, DAMAGE_ICON_RADIUS cells round.
 DAMAGE_ICON_APART  :: 0.5
 DAMAGE_ICON_RADIUS :: 0.42
-COMBAT_ICON :: icon(Mdi.SWORD_CROSS)
-SPELL_ICON  :: icon(Mdi.FIRE)
+COMBAT_GLYPH :: "\u{E9D1}" // Mana ms-battle
+SPELL_GLYPH :: "\u{E624}" // Mana ms-sorcery
 
 // Where a player's combat damage's icon is, or their spell damage's.
 damage_icon :: (layout: Layout, k: i64, combat: bool -> V2) #pure {
@@ -446,11 +447,15 @@ attack_buttons_clear :: (layout: Layout -> bool) #pure {
     return true
 }
 
-// Stop at the first blocked position, including when a fast drag skips over it.
+// Accept clear destinations directly; otherwise stop at the clearance limit.
 move_split_with_clearance :: (splits: *Splits, k: i64, share: f32, size: V2) {
     original := splits
     *wanted := original
     wanted.move_split(k, share)
+    if attack_buttons_clear(lay_out(size, wanted)) {
+        splits = wanted
+        return
+    }
     previous := original.at[(k + original.count - 1) % original.count]
     start := wrapped_share(original.at[k] - previous)
     finish := wrapped_share(wanted.at[k] - previous)
@@ -480,7 +485,7 @@ move_split_with_clearance :: (splits: *Splits, k: i64, share: f32, size: V2) {
 }
 // Each player's two damage icons (not a player who's out's), each on a dark
 // round chip, turned to face them; the one being dragged from lit.
-draw_damage_icons :: (canvas: *Draw.Canvas, layout: Layout, game: Game, drag: Drag, drum: Life_Drum) {
+draw_damage_icons :: (canvas: *Draw.Canvas, layout: Layout, game: Game, drag: Drag, drum: Life_Drum, fonts: Fonts) {
     cell := cell_of(layout)
     for k: 0 < layout.count {
         if is_out(game, k) then continue
@@ -491,8 +496,8 @@ draw_damage_icons :: (canvas: *Draw.Canvas, layout: Layout, game: Game, drag: Dr
             chip := if dragged then lighter(CAPSULE, 0.3) else Draw.rgba(0x16161C, 0.62)
             shows := player_controls_visibility(drum, k)
             canvas.fill_circle(at, DAMAGE_ICON_RADIUS * cell, faded(chip, shows))
-            drawn := if combat then COMBAT_ICON else SPELL_ICON
-            draw_icon_at(canvas, drawn, at, 0.5 * cell, faded(INK, shows), seat.angle)
+            glyph := if combat then COMBAT_GLYPH else SPELL_GLYPH
+            draw_centred(canvas, fonts.attack, at, seat.angle, glyph, faded(INK, shows))
         }
     }
 }
@@ -624,6 +629,7 @@ Fonts :: struct {
     small:     Draw.Font         // commander damage
     label:     Draw.Font         // the number grid's buttons
     output:    Draw.Font         // the number grid's number
+    attack:    Draw.Font         // Mana battle and sorcery symbols
     mana:      Draw.Font         // Mana's, for the colour toggles
     change:    Draw.Font         // a life drum's change, DRUM_CHANGE of the life's size
 }
@@ -669,6 +675,7 @@ load_fonts :: (family: string, layout: Layout -> fonts: Fonts) [os_error: Draw.D
     if label := Draw.load_font(family, i32'(cell * 0.45), 500) { fonts.label = label } else if os_error { fail: os_error }
     if output := Draw.load_font(family, i32'(cell * 0.8), 500) { fonts.output = output } else if os_error { fail: os_error }
     if mana := Draw.load_font(ICON_FAMILY, i32'(cell * TOGGLE_RADIUS * 1.25)) { fonts.mana = mana } else if os_error { fail: os_error }
+    if attack := Draw.load_font(ICON_FAMILY, i32'(cell * 0.5)) { fonts.attack = attack } else if os_error { fail: os_error }
 }
 
 // The fonts made again, for a new layout.
@@ -678,6 +685,7 @@ reload_fonts :: (fonts: *Fonts, family: string, layout: Layout) [os_error: Draw.
     fonts.label.destroy()
     fonts.output.destroy()
     fonts.mana.destroy()
+    fonts.attack.destroy()
     fonts.change.destroy()
     if loaded := load_fonts(family, layout) { fonts = loaded } else if os_error { fail: os_error }
 }
@@ -1673,13 +1681,8 @@ chip_fits :: (at: V2, points: [] V2, toggles: [5] V2, r: f32, cell: f32 -> bool)
 draw_drag :: (canvas: *Draw.Canvas, layout: Layout, game: Game, fonts: Fonts, drag: Drag, mouse: V2, artifact: Draw.RGBA, time: f32) {
     cell := cell_of(layout)
     seat := layout.seats[drag.from]
-    if Math.length(mouse - seat.icon) < 2 then return
-    if aimed, _ := aim(layout, game, drag.from, mouse) is not missed {
-        pulse := 1 + 0.12 * Math.sin(time * 6)
-        glow := lighter(accent_of(game.identity[drag.from], artifact), 0.4)
-        canvas.fill_glow(layout.seats[aimed].middle, 1.1 * cell * pulse, ⟨glow.r, glow.g, glow.b, 0.35⟩, add: 1)
-    }
     if to, amount := aim(layout, game, drag.from, mouse) is not missed {
+        draw_target_arrow(canvas, layout, drag, layout.seats[to].middle, layout.seats[to].toward * -1.0)
         bubble := placed(mouse, seat.angle, ⟨0, -1.15 * cell⟩)
         canvas.fill_circle(bubble, 0.55 * cell, INK)
         text := if amount is { case damage: "«damage»"; case asked: "?" }
@@ -1687,6 +1690,9 @@ draw_drag :: (canvas: *Draw.Canvas, layout: Layout, game: Game, fonts: Fonts, dr
         // (the bubble's text in the target's colour, darkened if it's light)
         bubble_ink := if lightness(target) > 0.6 then Math.mix(target, DARK_INK, 0.6) else target
         draw_centred(canvas, fonts.output, bubble, seat.angle, text, bubble_ink)
+    }
+    else {
+        draw_target_arrow(canvas, layout, drag, mouse, seat.toward * -1.0)
     }
 }
 
@@ -1744,32 +1750,18 @@ draw_people :: (canvas: *Draw.Canvas, centre: V2, count: i64, cell: f32, colour:
 
 draw_capsule :: (canvas: *Draw.Canvas, layout: Layout, game: Game, screen: Screen_State) {
     cell := cell_of(layout)
-    // (the settings in it: the screen behind it darkened as they come, the
-    // pill's buttons fading out over the first half, the settings' fading in
-    // over the second)
-    open := Math.clamp(screen.settings_shown, 0, 1)
-    if open > 0 then canvas.fill_rect(⟨0, 0⟩, layout.size, Draw.rgba(0x000000, 0.35 * open))
-    // (and the count runner grown out of its middle while a count's picked,
-    // the rest of the pill as it is)
+    // (its buttons the same whether the settings are open or not: they open
+    // beside it, in the table's seam)
     draw_recess(canvas, layout, 0)
-    buttons_show := Math.clamp(1 - 2 * open, 0, 1)
-    settings_show := Math.clamp(2 * open - 1, 0, 1)
-    // The system's button, the power icon, stays where it is throughout:
-    // opened, it's Quit, on red.
-    system := capsule_centre(layout, .SYSTEM)
-    if open > 0 then canvas.fill_circle(system, 0.48 * cell, faded(QUIT_RED, settings_show))
-    system_ink := Math.mix(lighter(CAPSULE, 0.75), INK, open)
-    draw_icon_at(canvas, SYSTEM_ICON, system, 0.62 * cell, system_ink)
-    if settings_show > 0 then draw_settings(canvas, layout, screen.motion, settings_show)
-    if buttons_show <= 0 then return
-    // The players (a ring of a person each), undo and redo (each dim with
-    // nothing to undo or redo), and a new game.
-    // The player-count button is drawn with its continuously morphing metal bar.
+    // The system's button, the power icon; undo and redo (each dim with
+    // nothing to undo or redo), and a new game. (The players' button is the
+    // count slider, seen through its hole in the table.)
+    draw_icon_at(canvas, SYSTEM_ICON, capsule_centre(layout, .SYSTEM), 0.62 * cell, lighter(CAPSULE, 0.75))
     undo_ink := if screen.can_undo then INK else lighter(CAPSULE, 0.25)
-    draw_icon_at(canvas, UNDO_ICON, capsule_centre(layout, .UNDO), 0.62 * cell, faded(undo_ink, buttons_show))
+    draw_icon_at(canvas, UNDO_ICON, capsule_centre(layout, .UNDO), 0.62 * cell, undo_ink)
     redo_ink := if screen.can_redo then INK else lighter(CAPSULE, 0.25)
-    draw_icon_at(canvas, REDO_ICON, capsule_centre(layout, .REDO), 0.62 * cell, faded(redo_ink, buttons_show))
-    draw_icon_at(canvas, RESTART_ICON, capsule_centre(layout, .RESTART), 0.62 * cell, faded(lighter(CAPSULE, 0.75), buttons_show))
+    draw_icon_at(canvas, REDO_ICON, capsule_centre(layout, .REDO), 0.62 * cell, redo_ink)
+    draw_icon_at(canvas, RESTART_ICON, capsule_centre(layout, .RESTART), 0.62 * cell, lighter(CAPSULE, 0.75))
 }
 
 // A colour, a share as opaque.
@@ -1781,8 +1773,7 @@ faded :: (colour: Draw.RGBA, share: f32 -> Draw.RGBA) #pure {
 // Its selected engraving stays readable throughout the opening transition.
 draw_counts :: (canvas: *Draw.Canvas, layout: Layout, screen: Screen_State, game: Game) {
     cell := cell_of(layout)
-    shows := Math.clamp(1 - 2 * screen.settings_shown, 0, 1)
-    if shows <= 0 then return
+    shows: f32 = 1
     opened := Math.clamp(screen.counts_shown, 0, 1)
     shown := if opened > 0 then screen.counts.shown else f32'game.players
     middle := (count_place(layout, shown, 2) + count_place(layout, shown, MAX_PLAYERS)) / 2
@@ -1892,18 +1883,16 @@ draw_fps :: (canvas: *Draw.Canvas, layout: Layout, fonts: Fonts, fps: f32) {
 }
 
 ////////////////////////////////
-// Settings: the system's button puts them in the pill itself, in place of
-// its buttons, at the pill's places: at the far left, Reset (every count's
-// lines back where they start, each seat its starting colours, the motion
-// slow); in the middle, the surfaces' motion, one button going round paused,
-// slow, medium and fast; and at the right end, where the system's button is,
-// Quit. Anywhere else, in the pill or out of it, puts its buttons back.
+// Settings: the system's button splits the table along its horizontal
+// seam (draw_settings_split), the pill staying as it is, and in the channel
+// that opens are Reset, a place left of undo (every count's lines back where
+// they start, each seat its starting colours, the motion slow), and the
+// surfaces' motion, a place right of the system's button, one button going
+// round paused, slow, medium and fast. The system's button, touched again,
+// quits; anywhere else closes the table.
 
-// The seconds the settings take to come into the pill (or go): the count
-// runner's morph's too.
-SETTINGS_TIME :: 0.11
-
-QUIT_RED :: Draw.rgb(0x8A3030)
+// The seconds the table takes to split (or close).
+SETTINGS_TIME :: 0.16
 
 PAUSE_ICON :: icon(Mdi.PAUSE)
 RESET_ICON :: icon(Mdi.BACKUP_RESTORE)
@@ -1930,11 +1919,13 @@ in_box :: (p: V2, low: V2, high: V2 -> bool) #pure {
     return p.x >= low.x and p.x <= high.x and p.y >= low.y and p.y <= high.y
 }
 
-// Where each of the settings' buttons is in the pill, in places from its
-// middle (a place CAPSULE_PITCH cells): Quit at the system's button's.
-RESET_PLACE     :: V2⟨-2, 0⟩
-ANIMATION_PLACE :: V2⟨0, 0⟩
+// Where each of the settings' buttons is, in places from the pill's middle
+// (a place CAPSULE_PITCH cells): Reset left of undo, the motion right of the
+// system's button, and Quit the system's button itself.
+RESET_PLACE     :: V2⟨-3, 0⟩
+ANIMATION_PLACE :: V2⟨3, 0⟩
 QUIT_PLACE      :: V2⟨2, 0⟩
+SETTINGS_BUTTON :: 0.46        // a settings button's radius, in cells
 
 settings_part_at :: (layout: Layout, p: V2 -> Settings_Part) #pure {
     local := (p - layout.centre) / (cell_of(layout) * CAPSULE_PITCH)
@@ -1948,14 +1939,19 @@ settings_part_at :: (layout: Layout, p: V2 -> Settings_Part) #pure {
     return Settings_Part.close
 }
 
-// The settings' buttons in the pill (the Quit button's red and its icon
-// drawn with the pill's), shown a share of the way in.
+// The settings' buttons in the channel, Reset and the motion's, each on a
+// chip of the pill's floor, rimmed, shown a share.
 draw_settings :: (canvas: *Draw.Canvas, layout: Layout, motion: Motion, shown: f32) {
     cell := cell_of(layout)
     pitch := CAPSULE_PITCH * cell
     c := layout.centre
     size := 0.62 * cell
     ink := faded(INK, shown)
+    for place: [2] V2⟨RESET_PLACE, ANIMATION_PLACE⟩ {
+        canvas.fill_circle(c + place * pitch + V2⟨0.03, 0.05⟩ * cell, SETTINGS_BUTTON * cell, Draw.rgba(0x000000, 0.4 * shown))
+        canvas.fill_circle(c + place * pitch, SETTINGS_BUTTON * cell, faded(lighter(CAPSULE, 0.18), shown))
+        canvas.fill_circle(c + place * pitch, (SETTINGS_BUTTON - 0.04) * cell, faded(CAPSULE, shown))
+    }
     // (the motion as it is: paused, or its speed's triangles)
     at := c + ANIMATION_PLACE * pitch
     if motion is {
@@ -1995,7 +1991,7 @@ draw_player_ui :: (canvas: *Draw.Canvas, layer: *Draw.Canvas, layout: Layout, ga
         }
     }
     // The elements (each player's, a drag's stream, volleys) and their motes.
-    draw_damage_icons(canvas, layout, game, screen.drag, screen.drum)
+    draw_damage_icons(canvas, layout, game, screen.drag, screen.drum, fonts)
     draw_elements(canvas, layer, layout, game, screen, elements, volleys)
     motes.draw(canvas)
 }
@@ -2655,7 +2651,6 @@ main :: (args: [] string) [failed: string] {
         // what's still in flight not yet done.
         stir_elements(elements, layout, game, screen, volleys, seconds)
         motes.flow_scale = MOTE_FLOW * cell
-        if screen.drag.active then feed_stream(motes, random, layout, game, screen.drag.from, mouse, seconds)
         feed_volleys(motes, random, layout, game, volleys, seconds)
         motes.update(seconds)
         steer_volleys(motes, volleys, random, layout, game, pending, seconds)

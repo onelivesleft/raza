@@ -1,0 +1,70 @@
+// A single elevated targeting arrow, drawn after the table and controls.
+Target_Arrow_Params :: struct {
+    curve_start: V4       // start, first control
+    curve_end: V4         // second control, shaft end
+    tip: V4               // arrow tip, backward unit vector
+    sizes: V4             // shaft half width, outline, head length, head half width
+    shadow: V4            // down-right offset, blur, opacity
+}
+
+target_arrow_point :: (t: f32, a: V2, b: V2, c: V2, d: V2 -> V2) #pure {
+    u := 1 - t
+    return a * (u * u * u) + b * (3 * u * u * t) + c * (3 * u * t * t) + d * (t * t * t)
+}
+
+target_arrow_distance :: (p: V2, arrow: Shader.Uniforms(Target_Arrow_Params) -> f32) {
+    *distance: f32 = 1e30
+    *previous := arrow.curve_start.xy
+    for step: 1 <= 32 {
+        current := target_arrow_point(f32'step / 32, arrow.curve_start.xy, arrow.curve_start.zw, arrow.curve_end.xy, arrow.curve_end.zw)
+        edge := current - previous
+        along := Math.clamp(Math.dot(p - previous, edge) / Math.max(Math.dot(edge, edge), 0.0001), 0, 1)
+        distance = Math.min(distance, Math.length(p - previous - edge * along) - arrow.sizes.x)
+        previous = current
+    }
+    back := arrow.tip.zw
+    side := V2⟨0 - back.y, back.x⟩
+    delta := p - arrow.tip.xy
+    along := Math.dot(delta, back)
+    slope := arrow.sizes.w / arrow.sizes.z
+    flank := (Math.abs(Math.dot(delta, side)) - along * slope) / Math.sqrt(1 + slope * slope)
+    head := Math.max(Math.max(0 - along, along - arrow.sizes.z), flank)
+    return Math.min(distance, head)
+}
+
+target_arrow_shade :: (from: Draw.Quad_Between, arrow: Shader.Uniforms(Target_Arrow_Params) -> colour: V4) {
+    // Both ends contact the table; only the arch lifts its shadow away.
+    end_distance := Math.min(Math.length(from.pixel - arrow.curve_start.xy), Math.length(from.pixel - arrow.tip.xy))
+    span := Math.max(Math.length(arrow.tip.xy - arrow.curve_start.xy), arrow.sizes.z * 2)
+    height := Math.smoothstep(0, span * 0.3, end_distance)
+    blur := Math.max(0.6, arrow.shadow.z * height)
+    shadow_distance := target_arrow_distance(from.pixel - arrow.shadow.xy * height, arrow) - arrow.sizes.y
+    shadow_alpha := (1 - Math.smoothstep(0 - blur, blur, shadow_distance)) * arrow.shadow.w
+    distance := target_arrow_distance(from.pixel, arrow)
+    outer := Math.clamp(0.5 - distance + arrow.sizes.y, 0, 1)
+    white := Math.clamp(0.5 - distance, 0, 1)
+    return ⟨white, white, white, outer + shadow_alpha * (1 - outer)⟩
+}
+Target_Arrow :: shader { vertex: Draw.quad_place; fragment: target_arrow_shade }
+TARGET_ARROW :: Target_Arrow(Draw.SHADER_TARGET)
+
+draw_target_arrow :: (canvas: *Draw.Canvas, layout: Layout, drag: Drag, tip: V2, back: V2) {
+    cell := cell_of(layout)
+    source := layout.seats[drag.from]
+    up := source.toward * -1.0
+    start := damage_icon(layout, drag.from, drag.combat) + up * ((DAMAGE_ICON_RADIUS + 0.12) * cell)
+    head_length := 0.85 * cell
+    end := tip + back * head_length
+    lift := Math.max(1.4 * cell, Math.length(tip - start) * 0.45)
+    first := start + up * lift
+    second := end + back * lift
+    params := Target_Arrow_Params⟨⟨start.x, start.y, first.x, first.y⟩,
+                                  ⟨second.x, second.y, end.x, end.y⟩,
+                                  ⟨tip.x, tip.y, back.x, back.y⟩,
+                                  ⟨DAMAGE_ICON_RADIUS * cell, 0.028 * cell, head_length, 0.68 * cell⟩,
+                                  ⟨0.25 * cell, 0.35 * cell, 0.10 * cell, 0.48⟩⟩
+    pad := V2⟨1.2, 1.2⟩ * cell
+    low := Math.min(Math.min(start, first), Math.min(second, tip)) - pad
+    high := Math.max(Math.max(start, first), Math.max(second, tip)) + pad
+    canvas.draw_shader(low, high - low, TARGET_ARROW.code, TARGET_ARROW.bindings.arrow, params)
+}

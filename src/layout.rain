@@ -41,7 +41,7 @@ Splits :: struct {
 Seat :: struct {
     outline: [MAX_OUTLINE] V2    // from the screen's centre round to its edge and back
     count:   i64                 // how many of outline's points it has
-    middle:  V2                  // its life total's centre: the outline's centroid
+    middle:  V2                  // life total on the centre line between its channels
     icon:    V2                  // its damage icon's centre, toward the screen's centre
     clear:   f32                 // how far its damage icon is from the controls' plus (what its fields may reach)
     toward:  V2                  // from the screen's centre toward its player: halfway between its lines
@@ -415,12 +415,17 @@ lay_out :: (size: V2, splits: Splits -> layout: Layout) #pure {
         seat.outline[count] = layout.ends[(k + 1) % n]
         seat.count = count + 1
         points := seat.outline[:seat.count]
-        seat.middle = centroid(points)
+        area_middle := centroid(points)
 
         // Its player faces it halfway between its lines.
         facing := facing_between(centre, layout.ends[k], layout.ends[(k + 1) % n])
         seat.toward = ⟨Math.cos(facing), Math.sin(facing)⟩
         seat.angle = text_angle(seat.toward)
+        // Keep the centroid's depth, but centre the display between the channels.
+        bisector := halfway_between(centre, layout.ends[k], layout.ends[(k + 1) % n])
+        centre_line := V2⟨Math.cos(bisector), Math.sin(bisector)⟩
+        depth := Math.dot(area_middle - centre, centre_line)
+        seat.middle = centre + centre_line * depth
         seat.icon = clear_of_controls(size, centre, seat.middle, seat.middle - seat.toward * (ATTACK_ABOVE_CELLS * cell_of(layout)))
         seat.clear = controls_clearance(size, centre, seat.icon)
         *room: f32 = 1e30
