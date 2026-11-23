@@ -3,8 +3,8 @@
 // facing them, and a damage icon toward the centre: dragged into another
 // player's part, it deals that player commander damage, more the further it
 // goes (up to 20, then a number to pick, 21 to start with). The parts start
-// equal in area, and a line between two is moved by dragging its end along
-// the edge. The capsule in the middle undoes, shows how many play (a person
+// regular (their lines equal turns apart), and a line between two is moved
+// by dragging its end along the edge. The capsule in the middle undoes, shows how many play (a person
 // each: touched, the other counts show above and below it, to drag to for
 // a new game), and will hold the settings; the corner button switches the
 // text between Crimson Pro and EB Garamond. The game, the font and each
@@ -1148,7 +1148,7 @@ main :: (args: [] string) [failed: string] {
                     }
                     splits[game.players] = equal_splits(game.players, size)
                     layout = lay_out(size, splits[game.players])
-                    game.identity = starting_colours(layout)
+                    game.identity = starting_colours(size, game.players)
                 case quit:
                     // (what's changed is already stored, each frame's as it's made)
                     w.destroy()

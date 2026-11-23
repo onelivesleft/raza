@@ -3,22 +3,17 @@
 // out to their side, with their life total facing them.
 //
 // The parts are split by lines from the centre to the screen's edge, each
-// line's end a place on the edge (Splits). To start with, one line goes
-// straight up when there's an odd number of players (half a step round from
-// it, moved onto a corner if it's near one, when there's an even), and the
-// rest are placed so every part has the same area: two players have the
-// halves, four an X between the corners. A player drags a line's end along
-// the edge to move it.
+// line's end a place on the edge (Splits). To start with they're regular,
+// each the same turn from the last: one goes straight up when there's an odd
+// number of players (half a step round from it when there's an even), so two
+// players have the halves, four an X square to the screen's sides. A player
+// drags a line's end along the edge to move it.
 
 MAX_PLAYERS :: 6
 
 // The most points a part's outline has: the centre, the two ends of its
 // lines, and the corners between them.
 MAX_OUTLINE :: 8
-
-// How near (in radians) the first line from the centre must come to a
-// corner to be moved onto it.
-SNAP :: 0.27
 
 // How far from a part's middle toward the screen's centre its damage icon
 // is, as a share of the way.
@@ -117,38 +112,6 @@ share_at :: (size: V2, p: V2 -> f32) #pure {
     return wrapped_share(s / perimeter)
 }
 
-// The area a part gains for each pixel its edge goes along a side: half the
-// side's distance from the centre (a thin triangle from the centre).
-area_rate :: (size: V2, share: f32 -> f32) #pure {
-    corners := corner_shares(size)
-    s := wrapped_share(share)
-    on_side := (s >= corners[0] and s < corners[1]) or s >= corners[2]
-    return if on_side then size.x / 4 else size.y / 4
-}
-
-// The share past from at which a part from from has an area.
-share_after_area :: (size: V2, from: f32, area: f32 -> f32) #pure {
-    perimeter := perimeter_of(size)
-    corners := [5] f32⟨0, corner_shares(size)[0], corner_shares(size)[1], corner_shares(size)[2], 1⟩
-    *at := wrapped_share(from)
-    *left := area
-    *travelled: f32 = 0
-    for _: 0 < 9 {
-        // the next corner past at
-        *next: f32 = 1
-        for c: corners { if c > at + 0.000_001 { next = c; break } }
-        rate := area_rate(size, at + 0.000_001)
-        length := (next - at) * perimeter
-        if left <= rate * length {
-            return wrapped_share(from + travelled + left / rate / perimeter)
-        }
-        left -= rate * length
-        travelled += next - at
-        at = wrapped_share(next)
-    }
-    return wrapped_share(from + travelled)
-}
-
 // Where the edge meets a line from the centre at an angle (y down).
 edge_point :: (centre: V2, half: V2, angle: f32 -> V2) #pure {
     d := V2⟨Math.cos(angle), Math.sin(angle)⟩
@@ -157,21 +120,17 @@ edge_point :: (centre: V2, half: V2, angle: f32 -> V2) #pure {
     return centre + d * Math.min(across, down)
 }
 
-// The lines a count of players starts with on a screen of a size: the
-// first straight up (odd) or half a step round (even, onto a near corner),
-// the rest so each part has the same area.
+// The lines a count of players starts with on a screen of a size, regular:
+// the first straight up (odd) or half a step round (even), each the next a
+// step round (a turn shared equally).
 equal_splits :: (players: i64, size: V2 -> splits: Splits) #pure {
     n := Math.clamp(players, 2, MAX_PLAYERS)
     splits = ⟨count: n⟩
     half := size / 2
     half_pi := f32'Math.PI / 2
     step := f32'Math.TAU / f32'n
-    *first := if n % 2 == 0 then -half_pi + step / 2 else -half_pi
-    corners := [4] f32⟨Math.atan2(-half.y, half.x), Math.atan2(half.y, half.x), Math.atan2(half.y, -half.x), Math.atan2(-half.y, -half.x)⟩
-    for c: corners { if Math.abs(turn_between(first, c)) < SNAP then first = c }
-    splits.at[0] = share_at(size, edge_point(half, half, first))
-    each := size.x * size.y / f32'n
-    for k: 1 < n { splits.at[k] = share_after_area(size, splits.at[k - 1], each) }
+    first := if n % 2 == 0 then -half_pi + step / 2 else -half_pi
+    for k: 0 < n { splits.at[k] = share_at(size, edge_point(half, half, first + f32'k * step)) }
 }
 
 // Splits that can be used for a count of players: as many lines, each

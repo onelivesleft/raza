@@ -31,15 +31,18 @@ lays_out_every_count :: () #test {
     }
 }
 
-// As they start, every part has the same area, at every count, either way up.
-parts_start_equal :: () #test {
+// As they start, the parts are regular: each line the same turn round from
+// the last, at every count, either way up.
+parts_start_regular :: () #test {
     for players: 2 <= MAX_PLAYERS {
         for size: [2] V2⟨LANDSCAPE, PORTRAIT⟩ {
             layout := laid_out(players, size)
-            each := size.x * size.y / f32'players
-            for seat, k: layout.seats[:players] {
-                area := area_of(seat.outline[:seat.count])
-                assert(Math.abs(area - each) < each * 0.005, "«players» players on «size»: part «k» is «area», not «each»")
+            step := f32'Math.TAU / f32'players
+            for end, k: layout.ends[:players] {
+                next := layout.ends[(k + 1) % players]
+                a := Math.atan2(end.y - layout.centre.y, end.x - layout.centre.x)
+                b := Math.atan2(next.y - layout.centre.y, next.x - layout.centre.x)
+                assert(Math.abs(wrapped(b - a) - step) < 0.001, "«players» players on «size»: line «k» to the next is «wrapped(b - a)», not «step»")
             }
         }
     }
@@ -71,12 +74,12 @@ three_start_from_the_top :: () #test {
     assert(near_point(right * 1000, V2⟨-left.x, left.y⟩ * 1000), "...alike: «right», «left»")
 }
 
-// Four players: an X between the corners, one facing each side.
+// Four players: a square X, its lines at 45 degrees, one facing each side.
 four_are_an_x :: () #test {
     layout := laid_out(4, LANDSCAPE)
     for end: layout.ends[:4] {
-        at_corner := (Math.abs(end.x) < 0.5 or Math.abs(end.x - 2160) < 0.5) and (Math.abs(end.y) < 0.5 or Math.abs(end.y - 1440) < 0.5)
-        assert(at_corner, "«end» is a corner")
+        d := end - layout.centre
+        assert(Math.abs(Math.abs(d.x) - Math.abs(d.y)) < 0.5, "«end» is at 45 degrees")
     }
     half_pi := f32'Math.PI / 2
     assert(faces(layout.seats[0], ⟨1, 0⟩, -half_pi), "right: «layout.seats[0].toward»")
@@ -135,8 +138,8 @@ life_size_follows_the_parts :: () #test {
     before := lay_out(LANDSCAPE, splits)
     step := cell_of(before) / LIFE_STEPS
     start := life_size_of(before)
-    // (the right part, one of the two smallest, squeezed to half its edge)
-    splits.move_split(0, splits.at[0] + 0.1)
+    // (the top part, one of the two smallest, squeezed to half its edge)
+    splits.move_split(0, splits.at[0] - 0.1)
     after := life_size_of(lay_out(LANDSCAPE, splits))
     assert(after < start, "a squeezed part's life is smaller: «start», then «after»")
     for size: [2] i32⟨start, after⟩ {
@@ -431,8 +434,8 @@ streams_end_at_the_life_total :: () #test {
         middle := (start + end) / 2
         assert(Math.dot(bend - middle, finger - middle) > 0, "bends toward the finger")
     }
-    _, _, loose := stream_path(layout, game, 1, layout.centre + V2⟨5, 5⟩)
-    assert(near_point(loose, layout.centre + V2⟨5, 5⟩), "over no one, to the finger: «loose»")
+    _, _, loose := stream_path(layout, game, 1, layout.centre + V2⟨0, 40⟩)
+    assert(near_point(loose, layout.centre + V2⟨0, 40⟩), "over no one, to the finger: «loose»")
     // (motes steered along it: at their start at the miasma, at their end at the life total)
     // (a mote's time along it in home.x; its life longer, so it's bright to
     // the end, where it's taken out)
@@ -577,29 +580,43 @@ aims_at_other_parts :: () #test {
     if _, _ := aim(layout, game, 1, layout.seats[1].middle) is not missed then assert(false, "its own part misses")
 }
 
-// The settings' Reset's colours start at the top seat and go round clockwise: white,
-// blue, green, black, red, artifact for six, and fewer drop some.
+// The colour of the seat whose player faces nearest a way (degrees from
+// the centre, clockwise from the right, y down).
+colour_facing :: (layout: Layout, colours: [MAX_PLAYERS] Identity, degrees: f32 -> Identity) {
+    way := degrees * f32'Math.TAU / 360
+    *nearest: i64 = 0
+    for seat, k: layout.seats[:layout.count] {
+        if Math.abs(turn_between(facing_of(seat), way)) < Math.abs(turn_between(facing_of(layout.seats[nearest]), way)) then nearest = k
+    }
+    return colours[nearest]
+}
+
+// The settings' Reset's colours: six from the top round clockwise white,
+// blue, green, black, red, artifact; fewer take players away (the artifact
+// deck, white, black, green), the rest staying as near where they were as
+// they can.
 resets_colours_from_the_top :: () #test {
-    expected := [5] [MAX_PLAYERS] Identity⟨
-        ⟨mono(.BLUE), mono(.RED), 0, 0, 0, 0⟩,
-        ⟨mono(.BLUE), mono(.GREEN), mono(.RED), 0, 0, 0⟩,
-        ⟨mono(.BLUE), mono(.GREEN), mono(.BLACK), mono(.RED), 0, 0⟩,
-        ⟨mono(.WHITE), mono(.BLUE), mono(.GREEN), mono(.BLACK), mono(.RED), 0⟩,
-        ⟨mono(.WHITE), mono(.BLUE), mono(.GREEN), mono(.BLACK), mono(.RED), 0⟩
+    w := mono(.WHITE)
+    u := mono(.BLUE)
+    g := mono(.GREEN)
+    b := mono(.BLACK)
+    r := mono(.RED)
+    // each count's seats' facings, and the colour each should have
+    Expect :: struct { players: i64; ways: [MAX_PLAYERS] f32; colours: [MAX_PLAYERS] Identity }
+    expected := [5] Expect⟨
+        ⟨6, ⟨-90, -30, 30, 90, 150, 210⟩, ⟨w, u, g, b, r, 0⟩⟩,
+        ⟨5, ⟨-126, -54, 18, 90, 162, 0⟩, ⟨w, u, g, b, r, 0⟩⟩,
+        ⟨4, ⟨-90, 0, 90, 180, 0, 0⟩, ⟨u, g, b, r, 0, 0⟩⟩,
+        ⟨3, ⟨-30, 90, 210, 0, 0, 0⟩, ⟨u, g, r, 0, 0, 0⟩⟩,
+        ⟨2, ⟨90, -90, 0, 0, 0, 0⟩, ⟨u, r, 0, 0, 0, 0⟩⟩
     ⟩
     for size: [2] V2⟨LANDSCAPE, PORTRAIT⟩ {
-        for n: 2 <= MAX_PLAYERS {
-            layout := laid_out(n, size)
-            colours := starting_colours(layout)
-            // the top seat: facing nearest up, the right one of two as near
-            *top: i64 = 0
-            for seat, k: layout.seats[:n] {
-                best := layout.seats[top].toward
-                if seat.toward.y < best.y - 0.02 or (seat.toward.y < best.y + 0.02 and seat.toward.x > best.x) then top = k
-            }
-            for i: 0 < n {
-                got := colours[(top + i) % n]
-                assert(got == expected[n - 2][i], "«n» players, «i» round from the top: «got»")
+        for e: expected {
+            layout := laid_out(e.players, size)
+            colours := starting_colours(size, e.players)
+            for i: 0 < e.players {
+                got := colour_facing(layout, colours, e.ways[i])
+                assert(got == e.colours[i], "«e.players» players on «size», facing «e.ways[i]»: «got», not «e.colours[i]»")
             }
         }
     }

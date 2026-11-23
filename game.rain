@@ -25,39 +25,82 @@ mono :: (colour: Mana -> Identity) #pure {
     return u8'1 << u8'colour
 }
 
-// The colours the settings' Reset gives, from the top seat round clockwise: white, blue,
-// green, black, red and an artifact deck (no colours) for six; five drop the
-// artifact, four white, three black, and two green. The top seat is the one
-// facing nearest straight up (of two as near, the one right of the top).
-starting_colours :: (layout: Layout -> identity: [MAX_PLAYERS] Identity) #pure {
-    n := layout.count
-    w := mono(.WHITE)
-    u := mono(.BLUE)
-    g := mono(.GREEN)
-    b := mono(.BLACK)
-    r := mono(.RED)
-    order: [MAX_PLAYERS] Identity = if n is {
-        case 6: ⟨w, u, g, b, r, 0⟩
-        case 5: ⟨w, u, g, b, r, 0⟩
-        case 4: ⟨u, g, b, r, 0, 0⟩
-        case 3: ⟨u, g, r, 0, 0, 0⟩
-        case: ⟨u, r, 0, 0, 0, 0⟩
-    }
+// The way a seat's player faces, as an angle from the centre (y down).
+facing_of :: (seat: Seat -> f32) #pure {
+    return Math.atan2(seat.toward.y, seat.toward.x)
+}
+
+// The colours the settings' Reset gives, seat by seat, for a count of
+// players on a screen of a size (its lines where they start). Six are, from
+// the top seat round clockwise, white, blue, green, black, red and an
+// artifact deck (no colours). Fewer are six's with players taken away, the
+// rest staying where they were: five without the artifact deck, four
+// without white too, three without black, two without green. Each time one
+// goes, the others go round to the next count's seats as little as they can
+// (of two ways as little, clockwise). Six's top seat is the one facing
+// nearest straight up (of two as near, the one right of the top).
+starting_colours :: (size: V2, players: i64 -> identity: [MAX_PLAYERS] Identity) #pure {
+    // (within a step and a half of facing, or of a step for each player's
+    // going round, counts as as near: facings are rounded to steps, so two
+    // places mirrored about the top may differ by one)
+    *layout := lay_out(size, equal_splits(MAX_PLAYERS, size))
     up := -f32'Math.PI / 2
     *top: i64 = 0
     *least: f32 = 1e30
-    for seat, k: layout.seats[:n] {
-        turn := turn_between(up, Math.atan2(seat.toward.y, seat.toward.x))
+    for seat, k: layout.seats[:MAX_PLAYERS] {
+        turn := turn_between(up, facing_of(seat))
         off := Math.abs(turn)
-        // (within a step and a half of facing counts as as near: facings are
-        // rounded to steps, so two parts mirrored about the top may differ by one)
         if off < least - 1.5 * FACING_STEP or (off < least + 1.5 * FACING_STEP and turn > 0) {
             least = off
             top = k
         }
     }
+    from_top := [MAX_PLAYERS] Identity⟨mono(.WHITE), mono(.BLUE), mono(.GREEN), mono(.BLACK), mono(.RED), 0⟩
     identity = ⟨⟩
-    for colours, i: order[:n] { identity[(top + i) % n] = colours }
+    for colours, i: from_top { identity[(top + i) % MAX_PLAYERS] = colours }
+    // Who goes as the count comes down from six: the n-th, going to n - 1.
+    going := [MAX_PLAYERS + 1] Identity⟨0, 0, 0, mono(.GREEN), mono(.BLACK), mono(.WHITE), 0⟩
+    *n: i64 = MAX_PLAYERS
+    while n > Math.clamp(players, 2, MAX_PLAYERS) {
+        // Those staying, in order round, and where each faces.
+        *staying: [MAX_PLAYERS] Identity
+        *was: [MAX_PLAYERS] f32
+        *m: i64 = 0
+        *gone := false
+        for k: 0 < n {
+            if !gone and identity[k] == going[n] {
+                gone = true
+            } else {
+                staying[m] = identity[k]
+                was[m] = facing_of(layout.seats[k])
+                m += 1
+            }
+        }
+        next := lay_out(size, equal_splits(n - 1, size))
+        // The turn round the next count's seats that moves them least.
+        *best_turn: i64 = 0
+        *best_cost: f32 = 1e30
+        *best_way: f32 = 0
+        for turn: 0 < m {
+            *cost: f32 = 0
+            *way: f32 = 0
+            for i: 0 < m {
+                moved := turn_between(was[i], facing_of(next.seats[(i + turn) % m]))
+                cost += Math.abs(moved)
+                way += moved
+            }
+            tie := 1.5 * FACING_STEP * f32'm
+            if cost < best_cost - tie or (cost < best_cost + tie and way > best_way) {
+                best_turn = turn
+                best_cost = cost
+                best_way = way
+            }
+        }
+        identity = ⟨⟩
+        for colours, i: staying[:m] { identity[(i + best_turn) % m] = colours }
+        layout = next
+        n -= 1
+    }
 }
 
 Game :: struct {
