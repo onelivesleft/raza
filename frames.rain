@@ -1,0 +1,88 @@
+// How the parts look: in the manner of an era of Magic's card frames, each
+// colour's frame a ground colour and a surface over it (Patterns': water
+// drops for blue, cracked rock for red, marble for black and gold, and so
+// on), made as the screen's drawn, not copied from any card. A part of one
+// colour is that colour's frame; of none, an artifact's; of several, gold,
+// shaded across toward each of its colours in turn.
+
+// Which era's frames the parts are like (a setting).
+Era :: enum u8 {
+    ORIGINAL       // 1993 to 2003: painterly, mottled and dark
+    MODERN         // 2003 to 2014: smoother, more saturated, silver artifacts
+    M15            // 2014 on: finer still, brushed metal
+}
+
+ERA_NAMES :: [3] string⟨"Original", "Modern", "M15"⟩
+
+// A frame's look: its ground colour, and the surface over it, its features
+// scale cells across.
+Look :: struct {
+    ground:   Draw.RGBA
+    kind:     Patterns.Kind
+    scale:    f32
+    strength: f32
+}
+
+// Which of an era's looks: an artifact's, each colour's (WUBRG), and gold's.
+ARTIFACT_LOOK :: 0
+GOLD_LOOK     :: 6
+
+// Each era's looks, in the order above.
+LOOKS :: [3][7] Look⟨
+    // Original: a grey-brown artifact's grain, an ivory's soft clouds, water
+    // drops, black marble, cracked red rock, mottled green, marbled gold.
+    ⟨⟨Draw.rgb(0x9A8A76), .GRAIN, 1.2, 0.35⟩, ⟨Draw.rgb(0xE6DFCA), .CLOUDS, 2.5, 0.22⟩, ⟨Draw.rgb(0x2A5E9A), .DROPS, 1.5, 0.5⟩,
+     ⟨Draw.rgb(0x2A2521), .MARBLE, 2.6, 0.45⟩, ⟨Draw.rgb(0xB3442B), .CRACKS, 1.9, 0.45⟩, ⟨Draw.rgb(0x3A6C39), .MOTTLE, 1.6, 0.45⟩,
+     ⟨Draw.rgb(0xC29A3E), .MARBLE, 2.6, 0.35⟩⟩,
+    // Modern: silver grain, smoother and brighter colours.
+    ⟨⟨Draw.rgb(0xA7AFB6), .GRAIN, 2.0, 0.22⟩, ⟨Draw.rgb(0xF0ECDF), .CLOUDS, 3.0, 0.15⟩, ⟨Draw.rgb(0x1F6CB4), .CLOUDS, 2.5, 0.3⟩,
+     ⟨Draw.rgb(0x24201F), .MARBLE, 3.0, 0.3⟩, ⟨Draw.rgb(0xC64A31), .MOTTLE, 2.0, 0.3⟩, ⟨Draw.rgb(0x2D7A47), .MOTTLE, 2.0, 0.3⟩,
+     ⟨Draw.rgb(0xD3AE52), .MARBLE, 3.0, 0.25⟩⟩,
+    // M15: brushed silver, the finest and lightest surfaces.
+    ⟨⟨Draw.rgb(0xA3ADB5), .BRUSHED, 1.5, 0.3⟩, ⟨Draw.rgb(0xF3EFE3), .CLOUDS, 3.5, 0.12⟩, ⟨Draw.rgb(0x1B71C1), .CLOUDS, 3.0, 0.25⟩,
+     ⟨Draw.rgb(0x272320), .MOTTLE, 3.0, 0.22⟩, ⟨Draw.rgb(0xCF4B35), .CRACKS, 2.5, 0.18⟩, ⟨Draw.rgb(0x2E8050), .MOTTLE, 2.5, 0.25⟩,
+     ⟨Draw.rgb(0xD9B65C), .CLOUDS, 2.5, 0.2⟩⟩
+⟩
+
+// How far gold leans toward each of a part's colours.
+GOLD_TINT :: 0.25
+
+// An era's artifact colour (a colourless player's own colour).
+artifact_of :: (era: Era -> Draw.RGBA) #pure {
+    return LOOKS[i64'era][ARTIFACT_LOOK].ground
+}
+
+// A part's fill, for its player's colours in an era: its gradient's colours
+// (into, how many) and its surface (features sized in pixels, cell's
+// share, seeded by its seat so neighbours differ).
+part_fill :: (era: Era, identity: Identity, cell: f32, seat: i64, into: [] *Draw.RGBA -> count: i64, pattern: Draw.Pattern) #pure {
+    looks := LOOKS[i64'era]
+    *colours: i64 = 0
+    *only: i64 = 0
+    for colour, i: [5] Mana⟨.WHITE, .BLUE, .BLACK, .RED, .GREEN⟩ {
+        if has_colour(identity, colour) {
+            colours += 1
+            only = i
+        }
+    }
+    *look := looks[ARTIFACT_LOOK]
+    count = 0
+    if colours >= 2 {
+        // Gold, shaded across toward each colour (WUBRG).
+        look = looks[GOLD_LOOK]
+        for colour, i: [5] Mana⟨.WHITE, .BLUE, .BLACK, .RED, .GREEN⟩ {
+            if has_colour(identity, colour) {
+                into[count] = Math.mix(look.ground, looks[1 + i].ground, GOLD_TINT)
+                count += 1
+            }
+        }
+    }
+    else {
+        if colours == 1 then look = looks[1 + only]
+        // (one colour: a light to dark gradient of it)
+        into[0] = lighter(look.ground, 0.12)
+        into[1] = Math.mix(look.ground, BACKGROUND, 0.4)
+        count = 2
+    }
+    pattern = ⟨kind: look.kind, scale: look.scale * cell, strength: look.strength, seed: f32'(seat + 1)⟩
+}

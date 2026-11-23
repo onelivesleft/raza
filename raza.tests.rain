@@ -299,27 +299,28 @@ settings_buttons_are_where_drawn :: () #test {
     }
     if at(layout, middle(RESET_LOW, RESET_HIGH)) is {
     case reset_lines: _
-    case artifact, quit, panel, outside: assert(false, "Reset's middle resets the lines")
+    case era, quit, panel, outside: assert(false, "Reset's middle resets the lines")
     }
     if at(layout, middle(QUIT_LOW, QUIT_HIGH)) is {
     case quit: _
-    case artifact, reset_lines, panel, outside: assert(false, "Quit's middle quits")
+    case era, reset_lines, panel, outside: assert(false, "Quit's middle quits")
     }
-    for look: [2] Artifact_Look⟨.NEW, .OLD⟩ {
-        low, high := look_button(look)
+    for look: [3] Era⟨.ORIGINAL, .MODERN, .M15⟩ {
+        low, high := era_button(look)
         assert(!in_box(low, RESET_LOW, RESET_HIGH) and !in_box(high, RESET_LOW, RESET_HIGH),"«look»'s button is apart from Reset")
+        assert(high.x < SETTINGS_HALF.x and low.x > -SETTINGS_HALF.x, "«look»'s button is inside the panel")
         if at(layout, middle(low, high)) is {
-        case artifact: assert(artifact == look, "«look»'s middle picks «artifact»")
+        case era: assert(era == look, "«look»'s middle picks «era»")
         case reset_lines, quit, panel, outside: assert(false, "«look»'s middle picks it")
         }
     }
-    if at(layout, V2⟨-2.8, 1.9⟩) is {
+    if at(layout, V2⟨-4.2, 1.9⟩) is {
     case panel: _
-    case artifact, reset_lines, quit, outside: assert(false, "the panel's corner is the panel's")
+    case era, reset_lines, quit, outside: assert(false, "the panel's corner is the panel's")
     }
     if at(layout, V2⟨0, SETTINGS_HALF.y + 0.5⟩) is {
     case outside: _
-    case artifact, reset_lines, quit, panel: assert(false, "below the panel is outside it")
+    case era, reset_lines, quit, panel: assert(false, "below the panel is outside it")
     }
 }
 
