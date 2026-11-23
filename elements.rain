@@ -206,7 +206,7 @@ fire_at :: (q: V2, out: V2, drawn: f32, time: f32, seed: f32, stir: f32 -> paint
     // (a teardrop: round at its root, narrowing to its tip)
     hw := Math.clamp(h, 0, 1)
     width := 0.6 * Math.pow(1 - hw, 0.75) * Math.sqrt(Math.clamp(h * 6 + 0.15, 0, 1)) * (1 + 0.25 * stir)
-    *fuel := Math.clamp(1 - Math.abs(q.x) / width, 0, 1)
+    *fuel := Math.clamp(1 - Math.abs(q.x) / Math.max(width, 0.0001), 0, 1)
     *at := q
     if drawn > 0.5 {
         h = r
@@ -239,17 +239,23 @@ WATER_BODY :: 0.9
 // seen through it taken by its depth as Beer's law has it (deep blue,
 // cyan where it's thin), its surface waves streaming toward its player, the
 // sky in it at a slant (Fresnel's), a sun's glint and foam on its crests.
+// Water's waves at q: their height (about 0.5; crests past 0.66) and its
+// slope, two layers of noise streaming toward its player at their own speeds.
+water_waves :: (q: V2, time: f32, seed: f32, stir: f32 -> height: f32, slope: V2) {
+    flow := V2⟨0, time * (0.45 + 0.5 * stir)⟩
+    w1 := Patterns.layered_slope(q * 2.3 + V2⟨seed, 0⟩ + flow, 4)
+    w2 := Patterns.layered_slope(V2⟨q.y, 0 - q.x⟩ * 3.4 + V2⟨0, seed⟩ + flow * 1.6, 3)
+    height = w1.x * 0.62 + w2.x * 0.38
+    slope = V2⟨w1.y, w1.z⟩ * (2.3 * 0.62) + V2⟨0 - w2.z, w2.y⟩ * (3.4 * 0.38)
+}
+
 water_at :: (q: V2, out: V2, drawn: f32, time: f32, seed: f32, stir: f32 -> paint: V4, light: V3) {
     r := Math.length(out)
-    flow := V2⟨0, time * (0.45 + 0.5 * stir)⟩
     edge := r + (Patterns.noise(q * 2.1 + V2⟨seed, time * 0.4⟩) - 0.5) * 0.16
     body := Math.clamp((WATER_BODY - edge) / 0.1, 0, 1)
     across := edge / WATER_BODY
     dome := Math.sqrt(Math.max(1 - across * across, 0))
-    w1 := Patterns.layered_slope(q * 2.3 + V2⟨seed, 0⟩ + flow, 4)
-    w2 := Patterns.layered_slope(V2⟨q.y, 0 - q.x⟩ * 3.4 + V2⟨0, seed⟩ + flow * 1.6, 3)
-    height := w1.x * 0.62 + w2.x * 0.38
-    slope := V2⟨w1.y, w1.z⟩ * (2.3 * 0.62) + V2⟨0 - w2.z, w2.y⟩ * (3.4 * 0.38)
+    height, slope := water_waves(q, time, seed, stir)
     tilt := out / WATER_BODY
     n := Math.normalize(V3⟨tilt.x * 0.9 - slope.x * 0.12, tilt.y * 0.9 - slope.y * 0.12, dome + 0.15⟩)
     depth := dome * (1.8 + 0.6 * height)
@@ -513,6 +519,15 @@ field_spot :: (layout: Layout, k: i64, i: i64, n: i64, time: f32 -> at: V2, reac
     }
 }
 
+// The i'th of a player's n fields at rest (k's seat), swollen by swell (a
+// volley gathering): where it is, its clock, its stir and its seed, as it's
+// drawn and its motes are born.
+rest_field :: (layout: Layout, k: i64, i: i64, n: i64, elements: Elements, swell: f32 = 0 -> Field) #pure {
+    at, reach := field_spot(layout, k, i, n, elements.clock[k])
+    return ⟨start: at, bend: at, end: at, up: layout.seats[k].toward * -1, reach: reach * (1 + 0.2 * swell),
+            time: elements.clock[k] + f32'i * 7.3, stir: Math.max(elements.stir[k], swell), seed: f32'(k * 3 + i) * 1.7⟩
+}
+
 // A drawn-out field's curve for the i'th of n elements along a path: the
 // bend moved to one side by its place, so several braid.
 braided :: (start: V2, bend: V2, end: V2, i: i64, n: i64, cell: f32 -> V2) #pure {
@@ -527,7 +542,7 @@ braided :: (start: V2, bend: V2, end: V2, i: i64, n: i64, cell: f32 -> V2) #pure
 draw_elements :: (canvas: *Draw.Canvas, layer: *Draw.Canvas, layout: Layout, game: Game, screen: Screen_State, elements: Elements, volleys: Volleys) {
     cell := cell_of(layout)
     layer.clear(Draw.rgb(0x000000))
-    for seat, k: layout.seats[:layout.count] {
+    for k: 0 < layout.count {
         if is_out(game, k) then continue
         *list: [6] Element
         n := elements_of(game.identity[k], list)
@@ -536,12 +551,7 @@ draw_elements :: (canvas: *Draw.Canvas, layer: *Draw.Canvas, layout: Layout, gam
         for v: volleys.list {
             if v.from == k and v.age < VOLLEY_GATHER then swell = Math.max(swell, Math.sin(v.age / VOLLEY_GATHER * f32'Math.PI))
         }
-        for element, i: list[:n] {
-            at, reach := field_spot(layout, k, i, n, elements.clock[k])
-            f := Field⟨start: at, bend: at, end: at, up: seat.toward * -1, reach: reach * (1 + 0.2 * swell),
-                       time: elements.clock[k] + f32'i * 7.3, stir: Math.max(elements.stir[k], swell), seed: f32'(k * 3 + i) * 1.7⟩
-            draw_field(canvas, layer, element, f)
-        }
+        for element, i: list[:n] { draw_field(canvas, layer, element, rest_field(layout, k, i, n, elements, swell)) }
     }
     // A drag's stream: each of the dragger's elements drawn out from their
     // spot to whoever they're over (bent toward the finger), braided.

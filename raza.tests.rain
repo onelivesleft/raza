@@ -414,6 +414,24 @@ volleys_land_apart :: () #test {
     assert(pending[0][1] == 0 and shown_game(game, pending).life[0] == 30 and volleys.list.count == 0)
 }
 
+// Each element's motes are born in its field: the sun's in its corona
+// (past its ball), fire's up its flame (not below its root), the others
+// within its reach.
+motes_are_born_in_their_fields :: () #test {
+    *random := Random.generator(seed: 9)
+    f := Field⟨start: ⟨500, 500⟩, bend: ⟨500, 500⟩, end: ⟨500, 500⟩, up: ⟨0, -1⟩, reach: 100, time: 4, seed: 2⟩
+    for _, which: STYLES {
+        for try: 0 < 40 {
+            at, outward := field_birth(random, which, f)
+            out := Math.length(at - f.start)
+            assert(out <= f.reach + 0.01, "«which»'s mote born «out» out, past its reach")
+            assert(Math.abs(Math.length(outward) - 1) < 0.01 or out < 0.01, "«which»'s outward isn't a way: «outward»")
+            if which == .SUN then assert(out >= SUN_BALL * f.reach, "a sun's fleck born «out» out, in its ball")
+            if which == .FIRE then assert(at.y <= f.start.y + 0.01, "a spark born below its fire's middle: «at»")
+        }
+    }
+}
+
 // Each colour's element, in WUBRG order, and an artifact's (no colours)
 // liquid metal.
 elements_are_the_colours :: () #test {
@@ -486,10 +504,10 @@ miasmas_stay_home :: () #test {
     cell := cell_of(layout)
     *each: [4] i64
     for m: motes.motes {
-        if m.tag & MIASMA_MOTE == 0 then continue
+        if m.tag & FIELD_MOTE == 0 then continue
         k := i64'(m.tag & 0xFF)
         each[k] += 1
-        assert(Math.length(m.at - layout.seats[k].icon) < 2.5 * cell, "«k»'s mote at «m.at» strays from «layout.seats[k].icon»")
+        assert(Math.length(m.at - layout.seats[k].icon) < 3 * cell, "«k»'s mote at «m.at» strays from «layout.seats[k].icon»")
     }
     assert(each[0] > 20 and each[1] > 20 and each[3] > 20 and each[2] == 0, "a miasma each but the one out's: «each»")
 }
@@ -499,25 +517,25 @@ miasmas_stay_home :: () #test {
 // long-lived one doesn't bury a quick one.
 miasmas_are_balanced :: () #test {
     layout := laid_out(2, LANDSCAPE)
-    for which: 0 < 6 {
+    for style, which: STYLES {
         *game := new_game(2)
-        game.identity[0] = if which < 5 then u8'1 << u8'which else 0
+        game.identity[0] = if which != .CHROME then u8'1 << u8'which else 0
         motes, _ := settled_motes(layout, game)
         *alive: f32 = 0
-        for m: motes.motes { if m.tag & MIASMA_MOTE != 0 and m.tag & 0xFF == 0 then alive += 1 }
-        want := STYLES[which].alive
-        assert(alive > want * 0.6 and alive < want * 1.4, "style «which» alone: «alive» alive, not about «want»")
+        for m: motes.motes { if m.tag & FIELD_MOTE != 0 and m.tag & 0xFF == 0 then alive += 1 }
+        want := style.alive
+        assert(alive > want * 0.6 and alive < want * 1.4, "«which» alone: «alive» alive, not about «want»")
     }
     // White and black, red and black: each about its share.
-    for pair: [2] [2] i64⟨⟨0, 2⟩, ⟨3, 2⟩⟩ {
+    for pair: [2] [2] Element⟨⟨.SUN, .OIL⟩, ⟨.FIRE, .OIL⟩⟩ {
         *game := new_game(2)
         game.identity[0] = (u8'1 << u8'pair[0]) | (u8'1 << u8'pair[1])
         motes, _ := settled_motes(layout, game)
-        *each: [6] f32
-        for m: motes.motes { if m.tag & MIASMA_MOTE != 0 and m.tag & 0xFF == 0 then each[i64'((m.tag >> 8) & 0xFF)] += 1 }
+        *each: [Element] f32
+        for m: motes.motes { if m.tag & FIELD_MOTE != 0 and m.tag & 0xFF == 0 then each[Element'((m.tag >> 8) & 0xFF)] += 1 }
         for which: pair {
             want := STYLES[which].alive / 2
-            assert(each[which] > want * 0.55 and each[which] < want * 1.45, "«pair»: style «which» «each[which]» alive, not about «want»")
+            assert(each[which] > want * 0.55 and each[which] < want * 1.45, "«pair»: «which» «each[which]» alive, not about «want»")
         }
     }
 }

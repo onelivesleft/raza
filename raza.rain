@@ -1522,7 +1522,8 @@ main :: (args: [] string) [failed: string] {
         // what's still in flight not yet done.
         stir_elements(elements, layout, game, screen, volleys, seconds)
         motes.flow_scale = MOTE_FLOW * cell
-        feed_miasmas(motes, random, layout, shown, seconds)
+        feed_elements(motes, random, layout, shown, elements, seconds)
+        if screen.drag.active then feed_stream(motes, random, layout, game, screen.drag.from, mouse, seconds)
         motes.update(seconds)
         steer_volleys(motes, volleys, random, layout, game, pending, seconds)
         if !screen.previewing then shown = shown_game(game, pending)

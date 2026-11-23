@@ -40,10 +40,10 @@ Mote_Style :: struct {
     hold:         f32 = MIASMA_PULL // how hard a miasma's motes are held to its spot (a spring, a second squared)
 }
 
-// Each colour's (WUBRG), then an artifact's.
-STYLES :: [6] Mote_Style⟨
-    // White: holy light, a sun (draw_suns) with motes of light slowly
-    // orbiting it, warm gold and white-hot sparkles.
+// Each element's (each colour's, WUBRG, then an artifact's).
+STYLES :: [Element] Mote_Style⟨
+    // White: holy light, flecks slowly orbiting in its sun's corona, warm
+    // gold and white-hot sparkles.
     ⟨colour: Draw.rgba(0xFFE9B0, 0.8), colour_end: Draw.rgba(0xFFD27A, 0.55), add: 1, flicker: 0.15, size: 0.035, size_end: 0.035,
      life: 1.8, rise: 0.45, swirl: 0.35, drag: 1.4, spread: 0.3, glint: Draw.rgb(0xFFFFF4), glint_chance: 0.4, glint_size: 1.5, alive: 32,
      glint_shape: .SPARK, orbit: 0.5, orbit_life: 8⟩,
@@ -70,54 +70,35 @@ STYLES :: [6] Mote_Style⟨
      life: 0.6, rise: -0.8, swirl: 0.2, drag: 2.0, spread: 1.6, streak: 0.03, glint: Draw.rgb(0xFFD99A), glint_chance: 0.2, alive: 60, shape: .SPARK, glint_shape: .SPARK⟩
 ⟩
 
-ARTIFACT_STYLE :: 5
-
-// A mote's tag: what it is (a miasma's, a landing's), and in its low 16
-// bits a miasma's seat.
-MIASMA_MOTE  :: u32'1 << 16
+// A mote's tag: what it is (a field's, the stream's, a landing's), and in
+// its low 16 bits a field's seat, its element above that.
+FIELD_MOTE   :: u32'1 << 16
+STREAM_MOTE  :: u32'2 << 16
 SPLASH_MOTE  :: u32'8 << 16
 
-// How far about its spot a miasma's motes are born (cells), and how hard
-// they're held to it. (A miasma's rate is each style's own: alive over life.)
-MIASMA_REACH :: 0.6
+// How hard a field's motes are held to its middle, by default. (A field's
+// rate of births is its style's own: alive over life.)
 MIASMA_PULL :: 2.5
 
-// An orbiting style's motes: born between ORBIT_LEAST and ORBIT_MOST cells
-// out (about the edge of its sun's glow), going round at its orbit's speed
-// ORBIT_RADIUS out.
-ORBIT_LEAST :: 0.45
-ORBIT_MOST :: 0.95
-ORBIT_RADIUS :: 0.7
+// The sun's flecks: born in its corona, from just past its ball to
+// ORBIT_MOST of its reach out, going round at its orbit's speed
+// ORBIT_RADIUS of its reach out.
+ORBIT_MOST :: 0.85
+ORBIT_RADIUS :: 0.68
 
 // Every mote's size, against its style's.
 MOTE_SCALE :: 1.8
 
-// The styles a player's motes are drawn from: each of their colours, or an
-// artifact's with none (into; how many).
-styles_of :: (identity: Identity, into: [] *i64 -> count: i64) #pure {
-    count = 0
-    for colour, i: [5] Mana⟨.WHITE, .BLUE, .BLACK, .RED, .GREEN⟩ {
-        if has_colour(identity, colour) {
-            into[count] = i
-            count += 1
-        }
-    }
-    if count == 0 {
-        into[0] = ARTIFACT_STYLE
-        count = 1
-    }
-}
-
-// A mote of a player's, of one of their styles (chosen at random), at a
+// A mote of a player's, of one of their elements (chosen at random), at a
 // place, moving, in their frame (up: away from them, toward the centre).
 mote_of :: (random: *Random.Generator, identity: Identity, at: V2, velocity: V2, up: V2, cell: f32, tag: u32 -> Particles.Mote) {
-    *styles: [6] i64
-    n := styles_of(identity, styles)
-    return mote_of_style(random, styles[random.below(n)], at, velocity, up, cell, tag)
+    *list: [6] Element
+    n := elements_of(identity, list)
+    return mote_of_style(random, list[random.below(n)], at, velocity, up, cell, tag)
 }
 
-// A mote of a style (STYLES' index), as mote_of.
-mote_of_style :: (random: *Random.Generator, which: i64, at: V2, velocity: V2, up: V2, cell: f32, tag: u32 -> Particles.Mote) {
+// A mote of an element's style, as mote_of.
+mote_of_style :: (random: *Random.Generator, which: Element, at: V2, velocity: V2, up: V2, cell: f32, tag: u32 -> Particles.Mote) {
     style := STYLES[which]
     glinting := random.chance(f64'style.glint_chance)
     colour := if glinting then style.glint else style.colour
@@ -138,38 +119,38 @@ mote_of_style :: (random: *Random.Generator, which: i64, at: V2, velocity: V2, u
             tag: tag, seed: f32'random.below(0.0, 100.0), shape: shape⟩
 }
 
-// Each miasma kept going for a frame: motes born about its player's damage
-// spot (their seat's icon), held about it by a pull, for a player not out.
-// Each of the player's colours keeps its share of its own number alive (so
-// a long-lived style doesn't pile up over a quick one in a mix), born
-// evenly over the miasma's disc (not bunched at its middle). A miasma's
-// mote is tagged with its seat, and its style above that.
-feed_miasmas :: (motes: *Particles.System, random: *Random.Generator, layout: Layout, game: Game, seconds: f32) {
+// Each player's fields' motes for a frame, for a player not out: each of
+// their elements keeps its share of its own number alive (so a long-lived
+// style doesn't pile up over a quick one in a mix), each born where its
+// element says (field_birth), held about its field's middle by a pull. A
+// field's mote is tagged with its seat, and its element above that.
+feed_elements :: (motes: *Particles.System, random: *Random.Generator, layout: Layout, game: Game, elements: Elements, seconds: f32) {
     cell := cell_of(layout)
-    for seat, k: layout.seats[:layout.count] {
+    for k: 0 < layout.count {
         if is_out(game, k) then continue
-        *styles: [6] i64
-        n := styles_of(game.identity[k], styles)
-        for which: styles[:n] {
+        *list: [6] Element
+        n := elements_of(game.identity[k], list)
+        for which, i: list[:n] {
             style := STYLES[which]
             // (its motes' life here: an orbiting one's its orbit's)
             lives := if style.orbit > 0 then style.orbit_life else style.life
             rate := style.alive / f32'n / Math.max(lives, 0.01)
-            for _: 0 < births(random, rate, seconds) {
-                angle := f32'random.below(0.0, Math.TAU)
-                least: f32 = if style.orbit > 0 then ORBIT_LEAST / ORBIT_MOST else 0
-                reach: f32 = if style.orbit > 0 then ORBIT_MOST else MIASMA_REACH
-                out := Math.sqrt(f32'random.below(f64'(least * least), 1.0)) * reach * cell
-                way := V2⟨Math.cos(angle), Math.sin(angle)⟩
-                at := seat.icon + way * out
-                *m := mote_of_style(random, which, at, ⟨0, 0⟩, seat.toward * -1, cell, MIASMA_MOTE | u32'k | (u32'which << 8))
-                m.home = seat.icon
+            births_now := births(random, rate, seconds)
+            if births_now == 0 then continue
+            f := rest_field(layout, k, i, n, elements)
+            for _: 0 < births_now {
+                at, outward := field_birth(random, which, f)
+                *m := mote_of_style(random, which, at, outward * (0.25 * style.spread * cell), f.up, cell, FIELD_MOTE | u32'k | (u32'which << 8))
+                m.home = f.start
                 m.pull = style.hold
                 if style.orbit > 0 {
-                    // Round its spot, clockwise, on a spring as strong as its
-                    // speed round (so a circle, a little out of round by
-                    // what's left of its own start), nothing else moving it.
-                    ratio := ORBIT_RADIUS * cell / out
+                    // Round its field's middle, clockwise, on a spring as
+                    // strong as its speed round (so a circle, a little out of
+                    // round by what's left of its own start), nothing else
+                    // moving it.
+                    out := Math.max(Math.length(at - f.start), 0.001)
+                    way := (at - f.start) / out
+                    ratio := ORBIT_RADIUS * f.reach / out
                     speed := style.orbit * ratio * Math.sqrt(ratio)
                     m.velocity = V2⟨0 - way.y, way.x⟩ * speed * out + m.velocity * 0.12
                     m.pull = speed * speed
@@ -182,6 +163,51 @@ feed_miasmas :: (motes: *Particles.System, random: *Random.Generator, layout: La
             }
         }
     }
+}
+
+// Where in a field at rest an element's mote is born, and the way out of
+// the field there: the field's own procedures (elements.rain's, its
+// shader's) say where it's what the mote comes from. The sun's flecks in
+// its corona; fire's sparks from its flames' tips; water's drops from its
+// crests; oil's and liquid metal's blobs from their edges, budding off
+// (their pull draws them back); the wind's leaves anywhere in it. A few
+// tries at a place that fits, then the last tried.
+field_birth :: (random: *Random.Generator, which: Element, f: Field -> at: V2, outward: V2) {
+    right := V2⟨0 - f.up.y, f.up.x⟩
+    *q := V2⟨0, 0⟩
+    for try: 0 < 12 {
+        angle := f32'random.below(0.0, Math.TAU)
+        way := V2⟨Math.cos(angle), Math.sin(angle)⟩
+        fits := if which is {
+            case .SUN:
+                q = way * f32'random.below(f64'(SUN_BALL * 1.05), f64'ORBIT_MOST)
+                true
+            case .FIRE:
+                q = V2⟨f32'random.below(-0.5, 0.5), f32'random.below(0.0, 0.95)⟩
+                paint, _ := fire_at(q, q, 0, f.time, f.seed, f.stir)
+                paint.w > 0.1 and paint.w < 0.55
+            case .WATER:
+                q = way * f32'random.below(0.5, 0.88)
+                height, _ := water_waves(q, f.time, f.seed, f.stir)
+                height > 0.6
+            case .OIL:
+                q = way * Math.sqrt(f32'random.below(0.1, 1.0))
+                paint, _ := oil_at(q, q, 0, f.time, f.seed, f.stir)
+                paint.w > 0.1 and paint.w < 0.7
+            case .CHROME:
+                q = way * Math.sqrt(f32'random.below(0.1, 1.0))
+                paint, _ := chrome_at(q, q, 0, f.time, f.seed, f.stir)
+                paint.w > 0.1 and paint.w < 0.7
+            case .WIND:
+                q = way * (Math.sqrt(f32'random.below(0.0, 1.0)) * 0.9)
+                true
+        }
+        if fits then break
+    }
+    at = f.start + (right * q.x + f.up * q.y) * f.reach
+    *away := right * q.x + f.up * q.y
+    if Math.length(away) > 0.0001 then away = Math.normalize(away)
+    outward = away
 }
 
 // How many are born in a frame at a rate a second: the whole number, and
@@ -205,6 +231,31 @@ stream_path :: (layout: Layout, game: Game, from: i64, finger: V2 -> start: V2, 
     end = ends
     middle := (start + ends) / 2
     bend = middle + (finger - middle) * STREAM_BEND
+}
+
+// The stream's motes for a frame of a drag: each of the dragger's elements
+// shedding its own along its braid of the curve, thrown on along it.
+STREAM_RATE :: 45
+feed_stream :: (motes: *Particles.System, random: *Random.Generator, layout: Layout, game: Game, from: i64, finger: V2, seconds: f32) {
+    cell := cell_of(layout)
+    seat := layout.seats[from]
+    if Math.length(finger - seat.icon) < 0.5 * cell then return
+    start, bend, end := stream_path(layout, game, from, finger)
+    *list: [6] Element
+    n := elements_of(game.identity[from], list)
+    for which, i: list[:n] {
+        braid := braided(start, bend, end, i, n, cell)
+        for _: 0 < births(random, STREAM_RATE / f32'n, seconds) {
+            t := f32'random.below(0.1, 1.0)
+            at := curve_at(start, braid, end, t)
+            ahead := curve_at(start, braid, end, Math.min(t + 0.02, 1)) - curve_at(start, braid, end, Math.max(t - 0.02, 0))
+            *way := V2⟨0, 0⟩
+            if Math.length(ahead) > 0.0001 then way = Math.normalize(ahead)
+            *m := mote_of_style(random, which, at, way * (1.5 * cell), seat.toward * -1, cell, STREAM_MOTE)
+            m.life = m.life * 0.6
+            motes.add(m)
+        }
+    }
 }
 
 // The point t of the way along a curve from a to c, pulled toward b.
@@ -348,9 +399,13 @@ settled_motes :: (layout: Layout, game: Game, from: i64 = -1, finger: V2 = ⟨0,
     *pending: [MAX_PLAYERS] [MAX_PLAYERS] i32
     *dealt := game
     thrown_at := SETTLE_FRAMES - i64'(volley_age * 60)
+    // (the fields' clocks as they were, to end where settled_elements' are)
+    *fields := settled_elements()
+    for *c: fields.clock { c -= f32'SETTLE_FRAMES / 60 }
     for frame: 0 < SETTLE_FRAMES {
         seconds: f32 = 1.0 / 60
-        feed_miasmas(made, random, layout, game, seconds)
+        for *c: fields.clock { c += seconds }
+        feed_elements(made, random, layout, game, fields, seconds)
         if frame == thrown_at and volley > 0 then strike(dealt, made, thrown, random, layout, pending, from, to, volley, finger)
         made.update(seconds)
         steer_volleys(made, thrown, random, layout, game, pending, seconds)
