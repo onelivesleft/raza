@@ -35,6 +35,7 @@ Raza :: program {
 #include "game.rain"
 #include "frames.rain"
 #include "motes.rain"
+#include "tendrils.rain"
 
 V2 :: #alias Math.Vector2(f32)
 
@@ -794,6 +795,25 @@ Screen_State :: struct {
     era:           Era           // which era's frames the parts are like
     motion:        Motion        // how fast their surfaces move
     surface_time:  f32           // how far they've moved, in features
+    fps:           f32           // frames a second, over the last half second (0: none yet, not shown)
+}
+
+// How often the frames a second shown are worked out again, in seconds.
+FPS_WINDOW :: 0.5
+
+// The frames a second, top right, on a chip of the capsule's colour, upright
+// to the screen.
+draw_fps :: (canvas: *Draw.Canvas, layout: Layout, fonts: Fonts, fps: f32) {
+    if fps <= 0 then return
+    cell := cell_of(layout)
+    text := "«i64'Math.round(fps)» fps"
+    width := f32'fonts.label.text_width(text)
+    height := f32'fonts.label.cap_height
+    pad := 0.18 * cell
+    size := V2⟨width + 2 * pad, height + 2 * pad⟩
+    at := V2⟨layout.size.x - 0.25 * cell - size.x, 0.25 * cell⟩
+    canvas.fill_rounded_rect(at, size, 0.2 * size.y, CAPSULE)
+    draw_centred(canvas, fonts.label, at + size / 2, 0, text, INK)
 }
 
 ////////////////////////////////
@@ -907,7 +927,7 @@ draw_settings :: (canvas: *Draw.Canvas, layout: Layout, fonts: Fonts, era: Era, 
     }
 }
 
-draw :: (canvas: *Draw.Canvas, layout: Layout, game: Game, fonts: Fonts, screen: Screen_State, motes: Particles.System) {
+draw :: (canvas: *Draw.Canvas, layout: Layout, game: Game, fonts: Fonts, screen: Screen_State, motes: Particles.System, volleys: Volleys = ⟨⟩) {
     cell := cell_of(layout)
     canvas.clear(BACKGROUND)
     *targeted: i64 = -1
@@ -924,14 +944,16 @@ draw :: (canvas: *Draw.Canvas, layout: Layout, game: Game, fonts: Fonts, screen:
     }
     // The motes: each miasma over its pool of shadow, a drag's stream, volleys.
     draw_miasma_pools(canvas, layout, game)
-    draw_hearts(canvas, layout, game, motes.time)
+    draw_hearts(canvas, layout, game, motes.time, volleys)
     motes.draw(canvas)
+    draw_black_attacks(canvas, layout, game, screen, volleys, motes.time)
     draw_capsule(canvas, layout, game, screen)
     draw_font_button(canvas, layout, fonts)
     if screen.counts.open or screen.counts.settling then draw_counts(canvas, layout, screen)
     if screen.drag.active then draw_drag(canvas, layout, game, fonts, screen.drag, screen.mouse, artifact_of(screen.era), motes.time)
     if screen.picker.open then draw_picker(canvas, layout, fonts, screen.picker, game, artifact_of(screen.era))
     if screen.settings_open then draw_settings(canvas, layout, fonts, screen.era, screen.motion)
+    draw_fps(canvas, layout, fonts, screen.fps)
 }
 
 ////////////////////////////////
@@ -983,7 +1005,7 @@ save_snapshots :: (folder: string) [failed: string] {
             if worth is { case damage: amount = damage; case asked: _ }
         }
         streaming := settled_motes(layout, game, 1, finger, amount)
-        draw(canvas, layout, game, fonts, ⟨drag: ⟨true, 1⟩, mouse: finger, can_undo: true, era: era⟩, streaming)
+        draw(canvas, layout, game, fonts, ⟨drag: ⟨true, 1⟩, mouse: finger, can_undo: true, era: era, fps: 60⟩, streaming)
         path := `scratch "«folder»/«names[i]».png"
         if canvas.save_png(path) is os_error then fail: failed = "can't write «path»: «os_error»"
         still := settled_motes(layout, game)
@@ -1047,6 +1069,7 @@ save_snapshots :: (folder: string) [failed: string] {
 // The program
 
 Options :: struct {
+    black_snapshot: string ⟦help: "capture black attack stages into this folder, and quit"⟧
     snapshot: string ⟦help: "draw each count of players into PNGs in this folder (raza_2.png to raza_6.png, and raza_grid.png), and quit"⟧
 }
 
@@ -1063,6 +1086,10 @@ main :: (args: [] string) [failed: string] {
     }
     else if bad_arguments {
         fail: failed = bad_arguments
+    }
+    if options.black_snapshot != "" {
+        if save_black_snapshots(options.black_snapshot) is failed then fail: failed
+        return
     }
     if options.snapshot != "" {
         if save_snapshots(options.snapshot) is failed then fail: failed
@@ -1097,6 +1124,8 @@ main :: (args: [] string) [failed: string] {
     *stored_frames := frames
     *stored_speed := speed
     *last_frame := Time.seconds_since_start()
+    *fps_since := last_frame
+    *fps_frames: i64 = 0
     *layout: Layout
     *fonts: Fonts
     *fonts_for := V2⟨0, 0⟩           // the size the fonts were made for (0: none yet)
@@ -1296,6 +1325,13 @@ main :: (args: [] string) [failed: string] {
         now := Time.seconds_since_start()
         seconds := f32'Math.min(now - last_frame, 0.1)
         last_frame = now
+        // (the frames a second: those counted over the last window)
+        fps_frames += 1
+        if now - fps_since >= FPS_WINDOW {
+            screen.fps = f32'(f64'fps_frames / (now - fps_since))
+            fps_frames = 0
+            fps_since = now
+        }
         target := if screen.counts.open then i64'Math.round(screen.counts.shown) else game.players
         screen.counts.move_lines(target, seconds)
         *shown := game
@@ -1354,7 +1390,7 @@ main :: (args: [] string) [failed: string] {
         surface_time += seconds * MOTION_RATES[i64'speed]
         screen.motion = speed
         screen.surface_time = surface_time
-        draw(canvas, layout, shown, fonts, screen, motes)
+        draw(canvas, layout, shown, fonts, screen, motes, volleys)
         canvas.present(w.handle, vsync: true)
         scratch.reset()
         still := !screen.drag.active and screen.moving_end < 0 and !screen.counts.held and !screen.counts.settling and !screen.previewing
