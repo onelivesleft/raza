@@ -730,12 +730,18 @@ draw_seat :: (canvas: *Draw.Canvas, layout: Layout, game: Game, fonts: Fonts, k:
             draw_centred(canvas, fonts.mana, place, seat.angle, MANA_GLYPHS[colour], Draw.rgba(0xF4EFE6, 0.5))
         }
     }
-    // Its life total: white with a black border and a drop shadow (falling
-    // as the parts' light, from the screen's top left, has it), on any part.
+    // Its life total: white with a black border and a drop shadow, cast
+    // from the screen's centre (falling away from it, toward its player: down
+    // as they read it) and a little to their right, as a drop shadow falls,
+    // on any part.
     cap := f32'fonts.life.cap_height
     life_colour := if out then Draw.rgba(0xFFFFFF, 0.55) else Draw.rgb(0xFFFFFF)
+    *away := seat.toward
+    if Math.length(seat.middle - layout.centre) > 1 then away = Math.normalize(seat.middle - layout.centre)
+    reader_right := V2⟨Math.cos(seat.angle), Math.sin(seat.angle)⟩
+    falls := Math.normalize(away + reader_right * LIFE_SHADOW_RIGHT)
     life_style := Draw.Text_Style⟨outline: Draw.rgb(0x000000), outline_width: Math.max(2, cap * LIFE_OUTLINE),
-                                  shadow: Draw.rgba(0x000000, 0.55), shadow_offset: V2⟨1, 1⟩ * (cap * LIFE_SHADOW), shadow_soft: cap * LIFE_SHADOW⟩
+                                  shadow: Draw.rgba(0x000000, 0.55), shadow_offset: falls * (cap * LIFE_SHADOW * 1.4), shadow_soft: cap * LIFE_SHADOW⟩
     life_text := "«game.life[k]»"
     life_width := f32'fonts.life.text_width(life_text)
     canvas.draw_text(fonts.life, placed(seat.middle, seat.angle, ⟨-life_width / 2, cap / 2⟩), life_text, life_colour, life_style, seat.angle)
@@ -764,6 +770,7 @@ draw_seat :: (canvas: *Draw.Canvas, layout: Layout, game: Game, fonts: Fonts, k:
 // against its capitals' height.
 LIFE_OUTLINE :: 0.045
 LIFE_SHADOW :: 0.06
+LIFE_SHADOW_RIGHT :: 0.5     // how far to its reader's right it falls, against how far down
 
 // How big a commander damage chip is (cells), and how far apart they are.
 CHIP_RADIUS :: 0.4
