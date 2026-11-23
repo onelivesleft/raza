@@ -577,7 +577,7 @@ Recess_Params :: struct {
 // its floor, of a colour of its own (the capsule's), each wall shaded where
 // it faces away from the light and warmly lit where it faces it, given as
 // what to lay over the surface (its colour premultiplied).
-recess_shade :: (from: Draw.Quad_Between, recess: Shader.Uniforms(Recess_Params) -> colour: V4) {
+recess_shade :: (from: Draw.Quad_Between, recess: Shader.Uniforms(Recess_Params), texture: Shader.Texture_2D, filtering: Shader.Sampler -> colour: V4) {
     p := from.pixel - recess.shape.xy
     d := recess_distance(p, recess.shape, recess.more)
     if d > 1 then return ⟨0, 0, 0, 0⟩
@@ -596,7 +596,8 @@ recess_shade :: (from: Draw.Quad_Between, recess: Shader.Uniforms(Recess_Params)
     shade := Math.max(0 - facing, 0) * wall * 0.48
     light := Math.max(facing, 0) * wall * 0.38
     kept := (1 - shade) * (1 - light)
-    rgb := recess.floor.xyz * (down * kept) + PART_WARM * light
+    grain := control_material(texture, filtering, from.pixel / Math.max(recess.shape.z * 3, 1))
+    rgb := grain * (down * kept) + PART_WARM * light
     alpha := 1 - (1 - down) * kept
     colour = V4⟨rgb.x, rgb.y, rgb.z, alpha⟩ * coverage
 }
@@ -609,7 +610,7 @@ draw_recess :: (canvas: *Draw.Canvas, layout: Layout, open: f32) {
     shape, more := recess_shape(layout, open)
     margin := shape.z + 2
     floor := V4⟨CAPSULE.r, CAPSULE.g, CAPSULE.b, 1⟩
-    canvas.draw_shader(shape.xy - V2⟨margin, margin⟩, V2⟨margin, margin⟩ * 2, RECESS.code, RECESS.bindings.recess, Recess_Params⟨shape, more, floor⟩)
+    canvas.draw_shader_image(shape.xy - V2⟨margin, margin⟩, V2⟨margin, margin⟩ * 2, RECESS.code, RECESS.bindings.recess, Recess_Params⟨shape, more, floor⟩, control_image, RECESS.bindings.texture, RECESS.bindings.filtering)
 }
 
 // The count of players, picked by dragging: touched, the players' button
@@ -990,7 +991,7 @@ draw_capsule :: (canvas: *Draw.Canvas, layout: Layout, game: Game, screen: Scree
     // column's, drawn after).
     p := capsule_centre(layout, .PLAYERS)
     if screen.counts.open or screen.counts.settling {
-        canvas.fill_circle(p, 0.52 * cell, lighter(CAPSULE, 0.1))
+        canvas.fill_circle(p, 0.52 * cell, Draw.rgba(0xF4DFAB, 0.14))
     }
     else {
         draw_people(canvas, p, game.players, cell, faded(INK, plus_shows))
@@ -1019,8 +1020,8 @@ draw_counts :: (canvas: *Draw.Canvas, layout: Layout, screen: Screen_State) {
     // one thing over the plus, not as rings left on its buttons)
     top := count_place(layout, screen.counts.shown, 2) - V2⟨0.6 * cell, 0.6 * cell⟩
     bottom := count_place(layout, screen.counts.shown, MAX_PLAYERS) + V2⟨0.6 * cell, 0.6 * cell⟩
-    canvas.fill_rounded_rect(top, bottom - top, 0.6 * cell, CAPSULE)
-    canvas.fill_circle(capsule_centre(layout, .PLAYERS), 0.52 * cell, lighter(CAPSULE, 0.1))
+    draw_control_panel(canvas, top, bottom - top, 0.6 * cell, cell)
+    canvas.fill_circle(capsule_centre(layout, .PLAYERS), 0.52 * cell, Draw.rgba(0xF4DFAB, 0.14))
     for count: 2 <= MAX_PLAYERS {
         away := Math.abs(f32'count - screen.counts.shown)
         fade := Math.clamp(1 - away * 0.4, 0.2, 1)
@@ -1396,6 +1397,9 @@ main :: (args: [] string) [failed: string] {
     if loaded := Draw.image_from_bytes(MATERIAL_BYTES[:]) { material_image = loaded }
     else if bad_image { fail: failed = "cannot load textures/materials-v1.png" }
     defer material_image.destroy()
+    if loaded_controls := Draw.image_from_bytes(CONTROL_BYTES[:]) { control_image = loaded_controls }
+    else if bad_image { fail: failed = "cannot load textures/card-back-v1.png" }
+    defer control_image.destroy()
     if options.elements != "" {
         if save_element_sheet(options.elements) is failed then fail: failed
         return

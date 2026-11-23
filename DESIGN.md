@@ -250,3 +250,5 @@ show all ten pairs alongside gold.
 ## Restrained attack effects
 
 Idle handles are compact, with no emitted motes. They enlarge when engaged; multicolour handles keep fixed positions. Green rests as a readable leaf and becomes wind when drawn out. Targeting trails are narrower, less widely braided, and emit eight motes per second across their colours. Motes are smaller and bloom is weaker and tighter. Blue uses smooth volume shading without a flat water bitmap overlay; artifact reflections are warm and softened. Blue and green attacks have smaller, shorter bodies. Black retains its strand, plunge, pulse and single-hit strike sequence. Damage timing and hit testing are unchanged.
+
+The central controls and player-count selector use textures/card-back-v1.png, a warm mottled brown card-back-inspired material. Their existing rounded geometry and recessed lighting remain. Asset prompts and the separate transparent five-colour dot icon are documented in textures/CARD-BACK-ASSETS.md.

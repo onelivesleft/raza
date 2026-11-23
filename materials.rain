@@ -51,3 +51,42 @@ material_tiles_follow_identity :: () #test {
         for j: i + 1 < 5 { assert(material_tile((u8'1 << u8'i) | (u8'1 << u8'j)) == 6) }
     }
 }
+
+// Card-back material, shared by the central controls and count selector.
+CONTROL_BYTES :: #data "textures/card-back-v1.png"
+control_image: Draw.Image
+
+control_material :: (texture: Shader.Texture_2D, filtering: Shader.Sampler, uv: V2 -> V3) {
+    a := Math.fract(uv)
+    b := Math.fract(uv + V2⟨0.5, 0.5⟩)
+    wave := Math.sin(a * f32'Math.PI)
+    weight := wave * wave
+    p00 := Shader.sample_level(texture, filtering, a, 0).xyz
+    p10 := Shader.sample_level(texture, filtering, V2⟨b.x, a.y⟩, 0).xyz
+    p01 := Shader.sample_level(texture, filtering, V2⟨a.x, b.y⟩, 0).xyz
+    p11 := Shader.sample_level(texture, filtering, b, 0).xyz
+    return Math.mix(Math.mix(p11, p01, weight.x), Math.mix(p10, p00, weight.x), weight.y)
+}
+
+Control_Panel_Params :: struct {
+    box: V4     // centre, half size
+    style: V4   // corner radius, texture scale, reserved
+}
+
+control_panel_shade :: (from: Draw.Quad_Between, panel: Shader.Uniforms(Control_Panel_Params), texture: Shader.Texture_2D, filtering: Shader.Sampler -> colour: V4) {
+    p := from.pixel - panel.box.xy
+    distance := round_box_distance(p, panel.box.zw, panel.style.x)
+    if distance > 1 then return V4⟨0, 0, 0, 0⟩
+    coverage := Math.clamp(0.5 - distance, 0, 1)
+    rgb := control_material(texture, filtering, from.pixel / panel.style.y) * (0.78 + 0.22 * Math.smoothstep(0, 5, 0 - distance))
+    return V4⟨rgb.x, rgb.y, rgb.z, 1⟩ * coverage
+}
+
+Control_Panel :: shader { vertex: Draw.quad_place; fragment: control_panel_shade }
+CONTROL_PANEL :: Control_Panel(Draw.SHADER_TARGET)
+
+draw_control_panel :: (canvas: *Draw.Canvas, at: V2, size: V2, radius: f32, cell: f32) {
+    centre := at + size / 2
+    params := Control_Panel_Params⟨V4⟨centre.x, centre.y, size.x / 2, size.y / 2⟩, V4⟨radius, cell * 6, 0, 0⟩⟩
+    canvas.draw_shader_image(at - V2⟨1, 1⟩, size + V2⟨2, 2⟩, CONTROL_PANEL.code, CONTROL_PANEL.bindings.panel, params, control_image, CONTROL_PANEL.bindings.texture, CONTROL_PANEL.bindings.filtering)
+}
