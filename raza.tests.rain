@@ -525,15 +525,21 @@ miasmas_are_balanced :: () #test {
 // Each era is finer and quieter than the one before: every look's features
 // no bigger, its contrast no higher, and the era's broad variation less.
 eras_get_finer :: () #test {
-    for era: 1 < 3 {
-        for which: 0 < 7 {
-            before := LOOKS[era - 1][which]
-            now := LOOKS[era][which]
-            assert(now.scale <= before.scale, "era «era», look «which»: «now.scale» features, bigger than «before.scale»")
-            assert(now.strength <= before.strength, "era «era», look «which»: «now.strength» contrast, more than «before.strength»")
-        }
-        assert(ERA_FEELS[era].broad < ERA_FEELS[era - 1].broad, "era «era»'s broad variation is less")
+    for now, era: LOOKS {
+        if era == .ORIGINAL then continue
+        earlier := Era'(i64'era - 1)
+        before := LOOKS[earlier]
+        finer(era, "the artifact's", before.artifact, now.artifact)
+        finer(era, "gold's", before.gold, now.gold)
+        for look, colour: now.colours { finer(era, "«colour»'s", before.colours[colour], look) }
+        assert(ERA_FEELS[era].broad < ERA_FEELS[earlier].broad, "«era»'s broad variation is less")
     }
+}
+
+// A look no bigger, and its contrast no higher, than the one before's.
+finer :: (era: Era, which: string, before: Look, now: Look) {
+    assert(now.scale <= before.scale, "«era», «which» look: «now.scale» features, bigger than «before.scale»")
+    assert(now.strength <= before.strength, "«era», «which» look: «now.strength» contrast, more than «before.strength»")
 }
 
 // The controls are a plus: the players in the middle, undo on the left

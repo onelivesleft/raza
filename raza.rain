@@ -62,9 +62,9 @@ ICON_FAMILY   :: "Mana"          // Magic's own symbols (the colours'); other ic
 // Each colour's symbol (Mana's ms-w to ms-g), in WUBRG order; its circle's
 // colour (Magic's own, as the cards' mana symbols are printed); and the
 // colour a player's part is in that colour (the colour pie's).
-MANA_GLYPHS  :: [5] string⟨"\u{E600}", "\u{E601}", "\u{E602}", "\u{E603}", "\u{E604}"⟩
-MANA_CIRCLES :: [5] Draw.RGBA⟨Draw.rgb(0xFFFBD5), Draw.rgb(0xAAE0FA), Draw.rgb(0xCBC2BF), Draw.rgb(0xF9AA8F), Draw.rgb(0x9BD3AE)⟩
-MANA_GROUNDS :: [5] Draw.RGBA⟨Draw.rgb(0xF9FAF4), Draw.rgb(0x0E68AB), Draw.rgb(0x150B00), Draw.rgb(0xD3202A), Draw.rgb(0x00733E)⟩
+MANA_GLYPHS  :: [Mana] string⟨"\u{E600}", "\u{E601}", "\u{E602}", "\u{E603}", "\u{E604}"⟩
+MANA_CIRCLES :: [Mana] Draw.RGBA⟨Draw.rgb(0xFFFBD5), Draw.rgb(0xAAE0FA), Draw.rgb(0xCBC2BF), Draw.rgb(0xF9AA8F), Draw.rgb(0x9BD3AE)⟩
+MANA_GROUNDS :: [Mana] Draw.RGBA⟨Draw.rgb(0xF9FAF4), Draw.rgb(0x0E68AB), Draw.rgb(0x150B00), Draw.rgb(0xD3202A), Draw.rgb(0x00733E)⟩
 MANA_INK     :: Draw.rgb(0x111111)
 
 // The life total's ink on a light part (white's).
@@ -259,8 +259,8 @@ toggle_at :: (layout: Layout, p: V2 -> seat: i64, colour: i64) [absent] {
 // they've done, their damage icon, their drag): their identity's first
 // colour (WUBRG), or an artifact's when they've none.
 accent_of :: (identity: Identity, artifact: Draw.RGBA -> Draw.RGBA) #pure {
-    for colour, i: [5] Mana⟨.WHITE, .BLUE, .BLACK, .RED, .GREEN⟩ {
-        if has_colour(identity, colour) then return MANA_GROUNDS[i]
+    for ground, colour: MANA_GROUNDS {
+        if has_colour(identity, colour) then return ground
     }
     return artifact
 }
@@ -741,14 +741,15 @@ draw_seat :: (canvas: *Draw.Canvas, layout: Layout, game: Game, fonts: Fonts, k:
     r := TOGGLE_RADIUS * cell
     for place: places { canvas.fill_glow(place, r * 1.8, Draw.rgba(0x000000, 0.3)) }
     for place, i: places {
-        set := has_colour(game.identity[k], Mana'u8'i)
-        if set {
-            canvas.fill_circle(place, r, MANA_CIRCLES[i])
-            draw_centred(canvas, fonts.mana, place, seat.angle, MANA_GLYPHS[i], MANA_INK)
+        // (the row's places in Mana's order)
+        colour := Mana'i
+        if has_colour(game.identity[k], colour) {
+            canvas.fill_circle(place, r, MANA_CIRCLES[colour])
+            draw_centred(canvas, fonts.mana, place, seat.angle, MANA_GLYPHS[colour], MANA_INK)
         }
         else {
             canvas.fill_circle(place, r, Draw.rgba(0x000000, 0.34))
-            draw_centred(canvas, fonts.mana, place, seat.angle, MANA_GLYPHS[i], Draw.rgba(0xF4EFE6, 0.5))
+            draw_centred(canvas, fonts.mana, place, seat.angle, MANA_GLYPHS[colour], Draw.rgba(0xF4EFE6, 0.5))
         }
     }
     draw_centred(canvas, fonts.life, seat.middle, seat.angle, "«game.life[k]»", ink)
@@ -1034,11 +1035,11 @@ draw_settings :: (canvas: *Draw.Canvas, layout: Layout, fonts: Fonts, era: Era, 
     // (each era's button in its gold; the speeds in the capsule's colour)
     for choice: [3] Era⟨.ORIGINAL, .MODERN, .M15⟩ {
         low, high := era_button(choice)
-        draw_choice(canvas, fonts, c, cell, low, high, LOOKS[i64'choice][GOLD_LOOK].ground, choice == era, ERA_NAMES[i64'choice])
+        draw_choice(canvas, fonts, c, cell, low, high, LOOKS[choice].gold.ground, choice == era, ERA_NAMES[choice])
     }
     for choice: [4] Motion⟨.OFF, .SLOW, .MEDIUM, .FAST⟩ {
         low, high := motion_button(choice)
-        draw_choice(canvas, fonts, c, cell, low, high, lighter(CAPSULE, 0.25), choice == motion, MOTION_NAMES[i64'choice])
+        draw_choice(canvas, fonts, c, cell, low, high, lighter(CAPSULE, 0.25), choice == motion, MOTION_NAMES[choice])
     }
 }
 
@@ -1174,7 +1175,7 @@ save_snapshots :: (folder: string) [failed: string] {
         if fonts.reload_fonts(TEXT_FAMILIES[0], layout) is os_error then fail: failed = "no font: «os_error»"
         settled, _ := settled_motes(layout, game)
         draw(canvas, layer, layout, game, fonts, ⟨can_undo: true, era: era⟩, settled, elements)
-        path := `scratch "«folder»/raza_frames_«ERA_NAMES[i64'era]».png"
+        path := `scratch "«folder»/raza_frames_«ERA_NAMES[era]».png"
         if canvas.save_png(path) is os_error then fail: failed = "can't write «path»: «os_error»"
     }
 }
@@ -1553,7 +1554,7 @@ main :: (args: [] string) [failed: string] {
         screen.can_redo = timeline.future.count > 0
         screen.era = frames
         // (the surfaces moved on by the frame's time at the chosen speed)
-        surface_time += seconds * MOTION_RATES[i64'speed]
+        surface_time += seconds * MOTION_RATES[speed]
         screen.motion = speed
         screen.surface_time = surface_time
         draw(canvas, layer, layout, shown, fonts, screen, motes, elements, volleys)
