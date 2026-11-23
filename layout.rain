@@ -28,13 +28,10 @@ ICON_ALONG :: 0.5
 // is dragged toward the next.
 LEAST_SPLIT :: 0.04
 
-// The side of the screen a player sits at.
-Side :: enum u8 {
-    TOP
-    RIGHT
-    BOTTOM
-    LEFT
-}
+// The steps a player's facing turns in (radians): a part's text is drawn at
+// one of only so many angles, however its lines are dragged (each angle's
+// glyphs drawn once), and a part facing a side faces it exactly.
+FACING_STEP :: f32'Math.TAU / 180
 
 // Where the lines from the centre meet the screen's edge: each a share of
 // the way round it, clockwise from its top-left corner (0 up to 1), in
@@ -50,8 +47,7 @@ Seat :: struct {
     count:   i64                 // how many of outline's points it has
     middle:  V2                  // its life total's centre: the outline's centroid
     icon:    V2                  // its damage icon's centre, toward the screen's centre
-    side:    Side                // the side its player sits at
-    toward:  V2                  // from the screen's centre toward its player
+    toward:  V2                  // from the screen's centre toward its player: halfway between its lines
     angle:   f32                 // its text's turn (Draw's), the right way up for its player
     room:    f32                 // from middle to the nearest edge of its outline
     reach:   f32                 // how far toward its player it goes: its outline's furthest point along toward
@@ -296,26 +292,20 @@ centroid :: (points: [] V2 -> V2) #pure {
     return sum / (3 * area)
 }
 
-// Which way up a player's text is at their side: the bottom's is as the
-// screen is, the top's upside down, the left's turned a quarter clockwise
-// (running down) and the right's a quarter the other way.
-angle_of :: (side: Side -> f32) #pure {
-    half_pi := f32'Math.PI / 2
-    return if side is {
-    case .BOTTOM: 0
-    case .LEFT: half_pi
-    case .TOP: 2 * half_pi
-    case .RIGHT: -half_pi
-    }
+// Which way a player between two lines faces (as an angle from the centre,
+// y down): halfway round from the first line to the next, in FACING_STEPs.
+facing_between :: (centre: V2, first: V2, next: V2 -> f32) #pure {
+    a := Math.atan2(first.y - centre.y, first.x - centre.x)
+    b := Math.atan2(next.y - centre.y, next.x - centre.x)
+    halfway := a + wrapped(b - a) / 2
+    return Math.round(halfway / FACING_STEP) * FACING_STEP
 }
 
-toward_of :: (side: Side -> V2) #pure {
-    return if side is {
-    case .TOP: V2⟨0, -1⟩
-    case .RIGHT: V2⟨1, 0⟩
-    case .BOTTOM: V2⟨0, 1⟩
-    case .LEFT: V2⟨-1, 0⟩
-    }
+// The turn of a player's text, the right way up for them, when they're
+// toward a way from the centre: a player below it reads it as the screen is
+// (0), one above upside down, one at the left turned a quarter clockwise.
+text_angle :: (toward: V2 -> f32) #pure {
+    return Math.atan2(-toward.x, toward.y)
 }
 
 // The players' parts of a screen of a size, split as splits says.
@@ -357,23 +347,10 @@ lay_out :: (size: V2, splits: Splits -> layout: Layout) #pure {
         points := seat.outline[:seat.count]
         seat.middle = centroid(points)
         seat.icon = seat.middle + (centre - seat.middle) * ICON_ALONG
-        // Its side: the one most of its edge is on.
-        *lengths: [4] f32
-        for i: 1 < seat.count - 1 {
-            a := points[i]
-            b := points[i + 1]
-            mid := (a + b) / 2
-            on := if Math.abs(mid.y) < 1 then Side.TOP else if Math.abs(mid.y - size.y) < 1 then Side.BOTTOM
-                  else if Math.abs(mid.x) < 1 then Side.LEFT else Side.RIGHT
-            lengths[i64'on] += Math.length(b - a)
-        }
-        *best := Side.TOP
-        for candidate: [4] Side⟨.TOP, .RIGHT, .BOTTOM, .LEFT⟩ {
-            if lengths[i64'candidate] > lengths[i64'best] then best = candidate
-        }
-        seat.side = best
-        seat.toward = toward_of(best)
-        seat.angle = angle_of(best)
+        // Its player faces it halfway between its lines.
+        facing := facing_between(centre, layout.ends[k], layout.ends[(k + 1) % n])
+        seat.toward = ⟨Math.cos(facing), Math.sin(facing)⟩
+        seat.angle = text_angle(seat.toward)
         *room: f32 = 1e30
         *reach: f32 = 0
         for a, i: points {

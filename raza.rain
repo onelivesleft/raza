@@ -99,53 +99,67 @@ toggles_fit :: (points: [] V2, places: [5] V2, r: f32 -> bool) #pure {
     return true
 }
 
-// Where a part's colour toggles go: a row along its player's edge, from its
-// left end as they see it, moved right until the row's clear of the part's
-// sides.
+// Where a part's colour toggles go: a row across its player's frame (along
+// their text), as near them as it fits, and in it as far left as it fits,
+// clear of the part's sides. A player facing a side has their row a gap
+// from the screen's edge and its nearest toggle the same gap from the
+// part's divider; one facing into a corner has it as near the corner as it
+// fits.
 toggle_places :: (layout: Layout, seat: Seat -> places: [5] V2) #pure {
     places = ⟨⟩
     cell := cell_of(layout)
     r := TOGGLE_RADIUS * cell
+    gap := TOGGLE_GAP * cell
     points := seat.outline[:seat.count]
     // (the part in its player's frame: x along their text, y toward them)
-    *bottom: f32 = -1e30
-    for p: points { bottom = Math.max(bottom, local_of(seat.middle, seat.angle, p).y) }
     *left: f32 = 1e30
     *right: f32 = -1e30
+    *top: f32 = 1e30
+    *bottom: f32 = -1e30
     for p: points {
         l := local_of(seat.middle, seat.angle, p)
-        if l.y >= bottom - 1 {
-            left = Math.min(left, l.x)
-            right = Math.max(right, l.x)
-        }
+        left = Math.min(left, l.x)
+        right = Math.max(right, l.x)
+        top = Math.min(top, l.y)
+        bottom = Math.max(bottom, l.y)
     }
-    // The row is a gap from the screen's edge, and its nearest toggle the
-    // same gap from the part's divider: found going along the edge in
-    // steps, then halved down to where it's exactly that far.
+    // Rows from the nearest their player's edge lets, back toward the
+    // centre, each tried along in steps; the first place a row fits is
+    // halved down to where it only just does.
+    step := 0.1 * cell
+    *y := bottom - r - gap
+    while y > top + r + gap {
+        *x := left
+        while x < right {
+            if row_fits(layout, seat, points, x, y) {
+                *near := x - step
+                *far := x
+                for _: 0 < 12 {
+                    middle := (near + far) / 2
+                    if row_fits(layout, seat, points, middle, y) then far = middle else near = middle
+                }
+                places = toggle_row(seat, far, y, cell)
+                return
+            }
+            x += step
+        }
+        y -= step
+    }
+    // (a part with no room: the row at its player's edge, for what shows)
+    places = toggle_row(seat, left, bottom - r - gap, cell)
+}
+
+// Whether a part's toggle row, its first at x, y in its player's frame,
+// fits: the first the gap from the part's sides, the rest at least half
+// that, and all clear of the font button.
+row_fits :: (layout: Layout, seat: Seat, points: [] V2, x: f32, y: f32 -> bool) #pure {
+    cell := cell_of(layout)
+    r := TOGGLE_RADIUS * cell
     gap := TOGGLE_GAP * cell
-    y := bottom - r - gap
-    *near := left
-    *far := left
-    step := 0.05 * cell
-    loop {
-        if far > right {
-            places = toggle_row(seat, far, y, cell)
-            return
-        }
-        first := placed(seat.middle, seat.angle, ⟨far, y⟩)
-        row := toggle_row(seat, far, y, cell)
-        if inside(first, points) and clearance(first, points) >= r + gap - 0.5 and toggles_fit(points, row, r + 0.5 * gap) and
-           clear_of_font_button(layout, row, r + 0.5 * gap)
-            break
-        near = far
-        far += step
-    }
-    for _: 0 < 12 {
-        middle := (near + far) / 2
-        first := placed(seat.middle, seat.angle, ⟨middle, y⟩)
-        if inside(first, points) and clearance(first, points) >= r + gap - 0.5 then far = middle else near = middle
-    }
-    places = toggle_row(seat, far, y, cell)
+    first := placed(seat.middle, seat.angle, ⟨x, y⟩)
+    if !inside(first, points) or clearance(first, points) < r + gap - 0.5 then return false
+    row := toggle_row(seat, x, y, cell)
+    return toggles_fit(points, row, r + 0.5 * gap) and clear_of_font_button(layout, row, r + 0.5 * gap)
 }
 
 // A row of toggles in a part's player's frame, the first at x, y.
@@ -461,8 +475,11 @@ Count_Picker :: struct {
     progress: f32
 }
 
-// How long the lines take to move from a count's to the next's, in seconds.
-LINES_STEP_TIME :: 0.18
+// How long the lines take to move from a count's to the next's, in seconds:
+// the step to the count they're going to, and one they're passing through
+// (fast-forwarded, as the finger's gone on past it).
+LINES_STEP_TIME         :: 0.18
+LINES_PASSING_STEP_TIME :: 0.05
 
 // Whether the lines are shown as anything but the game's count's.
 lines_moving :: (counts: Count_Picker, players: i64 -> bool) #pure {
@@ -483,7 +500,8 @@ shown_splits :: (counts: Count_Picker, splits: [] Splits, size: V2 -> Splits) #p
 }
 
 // The lines moved on by a frame's time toward a count: a step at a time,
-// each LINES_STEP_TIME, starting the next when one's done.
+// starting the next when one's done; each step to a count short of the
+// target fast-forwarded, the last at its own pace.
 move_lines :: (counts: *Count_Picker, target: i64, seconds: f32) {
     // (the first frame: the lines start as the game's, still)
     if counts.laid == 0 {
@@ -496,7 +514,8 @@ move_lines :: (counts: *Count_Picker, target: i64, seconds: f32) {
         counts.toward = if target > counts.laid then counts.laid + 1 else counts.laid - 1
         counts.progress = 0
     }
-    counts.progress += seconds / LINES_STEP_TIME
+    step_time: f32 = if counts.toward == target then LINES_STEP_TIME else LINES_PASSING_STEP_TIME
+    counts.progress += seconds / step_time
     if counts.progress >= 1 {
         counts.laid = counts.toward
         counts.progress = 0

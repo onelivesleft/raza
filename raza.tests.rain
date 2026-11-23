@@ -45,33 +45,66 @@ parts_start_equal :: () #test {
     }
 }
 
+// Whether a part's player faces a way (to within a hair), and their text's
+// turned to match.
+faces :: (seat: Seat, way: V2, angle: f32 -> bool) {
+    return near_point(seat.toward * 1000, way * 1000) and Math.abs(turn_between(seat.angle, angle)) < 0.001
+}
+
 // Two players have the halves, top and bottom, each facing its own side.
 two_have_the_halves :: () #test {
     layout := laid_out(2, PORTRAIT)
-    sides := [2] Side⟨layout.seats[0].side, layout.seats[1].side⟩
-    assert(sides[0] == .BOTTOM and sides[1] == .TOP, "«sides»")
     assert(near_point(layout.ends[0], ⟨1440, 1080⟩) and near_point(layout.ends[1], ⟨0, 1080⟩), "«layout.ends[:2]»")
-    assert(layout.seats[1].angle == f32'Math.PI, "the top's text is upside down")
+    assert(faces(layout.seats[0], ⟨0, 1⟩, 0), "the bottom's faces down: «layout.seats[0].toward»")
+    assert(faces(layout.seats[1], ⟨0, -1⟩, f32'Math.PI), "the top's faces up, its text upside down: «layout.seats[1].toward»")
 }
 
-// Three players: a line up to the top's middle, the others equal from it.
+// Three players: a line up to the top's middle, the others equal from it;
+// the bottom's player faces down, the others up and out to either side.
 three_start_from_the_top :: () #test {
     layout := laid_out(3, LANDSCAPE)
     assert(near_point(layout.ends[0], ⟨1080, 0⟩), "up to the top's middle: «layout.ends[0]»")
-    sides := [3] Side⟨layout.seats[0].side, layout.seats[1].side, layout.seats[2].side⟩
-    assert(sides[0] == .RIGHT and sides[1] == .BOTTOM and sides[2] == .LEFT, "«sides»")
+    assert(faces(layout.seats[1], ⟨0, 1⟩, 0), "the bottom's faces down: «layout.seats[1].toward»")
+    right := layout.seats[0].toward
+    left := layout.seats[2].toward
+    assert(right.x > 0.5 and right.y < -0.1 and left.x < -0.5 and left.y < -0.1, "the others face up and out: «right», «left»")
+    assert(near_point(right * 1000, V2⟨-left.x, left.y⟩ * 1000), "...alike: «right», «left»")
 }
 
-// Four players: an X between the corners, one at each side.
+// Four players: an X between the corners, one facing each side.
 four_are_an_x :: () #test {
     layout := laid_out(4, LANDSCAPE)
     for end: layout.ends[:4] {
         at_corner := (Math.abs(end.x) < 0.5 or Math.abs(end.x - 2160) < 0.5) and (Math.abs(end.y) < 0.5 or Math.abs(end.y - 1440) < 0.5)
         assert(at_corner, "«end» is a corner")
     }
-    *seen: [4] bool
-    for seat: layout.seats[:4] { seen[i64'seat.side] = true }
-    assert(seen[0] and seen[1] and seen[2] and seen[3], "one at each side")
+    half_pi := f32'Math.PI / 2
+    assert(faces(layout.seats[0], ⟨1, 0⟩, -half_pi), "right: «layout.seats[0].toward»")
+    assert(faces(layout.seats[1], ⟨0, 1⟩, 0), "bottom: «layout.seats[1].toward»")
+    assert(faces(layout.seats[2], ⟨-1, 0⟩, half_pi), "left: «layout.seats[2].toward»")
+    assert(faces(layout.seats[3], ⟨0, -1⟩, f32'Math.PI), "top: «layout.seats[3].toward»")
+}
+
+// Every player faces halfway between their part's lines (to a FACING_STEP),
+// into their part, however the lines are dragged.
+players_face_between_their_lines :: () #test {
+    *dragged := equal_splits(4, LANDSCAPE)
+    dragged.move_split(0, dragged.at[0] + 0.07)
+    for splits: [7] Splits⟨equal_splits(2, LANDSCAPE), equal_splits(3, LANDSCAPE), equal_splits(4, LANDSCAPE), equal_splits(5, LANDSCAPE),
+                           equal_splits(6, LANDSCAPE), equal_splits(5, PORTRAIT), dragged⟩ {
+        layout := lay_out(LANDSCAPE, splits)
+        n := layout.count
+        for seat, k: layout.seats[:n] {
+            to_first := Math.normalize(layout.ends[k] - layout.centre)
+            to_next := Math.normalize(layout.ends[(k + 1) % n] - layout.centre)
+            first := Math.acos(Math.clamp(Math.dot(seat.toward, to_first), -1, 1))
+            next := Math.acos(Math.clamp(Math.dot(seat.toward, to_next), -1, 1))
+            assert(Math.abs(first - next) <= FACING_STEP + 0.001, "«n» players: part «k» faces «first» from one line, «next» from the other")
+            if at := seat_at(layout, layout.centre + seat.toward * 100) { assert(at == k, "«n» players: part «k» faces into «at»'s") }
+            else if absent { assert(false, "«n» players: part «k» faces off the screen") }
+            assert(Math.abs(turn_between(seat.angle, text_angle(seat.toward))) < 0.001, "«n» players: part «k»'s text is turned to its facing")
+        }
+    }
 }
 
 // The edge's shares go round and back: a point of the edge is the share
@@ -200,6 +233,17 @@ lines_step_toward_a_count :: () #test {
         assert(Math.abs(picking.toward - picking.laid) <= 1, "a step at a time: «picking.laid» toward «picking.toward»")
     }
     assert(seen[4] and seen[5] and picking.laid == 6 and picking.toward == 6, "through four and five to six")
+    // Passing through four and five is fast-forwarded; the last step, to six,
+    // takes its own time.
+    *timed := Count_Picker⟨laid: 3, toward: 3⟩
+    *frames := 0
+    while timed.laid != 6 and frames < 1000 {
+        timed.move_lines(6, 0.01)
+        frames += 1
+    }
+    total: f32 = 2 * LINES_PASSING_STEP_TIME + LINES_STEP_TIME
+    expected := i64'Math.round(total / 0.01)
+    assert(Math.abs(frames - expected) <= 2, "three to six took «frames» frames of 10 ms, not about «expected»")
     // A picker that's never moved starts still, at the count it's given,
     // however long its first frame.
     *fresh: Count_Picker
