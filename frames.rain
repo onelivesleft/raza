@@ -165,7 +165,7 @@ part_shade :: (from: Draw.Quad_Between, part: Shader.Uniforms(Part_Params) -> co
     }
     light := Math.mix(base, PART_WARM, 0.55)
     shade := base * PART_COOL
-    // (its surface: a pool, rusting metal, or its look's pattern lighting
+    // (its surface: a forest floor, rusting metal, open water, or its look's pattern lighting
     // and shading it; the first two in its player's frame)
     surface := part.toward.w
     local_y := d.y * Math.cos(angle) - d.x * Math.sin(angle)
@@ -177,7 +177,7 @@ part_shade :: (from: Draw.Quad_Between, part: Shader.Uniforms(Part_Params) -> co
         rgb = rust_at(V2⟨local_x, local_y⟩, base, part.look.y, part.look.w)
     }
     else if surface > 0.5 {
-        rgb = pool_at(V2⟨local_x, local_y⟩, base, part.look.y, part.look.w, part.more.x)
+        rgb = open_water_at(V2⟨local_x, local_y⟩, base, part.look.y, part.look.w, part.more.x)
     }
     else {
         v := Patterns.at(Patterns.Kind'i32'(part.look.x + 0.5), p, part.look.y, part.look.w, part.more.x, angle, part.more.y, part.more.z)
@@ -201,31 +201,29 @@ part_shade :: (from: Draw.Quad_Between, part: Shader.Uniforms(Part_Params) -> co
     colour = V4⟨rgb.x * coverage, rgb.y * coverage, rgb.z * coverage, coverage⟩
 }
 
-// A pool seen from above, at a point in its player's frame (pixels): its
-// floor's tiles through the water, bent by the ripples on its surface; the
-// water clear and blue, deeper and shallower in slow patches; and over it
-// the caustics, the light the ripples gather into bright networks, two of
-// them drifting over each other (bright where cells of scattered points
-// meet), moving with time.
-pool_at :: (at: V2, base: V3, scale: f32, seed: f32, time: f32 -> V3) {
-    q := at / (scale * 2.2) + V2⟨seed * 3.7, seed * 1.3⟩
-    bend := V2⟨Patterns.noise(q * 0.9 + V2⟨time * 0.25, 0⟩), Patterns.noise(q * 0.9 + V2⟨5.2, 0 - time * 0.21⟩)⟩ - V2⟨0.5, 0.5⟩
-    // (the floor's tiles, seen through it, bent)
-    tile := at / (scale * 1.6) + bend * 0.35
-    f := Math.abs(Math.fract(tile) - V2⟨0.5, 0.5⟩)
-    grout := Math.smoothstep(0.46, 0.5, Math.max(f.x, f.y))
-    // (the caustics)
-    c1 := Patterns.cells(q + bend * 0.8 + V2⟨time * 0.12, time * 0.05⟩)
-    c2 := Patterns.cells(q * 1.6 + V2⟨3.1, 1.7⟩ - bend * 0.6 + V2⟨0 - time * 0.09, time * 0.1⟩)
-    k1 := 1 - Math.smoothstep(0.0, 0.14, c1.y - c1.x)
-    k2 := 1 - Math.smoothstep(0.0, 0.12, c2.y - c2.x)
-    caustic := k1 * 0.55 + k2 * 0.45 + k1 * k2 * 0.6
-    // (the water: deeper and shallower)
-    deep := base * V3⟨0.7, 0.85, 1.0⟩
-    shallow := Math.mix(base, V3⟨0.35, 0.78, 0.95⟩, 0.4)
-    *rgb := Math.mix(deep, shallow, Patterns.layered(q * 0.45 + V2⟨0, time * 0.03⟩, 3))
-    rgb = rgb * (1 - 0.22 * grout)
-    return rgb + V3⟨0.55, 0.88, 1.0⟩ * (caustic * 0.32)
+// Open water seen from above, soft and painterly, at a point in its
+// player's frame (pixels): a rich blue, darker in slow deep patches; big
+// soft hazes of white over it, the clouds and the glare it reflects,
+// drifting; the fine lines of small waves, lighter on their crests and
+// darker in their troughs, moving with time; and a few sparkles.
+open_water_at :: (at: V2, base: V3, scale: f32, seed: f32, time: f32 -> V3) {
+    q := at / (scale * 3) + V2⟨seed * 3.7, seed * 1.3⟩
+    // (the water)
+    deep := Patterns.layered(q * 0.35 + V2⟨time * 0.01, 0⟩, 4)
+    blue := Math.mix(base, V3⟨0.18, 0.47, 0.85⟩, 0.5)
+    *rgb := Math.mix(blue * V3⟨0.72, 0.82, 0.95⟩, Math.mix(blue, V3⟨0.3, 0.62, 0.95⟩, 0.3), deep)
+    // (the clouds it reflects)
+    cloud := Math.smoothstep(0.48, 0.85, Patterns.layered(q * 0.16 + V2⟨time * 0.012, seed⟩, 5))
+    rgb = Math.mix(rgb, V3⟨0.86, 0.93, 1.0⟩, cloud * 0.5)
+    // (small waves: lines along two levels of noise stretched across, drifting)
+    sway := Patterns.noise(q * 0.8 + V2⟨0, time * 0.05⟩) - 0.5
+    wave := Patterns.layered(V2⟨q.x * 0.9, q.y * 3.2 + sway * 1.5⟩ + V2⟨time * 0.06, time * 0.1⟩, 3)
+    crest := 1 - Math.smoothstep(0.0, 0.018, Math.abs(wave - 0.56))
+    trough := 1 - Math.smoothstep(0.0, 0.025, Math.abs(wave - 0.44))
+    rgb = rgb * (1 - 0.12 * trough) + V3⟨0.75, 0.88, 1.0⟩ * (crest * 0.18 * (1 - cloud))
+    // (a few sparkles)
+    sparkle := Math.smoothstep(0.86, 0.95, Patterns.noise(q * 9 + V2⟨time * 0.4, seed⟩)) * Math.smoothstep(0.6, 0.8, wave)
+    return rgb + V3⟨1, 1, 1⟩ * (sparkle * 0.5)
 }
 
 // Rusting metal, at a point in its player's frame (pixels): steel, finely
@@ -380,11 +378,11 @@ draw_part :: (canvas: *Draw.Canvas, layout: Layout, k: i64, colours: [] Draw.RGB
     canvas.draw_shader(low, high - low, PART_SURFACE.code, PART_SURFACE.bindings.part, params)
 }
 
-// What a part's surface is: its look's pattern, a pool seen from above
+// What a part's surface is: its look's pattern, open water seen from above
 // (blue's), rusting metal (an artifact's), or a forest floor (green's).
 Surface :: enum u8 {
     PATTERN
-    POOL
+    WATER
     RUST
     FOREST
 }
@@ -419,12 +417,12 @@ part_fill :: (era: Era, identity: Identity, cell: f32, seat: i64, time: f32, ang
     }
     else {
         if colours == 1 then look = looks.colours[only]
-        // (one colour: its ground, lit and shaded by its surface; blue's a
-        // pool, green's a forest floor, none's rusting metal)
+        // (one colour: its ground, lit and shaded by its surface; blue's
+        // open water, green's a forest floor, none's rusting metal)
         into[0] = look.ground
         count = 1
         if colours == 0 then surface = .RUST
-        else if only == .BLUE then surface = .POOL
+        else if only == .BLUE then surface = .WATER
         else if only == .GREEN then surface = .FOREST
     }
     // (every part's features one size in an era, and quieter than the
