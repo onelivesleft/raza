@@ -973,7 +973,7 @@ save_snapshots :: (folder: string) [failed: string] {
             *none: [MAX_PLAYERS + 1] Splits
             picking := Count_Picker⟨open: true, held: true, shown: 5.2, laid: 4, toward: 5, progress: 0.5⟩
             moving := lay_out(screen_size, shown_splits(picking, none[:], screen_size))
-            preview := new_game(moving.count, game.identity)
+            preview := new_game(moving.count, colours_for(game.identity, game.players, moving.count, screen_size))
             if fonts.resize_life(TEXT_FAMILIES[0], moving) is os_error then fail: failed = "no font: «os_error»"
             draw(canvas, moving, preview, fonts, ⟨counts: picking, previewing: true, can_undo: true, era: era⟩, settled_motes(moving, preview))
             counts_path := `scratch "«folder»/raza_counts.png"
@@ -1238,7 +1238,7 @@ main :: (args: [] string) [failed: string] {
                     count := i64'Math.round(screen.counts.shown)
                     if count != game.players {
                         history.add(game)
-                        game = new_game(count, game.identity)
+                        game = new_game(count, colours_for(game.identity, game.players, count, size))
                         call_off_volleys(motes, volleys, pending)
                     }
                     screen.counts.open = false
@@ -1273,7 +1273,7 @@ main :: (args: [] string) [failed: string] {
         screen.previewing = lines_moving(screen.counts, game.players)
         if screen.previewing {
             layout = lay_out(size, shown_splits(screen.counts, splits[:], size))
-            if layout.count != game.players then shown = new_game(layout.count, game.identity)
+            if layout.count != game.players then shown = new_game(layout.count, colours_for(game.identity, game.players, layout.count, size))
         }
 
         // The motes moved on: each miasma fed, a drag's stream (as much as

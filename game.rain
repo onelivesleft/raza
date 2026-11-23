@@ -103,6 +103,29 @@ starting_colours :: (size: V2, players: i64 -> identity: [MAX_PLAYERS] Identity)
     }
 }
 
+// The colours a game of to players takes from one of from players (on a
+// screen of a size). Each seat is a slot, named by its starting colours
+// (Reset's, which tell a count's slots apart; a slot's own colours are
+// whatever its player has set). A count's change keeps each slot both
+// counts have, its colours as they are, at its place in the new count; takes
+// away the slots the smaller lacks (from six down: the artifact deck's,
+// then white's, black's, green's); and gives a slot added its starting
+// colours.
+colours_for :: (identity: [MAX_PLAYERS] Identity, from: i64, to: i64, size: V2 -> colours: [MAX_PLAYERS] Identity) #pure {
+    a := Math.clamp(from, 2, MAX_PLAYERS)
+    b := Math.clamp(to, 2, MAX_PLAYERS)
+    was := starting_colours(size, a)
+    colours = starting_colours(size, b)
+    for j: 0 < b {
+        for k: 0 < a {
+            if was[k] == colours[j] {
+                colours[j] = identity[k]
+                break
+            }
+        }
+    }
+}
+
 Game :: struct {
     players:   i64 = 4
     life:      [MAX_PLAYERS] i32

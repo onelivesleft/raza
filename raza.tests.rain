@@ -626,6 +626,51 @@ resets_colours_from_the_top :: () #test {
     }
 }
 
+// Whether a game's colours hold a colour (an identity) among its players.
+holds :: (colours: [MAX_PLAYERS] Identity, players: i64, colour: Identity -> bool) {
+    for c: colours[:players] { if c == colour then return true }
+    return false
+}
+
+// A count's change goes by slots, not colours: each seat's slot named by its
+// starting colours. Six players with colours of their own (none their
+// slot's default): down from six, the artifact deck's slot goes, then
+// white's, black's, green's, whatever colours they hold, the rest keeping
+// theirs, each in the slot of its name; back up, each slot comes back with
+// its default.
+slots_follow_the_count :: () #test {
+    gone := [4] Identity⟨0, mono(.WHITE), mono(.BLACK), mono(.GREEN)⟩
+    // (each slot's own colours: two colours each, told apart, none a default)
+    own := [6] Identity⟨mono(.WHITE) | mono(.BLUE), mono(.BLUE) | mono(.BLACK), mono(.BLACK) | mono(.RED), mono(.RED) | mono(.GREEN),
+                        mono(.GREEN) | mono(.WHITE), mono(.WHITE) | mono(.BLACK)⟩
+    names := starting_colours(LANDSCAPE, 6)
+    *colours := starting_colours(LANDSCAPE, 6)
+    for k: 0 < 6 { colours[k] = own[k] }
+    // (whose colours each slot of six holds: by its name)
+    own_of :: (names: [MAX_PLAYERS] Identity, own: [6] Identity, name: Identity -> Identity) {
+        for n, k: names[:6] { if n == name then return own[k] }
+        return 0
+    }
+    for n: 0 < 4 {
+        from := 6 - n
+        next := colours_for(colours, from, from - 1, LANDSCAPE)
+        next_names := starting_colours(LANDSCAPE, from - 1)
+        assert(!holds(next, from - 1, own_of(names, own, gone[n])), "«from» to «from - 1» players drops the slot of «gone[n]»: «next»")
+        for name, j: next_names[:from - 1] {
+            assert(next[j] == own_of(names, own, name), "«from» to «from - 1» players: the slot of «name» keeps its colours, «own_of(names, own, name)», not «next[j]»")
+        }
+        colours = next
+    }
+    for to: 3 <= 6 {
+        colours = colours_for(colours, to - 1, to, LANDSCAPE)
+        back_names := starting_colours(LANDSCAPE, to)
+        name := gone[6 - to]
+        for n, j: back_names[:to] {
+            if n == name then assert(colours[j] == name, "back up to «to»: the slot of «name» comes back with its default, not «colours[j]»")
+        }
+    }
+}
+
 // Commander damage is life lost too, and 21 from one commander is out.
 deals_commander_damage :: () #test {
     *game := new_game(4)
