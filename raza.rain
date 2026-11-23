@@ -702,8 +702,8 @@ draw_seat :: (canvas: *Draw.Canvas, layout: Layout, game: Game, fonts: Fonts, k:
     // Its frame: its colours' gradient, across it as its player sees it
     // (left to right), with its era's surface over it.
     *colours: [Draw.MAX_GRADIENT_COLOURS] Draw.RGBA
-    n, pattern := part_fill(era, game.identity[k], cell, k, time, seat.angle, colours)
-    draw_part(canvas, layout, k, colours[:n], pattern, out, targeted)
+    n, pattern, surface := part_fill(era, game.identity[k], cell, k, time, seat.angle, colours)
+    draw_part(canvas, layout, k, colours[:n], pattern, surface, out, targeted)
     // (a part too thin for its displays, as it opens or closes, is its colour alone)
     if seat.room < 0.6 * cell then return
     // (dark ink where its colours are light at its middle, where its life is)

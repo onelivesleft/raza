@@ -94,7 +94,7 @@ artifact_of :: (era: Era -> Draw.RGBA) #pure {
 // What the part's shader is given: its outline (each point's xy), its
 // colours across it (left to right as its player sees it), its life's
 // middle and the screen's centre, the way toward its player and how far it
-// reaches that way from the centre, its turn and
+// reaches that way from the centre and which surface it is, its turn and
 // its left and right (in its player's frame from its middle) and how many
 // points; its surface (kind, features' scale in pixels, contrast, seed;
 // time, broad, grain, how many colours); and whether it's out or targeted,
@@ -165,10 +165,22 @@ part_shade :: (from: Draw.Quad_Between, part: Shader.Uniforms(Part_Params) -> co
     }
     light := Math.mix(base, PART_WARM, 0.55)
     shade := base * PART_COOL
-    // (its surface)
-    v := Patterns.at(Patterns.Kind'i32'(part.look.x + 0.5), p, part.look.y, part.look.w, part.more.x, angle, part.more.y, part.more.z)
-    t := Math.clamp((v - 0.5) * 2, -1, 1) * part.look.z
-    *rgb := if t > 0 then Math.mix(base, light, t) else Math.mix(base, shade, 0 - t)
+    // (its surface: a pool, rusting metal, or its look's pattern lighting
+    // and shading it; the first two in its player's frame)
+    surface := part.toward.w
+    local_y := d.y * Math.cos(angle) - d.x * Math.sin(angle)
+    *rgb := base
+    if surface > 1.5 {
+        rgb = rust_at(V2⟨local_x, local_y⟩, base, part.look.y, part.look.w)
+    }
+    else if surface > 0.5 {
+        rgb = pool_at(V2⟨local_x, local_y⟩, base, part.look.y, part.look.w, part.more.x)
+    }
+    else {
+        v := Patterns.at(Patterns.Kind'i32'(part.look.x + 0.5), p, part.look.y, part.look.w, part.more.x, angle, part.more.y, part.more.z)
+        t := Math.clamp((v - 0.5) * 2, -1, 1) * part.look.z
+        rgb = if t > 0 then Math.mix(base, light, t) else Math.mix(base, shade, 0 - t)
+    }
     // (darker toward its player's edge)
     depth := Math.clamp(Math.dot(p - part.middle.zw, part.toward.xy) / Math.max(part.toward.z, 1), 0, 1)
     rgb = Math.mix(rgb, shade * 0.8, Math.smoothstep(0.55, 1.0, depth) * 0.32)
@@ -186,6 +198,65 @@ part_shade :: (from: Draw.Quad_Between, part: Shader.Uniforms(Part_Params) -> co
     colour = V4⟨rgb.x * coverage, rgb.y * coverage, rgb.z * coverage, coverage⟩
 }
 
+// A pool seen from above, at a point in its player's frame (pixels): its
+// floor's tiles through the water, bent by the ripples on its surface; the
+// water clear and blue, deeper and shallower in slow patches; and over it
+// the caustics, the light the ripples gather into bright networks, two of
+// them drifting over each other (bright where cells of scattered points
+// meet), moving with time.
+pool_at :: (at: V2, base: V3, scale: f32, seed: f32, time: f32 -> V3) {
+    q := at / (scale * 2.2) + V2⟨seed * 3.7, seed * 1.3⟩
+    bend := V2⟨Patterns.noise(q * 0.9 + V2⟨time * 0.25, 0⟩), Patterns.noise(q * 0.9 + V2⟨5.2, 0 - time * 0.21⟩)⟩ - V2⟨0.5, 0.5⟩
+    // (the floor's tiles, seen through it, bent)
+    tile := at / (scale * 1.6) + bend * 0.35
+    f := Math.abs(Math.fract(tile) - V2⟨0.5, 0.5⟩)
+    grout := Math.smoothstep(0.46, 0.5, Math.max(f.x, f.y))
+    // (the caustics)
+    c1 := Patterns.cells(q + bend * 0.8 + V2⟨time * 0.12, time * 0.05⟩)
+    c2 := Patterns.cells(q * 1.6 + V2⟨3.1, 1.7⟩ - bend * 0.6 + V2⟨0 - time * 0.09, time * 0.1⟩)
+    k1 := 1 - Math.smoothstep(0.0, 0.14, c1.y - c1.x)
+    k2 := 1 - Math.smoothstep(0.0, 0.12, c2.y - c2.x)
+    caustic := k1 * 0.55 + k2 * 0.45 + k1 * k2 * 0.6
+    // (the water: deeper and shallower)
+    deep := base * V3⟨0.7, 0.85, 1.0⟩
+    shallow := Math.mix(base, V3⟨0.35, 0.78, 0.95⟩, 0.4)
+    *rgb := Math.mix(deep, shallow, Patterns.layered(q * 0.45 + V2⟨0, time * 0.03⟩, 3))
+    rgb = rgb * (1 - 0.22 * grout)
+    return rgb + V3⟨0.55, 0.88, 1.0⟩ * (caustic * 0.32)
+}
+
+// Rusting metal, at a point in its player's frame (pixels): steel, finely
+// grained and brushed along its player's x; rust in patches where slow
+// noise is high, ragged at their edges and a darker rim about them, mottled
+// orange to brown, pitted; streaks of it running down from them (down its
+// player's frame).
+rust_at :: (at: V2, base: V3, scale: f32, seed: f32 -> V3) {
+    q := at / (scale * 2.5) + V2⟨seed * 2.3, seed * 4.1⟩
+    // (steel: brushed grain, weathered darker in slow patches)
+    grain := Patterns.layered(V2⟨at.x / (scale * 0.6), at.y / (scale * 0.08)⟩ + V2⟨seed, seed⟩, 3)
+    weather := Patterns.layered(q * 1.7 + V2⟨7.1, 0⟩, 4)
+    steel := base * ((0.9 + 0.16 * grain) * (0.86 + 0.24 * weather))
+    // (where the rust is: patches, ragged, streaking down)
+    ragged := Patterns.noise(q * 3.0) - 0.5
+    patch := Patterns.layered(q + V2⟨ragged * 0.4, 0⟩, 5)
+    streak := Patterns.layered(V2⟨q.x * 6.0, q.y * 0.6⟩ + V2⟨seed, 0⟩, 3)
+    m := patch + (streak - 0.5) * 0.25
+    // (a stain spreading about each patch, then the rust itself, thicker
+    // toward its middle)
+    stain := Math.smoothstep(0.4, 0.58, m)
+    rust := Math.smoothstep(0.5, 0.68, m)
+    thick := Math.smoothstep(0.6, 0.8, m)
+    mottle := Patterns.layered(at / (scale * 0.3) + V2⟨seed, 0⟩, 3)
+    rust_colour := Math.mix(V3⟨0.3, 0.15, 0.08⟩, V3⟨0.56, 0.29, 0.13⟩, mottle)
+    *rgb := Math.mix(steel, steel * V3⟨0.85, 0.7, 0.58⟩, stain * 0.6)
+    rgb = Math.mix(rgb, rust_colour, rust * 0.85)
+    rgb = Math.mix(rgb, rust_colour * 0.7, thick * 0.4)
+    // (a few pits, deep in the thickest)
+    pits := Patterns.cells(at / (scale * 0.5) + V2⟨seed, seed⟩).x
+    pit := (1 - Math.smoothstep(0.02, 0.07, pits)) * thick
+    return rgb * (1 - 0.5 * pit)
+}
+
 Part_Surface :: shader { vertex: Draw.quad_place; fragment: part_shade }
 PART_SURFACE :: Part_Surface(Draw.SHADER_TARGET)
 
@@ -194,7 +265,7 @@ BEVEL_CELLS :: 0.09
 
 // A part drawn by its shader: its colours across it and its era's surface
 // (part_fill's), out or aimed at.
-draw_part :: (canvas: *Draw.Canvas, layout: Layout, k: i64, colours: [] Draw.RGBA, pattern: Draw.Pattern, out: bool, targeted: bool) {
+draw_part :: (canvas: *Draw.Canvas, layout: Layout, k: i64, colours: [] Draw.RGBA, pattern: Draw.Pattern, surface: Surface, out: bool, targeted: bool) {
     seat := layout.seats[k]
     cell := cell_of(layout)
     points := seat.outline[:seat.count]
@@ -215,7 +286,7 @@ draw_part :: (canvas: *Draw.Canvas, layout: Layout, k: i64, colours: [] Draw.RGB
     }
     for c, i: colours[:Math.min(colours.count, 5)] { params.stops[i] = V4⟨c.r, c.g, c.b, 1⟩ }
     params.middle = V4⟨seat.middle.x, seat.middle.y, layout.centre.x, layout.centre.y⟩
-    params.toward = V4⟨seat.toward.x, seat.toward.y, Math.max(seat.reach, 1), 0⟩
+    params.toward = V4⟨seat.toward.x, seat.toward.y, Math.max(seat.reach, 1), f32'u8'surface⟩
     params.frame = V4⟨seat.angle, left, right, f32'seat.count⟩
     params.look = V4⟨f32'i32'pattern.kind, pattern.scale, pattern.strength, pattern.seed⟩
     params.more = V4⟨pattern.time, pattern.broad, pattern.grain, f32'Math.min(colours.count, 5)⟩
@@ -225,11 +296,21 @@ draw_part :: (canvas: *Draw.Canvas, layout: Layout, k: i64, colours: [] Draw.RGB
     canvas.draw_shader(low, high - low, PART_SURFACE.code, PART_SURFACE.bindings.part, params)
 }
 
+// What a part's surface is: its look's pattern, a pool seen from above
+// (blue's), or rusting metal (an artifact's).
+Surface :: enum u8 {
+    PATTERN
+    POOL
+    RUST
+}
+
 // A part's fill, for its player's colours in an era: its gradient's colours
-// (into, how many) and its surface (features sized in pixels, cell's
-// share, seeded by its seat so neighbours differ, moved to time, turned to
-// face its player as their text is: its water falls toward them).
-part_fill :: (era: Era, identity: Identity, cell: f32, seat: i64, time: f32, angle: f32, into: [] *Draw.RGBA -> count: i64, pattern: Draw.Pattern) #pure {
+// (into, how many), its surface (features sized in pixels, cell's share,
+// seeded by its seat so neighbours differ, moved to time, turned to face
+// its player as their text is: its water falls toward them), and which.
+part_fill :: (era: Era, identity: Identity, cell: f32, seat: i64, time: f32, angle: f32, into: [] *Draw.RGBA -> count: i64, pattern: Draw.Pattern,
+              surface: Surface) #pure {
+    surface = .PATTERN
     looks := LOOKS[era]
     *colours: i64 = 0
     *only := Mana.WHITE
@@ -253,9 +334,12 @@ part_fill :: (era: Era, identity: Identity, cell: f32, seat: i64, time: f32, ang
     }
     else {
         if colours == 1 then look = looks.colours[only]
-        // (one colour: its ground, lit and shaded by its surface)
+        // (one colour: its ground, lit and shaded by its surface; blue's a
+        // pool, none's rusting metal)
         into[0] = look.ground
         count = 1
+        if colours == 0 then surface = .RUST
+        else if only == .BLUE then surface = .POOL
     }
     // (every part's features one size in an era, and quieter than the
     // looks' own contrast: the surface stays behind what's on it)
