@@ -25,10 +25,13 @@ Raza :: program {
 #import Defaults
 #import Time
 #import Patterns
+#import Particles
+#import Random
 
 #include "layout.rain"
 #include "game.rain"
 #include "frames.rain"
+#include "motes.rain"
 
 V2 :: #alias Math.Vector2(f32)
 
@@ -611,27 +614,15 @@ draw_seat :: (canvas: *Draw.Canvas, layout: Layout, game: Game, fonts: Fonts, k:
         draw_centred(canvas, fonts.small, middle, seat.angle, "«d»", ink_on(source))
         place += 1
     }
-    if !out {
-        icon_ground := lighter(accent, 0.35)
-        canvas.fill_circle(seat.icon, 0.45 * cell, icon_ground)
-        draw_centred(canvas, fonts.icon, seat.icon, seat.angle, DAMAGE_GLYPH, Math.mix(ink_on(icon_ground), icon_ground, 0.3))
-    }
+    // (its damage is drawn from its miasma, the motes drawn over the parts)
 }
 
+// A drag's amount, by the finger, facing whoever's dragging (the stream of
+// motes to the finger is the motes').
 draw_drag :: (canvas: *Draw.Canvas, layout: Layout, game: Game, fonts: Fonts, drag: Drag, mouse: V2, artifact: Draw.RGBA) {
     cell := cell_of(layout)
     seat := layout.seats[drag.from]
-    colour := lighter(accent_of(game.identity[drag.from], artifact), 0.5)
-    start := seat.icon
-    along := mouse - start
-    if Math.length(along) < 2 then return
-    d := Math.normalize(along)
-    across := V2⟨-d.y, d.x⟩
-    tip := mouse
-    base := tip - d * 0.4 * cell
-    canvas.draw_line(start, base, 0.14 * cell, colour)
-    canvas.fill_polygon(⟨tip, base + across * 0.24 * cell, base - across * 0.24 * cell⟩, colour)
-    // How much, by the finger, facing whoever's dragging.
+    if Math.length(mouse - seat.icon) < 2 then return
     if to, amount := aim(layout, game, drag.from, mouse) is not missed {
         bubble := placed(mouse, seat.angle, ⟨0, -1.15 * cell⟩)
         canvas.fill_circle(bubble, 0.55 * cell, INK)
@@ -885,7 +876,7 @@ draw_settings :: (canvas: *Draw.Canvas, layout: Layout, fonts: Fonts, era: Era, 
     }
 }
 
-draw :: (canvas: *Draw.Canvas, layout: Layout, game: Game, fonts: Fonts, screen: Screen_State) {
+draw :: (canvas: *Draw.Canvas, layout: Layout, game: Game, fonts: Fonts, screen: Screen_State, motes: Particles.System) {
     cell := cell_of(layout)
     canvas.clear(BACKGROUND)
     *targeted: i64 = -1
@@ -900,6 +891,9 @@ draw :: (canvas: *Draw.Canvas, layout: Layout, game: Game, fonts: Fonts, screen:
         line := if moving then INK else BACKGROUND
         canvas.draw_line(layout.centre, end, width, line)
     }
+    // The motes: each miasma over its pool of shadow, a drag's stream, volleys.
+    draw_miasma_pools(canvas, layout, game)
+    motes.draw(canvas)
     draw_capsule(canvas, layout, game, screen)
     draw_font_button(canvas, layout, fonts)
     if screen.counts.open or screen.counts.settling then draw_counts(canvas, layout, screen)
@@ -951,12 +945,24 @@ save_snapshots :: (folder: string) [failed: string] {
         finger := entry + target.toward * (target.reach - inner) * 0.5
         // (the eras in turn)
         era := Era'u8'(i % 3)
-        draw(canvas, layout, game, fonts, ⟨drag: ⟨true, 1⟩, mouse: finger, can_undo: true, era: era⟩)
+        // (the second's stream to the finger, as much as the drag's worth)
+        *amount: i32 = 21
+        if _, worth := aim(layout, game, 1, finger) is not missed {
+            if worth is { case damage: amount = damage; case asked: _ }
+        }
+        streaming := settled_motes(layout, game, 1, finger, amount)
+        draw(canvas, layout, game, fonts, ⟨drag: ⟨true, 1⟩, mouse: finger, can_undo: true, era: era⟩, streaming)
         path := `scratch "«folder»/«names[i]».png"
         if canvas.save_png(path) is os_error then fail: failed = "can't write «path»: «os_error»"
+        still := settled_motes(layout, game)
         if counts[i] == 4 {
+            // A volley of 12 from the second to the first, half a second in.
+            volley := settled_motes(layout, game, 1, finger, 0, 0, 12)
+            draw(canvas, layout, game, fonts, ⟨can_undo: true, era: era⟩, volley)
+            volley_path := `scratch "«folder»/raza_volley.png"
+            if canvas.save_png(volley_path) is os_error then fail: failed = "can't write «volley_path»: «os_error»"
             picker := Picker⟨true, 1, 0, DEFAULT_PICKED / 10, DEFAULT_PICKED % 10⟩
-            draw(canvas, layout, game, fonts, ⟨picker: picker, mouse: finger, can_undo: true, era: era⟩)
+            draw(canvas, layout, game, fonts, ⟨picker: picker, mouse: finger, can_undo: true, era: era⟩, still)
             grid_path := `scratch "«folder»/raza_grid.png"
             if canvas.save_png(grid_path) is os_error then fail: failed = "can't write «grid_path»: «os_error»"
             // The column dragged past five: the lines half way through
@@ -966,11 +972,11 @@ save_snapshots :: (folder: string) [failed: string] {
             moving := lay_out(screen_size, shown_splits(picking, none[:], screen_size))
             preview := new_game(moving.count, game.identity)
             if fonts.resize_life(TEXT_FAMILIES[0], moving) is os_error then fail: failed = "no font: «os_error»"
-            draw(canvas, moving, preview, fonts, ⟨counts: picking, previewing: true, can_undo: true, era: era⟩)
+            draw(canvas, moving, preview, fonts, ⟨counts: picking, previewing: true, can_undo: true, era: era⟩, settled_motes(moving, preview))
             counts_path := `scratch "«folder»/raza_counts.png"
             if canvas.save_png(counts_path) is os_error then fail: failed = "can't write «counts_path»: «os_error»"
             // The settings.
-            draw(canvas, layout, game, fonts, ⟨settings_open: true, can_undo: true, era: era⟩)
+            draw(canvas, layout, game, fonts, ⟨settings_open: true, can_undo: true, era: era⟩, still)
             settings_path := `scratch "«folder»/raza_settings.png"
             if canvas.save_png(settings_path) is os_error then fail: failed = "can't write «settings_path»: «os_error»"
         }
@@ -987,7 +993,7 @@ save_snapshots :: (folder: string) [failed: string] {
         layout := lay_out(screen_size, equal_splits(6, screen_size))
         *fonts: Fonts
         if fonts.reload_fonts(TEXT_FAMILIES[0], layout) is os_error then fail: failed = "no font: «os_error»"
-        draw(canvas, layout, game, fonts, ⟨can_undo: true, era: era⟩)
+        draw(canvas, layout, game, fonts, ⟨can_undo: true, era: era⟩, settled_motes(layout, game))
         path := `scratch "«folder»/raza_frames_«ERA_NAMES[i64'era]».png"
         if canvas.save_png(path) is os_error then fail: failed = "can't write «path»: «os_error»"
     }
@@ -1052,6 +1058,11 @@ main :: (args: [] string) [failed: string] {
     *fonts_for := V2⟨0, 0⟩           // the size the fonts were made for (0: none yet)
     *fonts_players: i64 = 0          // ...and the count of players
     *screen: Screen_State
+    // The motes (miasmas, a drag's stream, volleys), and the damage dealt
+    // whose volleys haven't landed yet (pending[to][from]: shown undone).
+    *motes: Particles.System
+    *random := Random.generator()
+    *pending: [MAX_PLAYERS] [MAX_PLAYERS] i32
 
     while Window.update_windows() {
         if w.close_requested then w.destroy()
@@ -1080,7 +1091,10 @@ main :: (args: [] string) [failed: string] {
             else if screen.counts.open then screen.counts.open = false
             else if w.is_fullscreen then w.set_fullscreen(false)
         }
-        if w.keys[.Z].PRESSED and w.modifiers.CONTROL and history.count > 0 then game = history.pop()
+        if w.keys[.Z].PRESSED and w.modifiers.CONTROL and history.count > 0 {
+            game = history.pop()
+            call_off_volleys(motes, pending)
+        }
 
         if w.mouse.buttons[.LEFT].PRESSED {
             if screen.picker.open {
@@ -1092,7 +1106,7 @@ main :: (args: [] string) [failed: string] {
                     value := screen.picker.tens * 10 + screen.picker.units
                     if value > 0 {
                         history.add(game)
-                        game.deal(screen.picker.from, screen.picker.to, value)
+                        strike(game, motes, random, layout, pending, screen.picker.from, screen.picker.to, value)
                     }
                     screen.picker.open = false
                 case cancel, outside: screen.picker.open = false
@@ -1140,7 +1154,10 @@ main :: (args: [] string) [failed: string] {
             else if part := capsule_part_at(layout, mouse) is not absent {
                 if part is {
                 case .UNDO:
-                    if history.count > 0 then game = history.pop()
+                    if history.count > 0 {
+                        game = history.pop()
+                        call_off_volleys(motes, pending)
+                    }
                 case .PLAYERS:
                     count := f32'game.players
                     screen.counts = ⟨open: true, held: true, grabbed: mouse.y, from: count, shown: count, laid: screen.counts.laid,
@@ -1174,7 +1191,7 @@ main :: (args: [] string) [failed: string] {
                     if amount is {
                     case damage:
                         history.add(game)
-                        game.deal(screen.drag.from, to, damage)
+                        strike(game, motes, random, layout, pending, screen.drag.from, to, damage)
                     case asked:
                         screen.picker = ⟨true, screen.drag.from, to, DEFAULT_PICKED / 10, DEFAULT_PICKED % 10⟩
                     }
@@ -1195,6 +1212,7 @@ main :: (args: [] string) [failed: string] {
                     if count != game.players {
                         history.add(game)
                         game = new_game(count, game.identity)
+                        call_off_volleys(motes, pending)
                     }
                     screen.counts.open = false
                     screen.counts.settling = true
@@ -1231,6 +1249,25 @@ main :: (args: [] string) [failed: string] {
             if layout.count != game.players then shown = new_game(layout.count, game.identity)
         }
 
+        // The motes moved on: each miasma fed, a drag's stream (as much as
+        // it's worth, 21 for the grid's), the volleys' landings; and the
+        // game shown with what's still in flight not yet done.
+        motes.flow_scale = MOTE_FLOW * cell
+        feed_miasmas(motes, random, layout, shown, seconds)
+        if screen.drag.active {
+            *amount: i32 = 0
+            if _, worth := aim(layout, game, screen.drag.from, mouse) is not missed {
+                if worth is {
+                case damage: amount = damage
+                case asked: amount = 21
+                }
+            }
+            feed_stream(motes, random, layout, game, screen.drag.from, mouse, amount, seconds)
+        }
+        motes.update(seconds)
+        land_volleys(motes, random, layout, game, pending)
+        if !screen.previewing then shown = shown_game(game, pending)
+
         // What changed this frame, stored (a failure to store isn't the game's).
         if game != stored_game {
             if Defaults.set("game", game) is os_error { }
@@ -1260,16 +1297,14 @@ main :: (args: [] string) [failed: string] {
         surface_time += seconds * MOTION_RATES[i64'speed]
         screen.motion = speed
         screen.surface_time = surface_time
-        draw(canvas, layout, shown, fonts, screen)
+        draw(canvas, layout, shown, fonts, screen, motes)
         canvas.present(w.handle, vsync: true)
         scratch.reset()
         still := !screen.drag.active and screen.moving_end < 0 and !screen.counts.held and !screen.counts.settling and !screen.previewing
-        // (still, it waits for input; with the surfaces moving, a twentieth
-        // of a second at most, so they move at 20 frames a second, and
-        // anything touched is answered at once)
+        // (still, it waits for input, but a thirtieth of a second at most:
+        // the miasmas always swirl, and anything touched is answered at once)
         if still {
-            wait: u32 = if speed == .OFF then 1000 else 50
-            if _ := Window.wait_for_input(milliseconds: wait) is timed_out { }
+            if _ := Window.wait_for_input(milliseconds: 33) is timed_out { }
         }
     }
 }

@@ -1,0 +1,288 @@
+// Damage as motes: each player's miasma (where their damage is drawn from,
+// in their colours), the stream that flows from it to the finger as they
+// drag, and the volley, a mote a point of damage, that flies to whoever
+// they hit, each landing a flash and a point off the life shown. Each
+// colour's motes are its own: white's light, blue's water, black's shadow,
+// red's fire, green's spores, an artifact's sparks.
+
+// A colour's motes: their colour over their life, how much light they add,
+// how they flicker, their size over their life and how long they live, how
+// they rise (toward the centre, from their player's side: negative falls
+// toward the player), how the flow field swirls them, how their speed
+// dies, how fast they start, and a second colour some of them are.
+Mote_Style :: struct {
+    colour:       Draw.RGBA
+    colour_end:   Draw.RGBA
+    add:          f32
+    flicker:      f32
+    size:         f32               // cells
+    size_end:     f32
+    life:         f32               // seconds
+    rise:         f32               // cells a second, a second
+    swirl:        f32               // cells a second
+    drag:         f32
+    spread:       f32               // cells a second
+    glint:        Draw.RGBA
+    glint_chance: f32
+}
+
+// Each colour's (WUBRG), then an artifact's.
+STYLES :: [6] Mote_Style⟨
+    // White: light, twinkling and rising, now and then gold.
+    ⟨Draw.rgb(0xFFFDF0), Draw.rgb(0xFFE9A8), 1, 0.7, 0.07, 0.03, 1.2, 0.3, 0.6, 1.0, 0.4, Draw.rgb(0xFFD36B), 0.2⟩,
+    // Blue: water, drops falling and eddying.
+    ⟨Draw.rgba(0x8FD0F5, 0.85), Draw.rgba(0x1F6CB4, 0.8), 0.35, 0.1, 0.10, 0.07, 1.6, -0.6, 1.2, 1.2, 0.5, Draw.rgb(0xE0F6FF), 0.15⟩,
+    // Black: roiling shadow, growing as it turns, with violet glints.
+    ⟨Draw.rgba(0x3A2F45, 0.6), Draw.rgba(0x120E18, 0.45), 0, 0, 0.18, 0.42, 1.8, 0.1, 2.0, 0.8, 0.3, Draw.rgb(0x9A5CD0), 0.12⟩,
+    // Red: fire, embers rising fast and flickering, yellow to red.
+    ⟨Draw.rgb(0xFFD27A), Draw.rgb(0xB3200A), 1, 0.6, 0.10, 0.03, 0.9, 1.6, 0.8, 0.6, 0.5, Draw.rgb(0xFFF4D0), 0.1⟩,
+    // Green: spores, spiralling up.
+    ⟨Draw.rgba(0xB8F0A8, 0.9), Draw.rgba(0x2D7A47, 0.8), 0.6, 0.2, 0.06, 0.09, 1.8, 0.2, 1.5, 1.0, 0.3, Draw.rgb(0xF2E27A), 0.15⟩,
+    // Artifact: metal sparks, flung out and falling.
+    ⟨Draw.rgb(0xE8EEF2), Draw.rgb(0x7A848C), 0.9, 0.3, 0.05, 0.02, 0.6, -0.8, 0.2, 2.0, 1.6, Draw.rgb(0xFFD99A), 0.2⟩
+⟩
+
+ARTIFACT_STYLE :: 5
+
+// A mote's tag: what it is (a miasma's, the stream's, a volley's, a
+// landing's), and for a volley's, its target, its attacker, and whether
+// it's a lethal volley's last.
+MIASMA_MOTE  :: u32'1 << 16
+STREAM_MOTE  :: u32'2 << 16
+VOLLEY_MOTE  :: u32'4 << 16
+SPLASH_MOTE  :: u32'8 << 16
+LETHAL_MOTE  :: u32'16 << 16
+
+volley_tag :: (to: i64, from: i64, lethal: bool -> u32) #pure {
+    *tag := VOLLEY_MOTE | u32'to | (u32'from << 8)
+    if lethal then tag = tag | LETHAL_MOTE
+    return tag
+}
+
+// How many motes a second each miasma makes, and the stream (more for a
+// bigger amount); how far about its spot a miasma's are born (cells), and
+// how hard they're held to it.
+MIASMA_RATE :: 70
+STREAM_RATE :: 45
+STREAM_RATE_A_POINT :: 5
+MIASMA_REACH :: 0.6
+MIASMA_PULL :: 2.5
+
+// Every mote's size, against its style's.
+MOTE_SCALE :: 1.8
+
+// The styles a player's motes are drawn from: each of their colours, or an
+// artifact's with none (into; how many).
+styles_of :: (identity: Identity, into: [] *i64 -> count: i64) #pure {
+    count = 0
+    for colour, i: [5] Mana⟨.WHITE, .BLUE, .BLACK, .RED, .GREEN⟩ {
+        if has_colour(identity, colour) {
+            into[count] = i
+            count += 1
+        }
+    }
+    if count == 0 {
+        into[0] = ARTIFACT_STYLE
+        count = 1
+    }
+}
+
+// A mote of a player's, of one of their styles (chosen at random), at a
+// place, moving, in their frame (up: away from them, toward the centre).
+mote_of :: (random: *Random.Generator, identity: Identity, at: V2, velocity: V2, up: V2, cell: f32, tag: u32 -> Particles.Mote) {
+    *styles: [6] i64
+    n := styles_of(identity, styles)
+    style := STYLES[styles[random.below(n)]]
+    glinting := random.chance(f64'style.glint_chance)
+    colour := if glinting then style.glint else style.colour
+    colour_end := if glinting then style.glint else style.colour_end
+    add := if glinting then 1 else style.add
+    // (a random direction and speed up to its spread, and a life within a
+    // third either way of its own)
+    angle := f32'random.below(0.0, Math.TAU)
+    speed := f32'random.below(0.0, 1.0) * style.spread * cell
+    life := style.life * f32'random.below(0.7, 1.3)
+    return ⟨at: at, velocity: velocity + V2⟨Math.cos(angle), Math.sin(angle)⟩ * speed, life: life,
+            size: style.size * MOTE_SCALE * cell, size_end: style.size_end * MOTE_SCALE * cell, colour: colour, colour_end: colour_end,
+            add: add, flicker: style.flicker, gravity: up * style.rise * cell, drag: style.drag,
+            swirl: style.swirl * cell, tag: tag, seed: f32'random.below(0.0, 100.0)⟩
+}
+
+// Each miasma kept going for a frame: motes born about its player's damage
+// spot (their seat's icon), held about it by a pull, for a player not out.
+feed_miasmas :: (motes: *Particles.System, random: *Random.Generator, layout: Layout, game: Game, seconds: f32) {
+    cell := cell_of(layout)
+    for seat, k: layout.seats[:layout.count] {
+        if is_out(game, k) then continue
+        born := births(random, MIASMA_RATE, seconds)
+        for _: 0 < born {
+            angle := f32'random.below(0.0, Math.TAU)
+            at := seat.icon + V2⟨Math.cos(angle), Math.sin(angle)⟩ * f32'random.below(0.0, f64'MIASMA_REACH) * cell
+            *m := mote_of(random, game.identity[k], at, ⟨0, 0⟩, seat.toward * -1, cell, MIASMA_MOTE | u32'k)
+            m.home = seat.icon
+            m.pull = MIASMA_PULL
+            motes.add(m)
+        }
+    }
+}
+
+// How many are born in a frame at a rate a second: the whole number, and
+// the rest by chance.
+births :: (random: *Random.Generator, rate: f32, seconds: f32 -> i64) {
+    expected := rate * seconds
+    whole := i64'Math.floor(expected)
+    if random.chance(f64'(expected - f32'whole)) then return whole + 1
+    return whole
+}
+
+// The stream for a frame of a drag: motes from the dragger's miasma flowing
+// to the finger, more for a bigger amount, ending there.
+feed_stream :: (motes: *Particles.System, random: *Random.Generator, layout: Layout, game: Game, from: i64, finger: V2, amount: i32, seconds: f32) {
+    cell := cell_of(layout)
+    seat := layout.seats[from]
+    rate := f32'STREAM_RATE + f32'STREAM_RATE_A_POINT * f32'amount
+    along := finger - seat.icon
+    if Math.length(along) < 1 then return
+    toward := Math.normalize(along)
+    for _: 0 < births(random, rate, seconds) {
+        *m := mote_of(random, game.identity[from], seat.icon, toward * 5 * cell, seat.toward * -1, cell, STREAM_MOTE)
+        m.home = finger
+        m.pull = 20
+        m.drag = Math.max(m.drag, 2)
+        m.arrive = 0.3 * cell
+        m.life = Math.max(m.life, 1.2)
+        motes.add(m)
+    }
+}
+
+// A volley: a mote a point of damage, from the attacker's miasma to the
+// target's life, each a little after the last (quicker for more), each
+// flung out to one side or the other and pulled in. The last of a volley
+// whose commander damage became lethal is marked so.
+fire_volley :: (motes: *Particles.System, random: *Random.Generator, layout: Layout, identity: Identity, from: i64, to: i64, amount: i32, lethal: bool) {
+    cell := cell_of(layout)
+    source := layout.seats[from].icon
+    target := layout.seats[to].middle
+    along := Math.normalize(target - source)
+    across := V2⟨0 - along.y, along.x⟩
+    interval := Math.min(1.2 / f32'Math.max(amount, 1), 0.07)
+    for i: 0 < i64'amount {
+        side := f32'random.below(-1.0, 1.0)
+        *m := mote_of(random, identity, source, along * 4 * cell + across * side * 4 * cell, layout.seats[from].toward * -1, cell,
+                      volley_tag(to, from, lethal and i == i64'amount - 1))
+        m.delay = f32'i * interval
+        m.home = target
+        m.pull = 40
+        m.drag = 2.5
+        m.arrive = 0.35 * cell
+        m.life = 4
+        // (bigger and brighter than the miasma's, so each can be followed)
+        m.size = m.size * 1.5 + 0.08 * cell
+        m.size_end = m.size
+        m.add = Math.max(m.add, 0.6)
+        m.flicker = 0
+        m.gravity = ⟨0, 0⟩
+        m.swirl = m.swirl * 0.3
+        motes.add(m)
+    }
+}
+
+// Damage dealt as a volley: the game changed at once (so undo is as
+// before), its motes flying, the life shown counting down as they land (by
+// pending, until they have). The volley's last is marked lethal when this
+// commander damage made it so.
+strike :: (game: *Game, motes: *Particles.System, random: *Random.Generator, layout: Layout, pending: *[MAX_PLAYERS] [MAX_PLAYERS] i32,
+           from: i64, to: i64, amount: i32) {
+    if amount <= 0 or from == to then return
+    was := game.commander[to][from]
+    game.deal(from, to, amount)
+    lethal := was < LETHAL_COMMANDER_DAMAGE and game.commander[to][from] >= LETHAL_COMMANDER_DAMAGE
+    pending[to][from] += amount
+    fire_volley(motes, random, layout, game.identity[from], from, to, amount, lethal)
+}
+
+// What's landed since the last frame: each volley mote a point off the
+// life shown (pending's), with a splash; a lethal volley's last a burst.
+land_volleys :: (motes: *Particles.System, random: *Random.Generator, layout: Layout, game: Game, pending: *[MAX_PLAYERS] [MAX_PLAYERS] i32) {
+    cell := cell_of(layout)
+    #with scratch.rewind()
+    *landed: [..] Particles.Mote in scratch
+    for m: motes.arrived { `scratch landed.add(m) }
+    motes.arrived.clear()
+    for m: landed {
+        if m.tag & VOLLEY_MOTE == 0 then continue
+        to := i64'(m.tag & 0xFF)
+        from := i64'((m.tag >> 8) & 0xFF)
+        if pending[to][from] > 0 then pending[to][from] -= 1
+        lethal := m.tag & LETHAL_MOTE != 0
+        splash := if lethal then 90 else 14
+        reach: f32 = if lethal then 5 else 2.8
+        for _: 0 < splash {
+            angle := f32'random.below(0.0, Math.TAU)
+            speed := f32'random.below(0.3, 1.0) * reach * cell
+            *s := mote_of(random, game.identity[from], m.at, V2⟨Math.cos(angle), Math.sin(angle)⟩ * speed, layout.seats[to].toward * -1, cell, SPLASH_MOTE)
+            s.drag = 3
+            if lethal {
+                s.life = s.life * 1.2
+                s.size = s.size * 1.8
+                s.size_end = s.size_end * 1.5
+            }
+            else {
+                s.life = s.life * 0.5
+            }
+            motes.add(s)
+        }
+    }
+}
+
+// The game as it's shown while volleys are in flight: what they'll do not
+// yet done.
+shown_game :: (game: Game, pending: [MAX_PLAYERS] [MAX_PLAYERS] i32 -> shown: Game) #pure {
+    shown = game
+    for to: 0 < MAX_PLAYERS {
+        for from: 0 < MAX_PLAYERS {
+            shown.life[to] += pending[to][from]
+            shown.commander[to][from] -= pending[to][from]
+        }
+    }
+}
+
+// Every volley's motes gone, and nothing pending (an undo, a new game).
+call_off_volleys :: (motes: *Particles.System, pending: *[MAX_PLAYERS] [MAX_PLAYERS] i32) {
+    for *m: motes.motes {
+        if m.tag & VOLLEY_MOTE != 0 then remove m
+    }
+    motes.arrived.clear()
+    for *row: pending { for *p: row { p = 0 } }
+}
+
+// The motes as they'd be two seconds in (for snapshots, the same each
+// time): the miasmas, a drag's stream from from to finger (from -1: none),
+// and a volley of volley from from to to fired half a second before the end
+// (0: none).
+settled_motes :: (layout: Layout, game: Game, from: i64 = -1, finger: V2 = ⟨0, 0⟩, amount: i32 = 0, to: i64 = 0, volley: i32 = 0 -> motes: Particles.System) {
+    *made: Particles.System = ⟨flow_scale: MOTE_FLOW * cell_of(layout)⟩
+    *random := Random.generator(seed: 1)
+    *pending: [MAX_PLAYERS] [MAX_PLAYERS] i32
+    for frame: 0 < 120 {
+        seconds: f32 = 1.0 / 60
+        feed_miasmas(made, random, layout, game, seconds)
+        if from >= 0 and volley == 0 then feed_stream(made, random, layout, game, from, finger, amount, seconds)
+        if frame == 100 and volley > 0 then fire_volley(made, random, layout, game.identity[from], from, to, volley, false)
+        made.update(seconds)
+        land_volleys(made, random, layout, game, pending)
+    }
+    motes = made
+}
+
+// The flow field's eddies, in cells.
+MOTE_FLOW :: 1.5
+
+// A soft pool of shadow under each miasma, so its light shows on a light part.
+draw_miasma_pools :: (canvas: *Draw.Canvas, layout: Layout, game: Game) {
+    cell := cell_of(layout)
+    for seat, k: layout.seats[:layout.count] {
+        if is_out(game, k) then continue
+        canvas.fill_glow(seat.icon, 1.2 * cell, Draw.rgba(0x000000, 0.4))
+    }
+}

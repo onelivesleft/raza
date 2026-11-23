@@ -332,6 +332,69 @@ settings_buttons_are_where_drawn :: () #test {
     }
 }
 
+// A strike changes the game at once but shows it undone, a mote a point
+// flying; as they land the life shown ticks down, and once all have, it's
+// the game's. Lethal commander damage marks the volley's last.
+volleys_land_a_point_at_a_time :: () #test {
+    layout := laid_out(4, LANDSCAPE)
+    *game := new_game(4)
+    game.commander[0][1] = 15
+    *motes: Particles.System = ⟨flow_scale: MOTE_FLOW * cell_of(layout)⟩
+    *random := Random.generator(seed: 3)
+    *pending: [MAX_PLAYERS] [MAX_PLAYERS] i32
+    strike(game, motes, random, layout, pending, 1, 0, 7)
+    assert(game.life[0] == 33 and game.commander[0][1] == 22, "dealt at once: «game.life[0]», «game.commander[0][1]»")
+    assert(shown_game(game, pending).life[0] == 40, "shown undone while they fly")
+    *volley := 0
+    *lethal := 0
+    for m: motes.motes {
+        if m.tag & VOLLEY_MOTE != 0 then volley += 1
+        if m.tag & LETHAL_MOTE != 0 then lethal += 1
+    }
+    assert(volley == 7 and lethal == 1, "a mote a point, the last lethal: «volley», «lethal»")
+    *shown_before: i32 = 40
+    *ticked_down := true
+    for _: 0 < 300 {
+        motes.update(1.0 / 60)
+        land_volleys(motes, random, layout, game, pending)
+        now := shown_game(game, pending).life[0]
+        if now > shown_before then ticked_down = false
+        shown_before = now
+    }
+    assert(ticked_down and pending[0][1] == 0 and shown_before == 33, "landed, shown as dealt: «shown_before», «pending[0][1]» pending")
+}
+
+// An undo (or a new game) calls volleys off: their motes gone, nothing pending.
+undo_calls_off_volleys :: () #test {
+    layout := laid_out(4, LANDSCAPE)
+    *game := new_game(4)
+    *motes: Particles.System
+    *random := Random.generator(seed: 3)
+    *pending: [MAX_PLAYERS] [MAX_PLAYERS] i32
+    strike(game, motes, random, layout, pending, 2, 3, 5)
+    call_off_volleys(motes, pending)
+    for m: motes.motes { assert(m.tag & VOLLEY_MOTE == 0, "no volley's mote left") }
+    assert(pending[3][2] == 0)
+}
+
+// Each miasma stays about its player's damage spot, and a player who's out
+// has none.
+miasmas_stay_home :: () #test {
+    layout := laid_out(4, LANDSCAPE)
+    *game := new_game(4)
+    game.life[2] = 0
+    motes := settled_motes(layout, game)
+    cell := cell_of(layout)
+    *each: [4] i64
+    for m: motes.motes {
+        if m.tag & MIASMA_MOTE == 0 then continue
+        k := i64'(m.tag & 0xFF)
+        each[k] += 1
+        assert(Math.length(m.at - layout.seats[k].icon) < 2.5 * cell, "«k»'s mote at «m.at» strays from «layout.seats[k].icon»")
+    }
+    assert(each[0] > 20 and each[1] > 20 and each[3] > 20 and each[2] == 0, "a miasma each but the one out's: «each»")
+}
+
 // A turn there and back is where it began.
 frames_turn_back :: () #test {
     for angle: [4] f32⟨0, f32'Math.PI / 2, f32'Math.PI, -f32'Math.PI / 2⟩ {
