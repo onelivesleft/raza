@@ -30,24 +30,62 @@ facing_of :: (seat: Seat -> f32) #pure {
     return Math.atan2(seat.toward.y, seat.toward.x)
 }
 
+// The slots: each seat of a count is a slot, named by its starting colours
+// (Reset's, which tell a count's slots apart; a slot's own colours are
+// whatever its player has set). As the count comes down from six, a slot
+// goes each time: GOING[n] names the one that goes from n to n - 1 (the
+// artifact deck's, then white's, black's, green's); as it goes up, that slot
+// comes back.
+GOING :: [MAX_PLAYERS + 1] Identity⟨0, 0, 0, mono(.GREEN), mono(.BLACK), mono(.WHITE), 0⟩
+
+// Which of a count's seats holds a slot's name (or colours), or -1.
+seat_of :: (identity: [MAX_PLAYERS] Identity, count: i64, name: Identity -> i64) #pure {
+    for c, k: identity[:count] { if c == name then return k }
+    return -1
+}
+
+// Each seat's colours carried from a count's lines (more) to one fewer's
+// (fewer), as the lines' morph takes the seats: the seat going (its index
+// among more's) is the one whose two lines meet in one, and each other's
+// colours go to the seat it becomes.
+carried_down :: (identity: [MAX_PLAYERS] Identity, fewer: Splits, more: Splits, going: i64 -> carried: [MAX_PLAYERS] Identity) #pure {
+    doubled, turn := morph_choice(fewer, more, going)
+    m := more.count
+    carried = ⟨⟩
+    for i: 0 < m {
+        if i != doubled then carried[source_of(i, doubled)] = identity[(i + turn) % m]
+    }
+}
+
+// ...and from a count's lines (fewer) up to one more's (more): the seat
+// that's new (coming, its index among more's) given added, each other's
+// colours going to the seat it becomes.
+carried_up :: (identity: [MAX_PLAYERS] Identity, fewer: Splits, more: Splits, coming: i64, added: Identity -> carried: [MAX_PLAYERS] Identity) #pure {
+    doubled, turn := morph_choice(fewer, more, coming)
+    m := more.count
+    carried = ⟨⟩
+    for i: 0 < m {
+        if i != doubled then carried[(i + turn) % m] = identity[source_of(i, doubled)]
+    }
+    carried[coming] = added
+}
+
 // The colours the settings' Reset gives, seat by seat, for a count of
-// players on a screen of a size (its lines where they start). Six are, from
-// the top seat round clockwise, white, blue, green, black, red and an
-// artifact deck (no colours). Fewer are six's with players taken away, the
-// rest staying where they were: five without the artifact deck, four
-// without white too, three without black, two without green. Each time one
-// goes, the others go round to the next count's seats as little as they can
-// (of two ways as little, clockwise). Six's top seat is the one facing
-// nearest straight up (of two as near, the one right of the top).
+// players on a screen of a size (its lines where they start): each seat its
+// slot's name. Six are, from the top seat round clockwise, white, blue,
+// green, black, red and an artifact deck (no colours); six's top seat the
+// one facing nearest straight up (of two as near, the one right of the top).
+// Fewer are six's with slots taken away as GOING says, the rest carried as
+// the lines' morph takes them (so the seat that goes is the one that's seen
+// to go).
 starting_colours :: (size: V2, players: i64 -> identity: [MAX_PLAYERS] Identity) #pure {
-    // (within a step and a half of facing, or of a step for each player's
-    // going round, counts as as near: facings are rounded to steps, so two
-    // places mirrored about the top may differ by one)
-    *layout := lay_out(size, equal_splits(MAX_PLAYERS, size))
+    // (within a step and a half of facing counts as as near: facings are
+    // rounded to steps, so two places mirrored about the top may differ by one)
+    six := lay_out(size, equal_splits(MAX_PLAYERS, size))
     up := -f32'Math.PI / 2
     *top: i64 = 0
     *least: f32 = 1e30
-    for seat, k: layout.seats[:MAX_PLAYERS] {
+    for seat, k: six.seats[:MAX_PLAYERS] {
         turn := turn_between(up, facing_of(seat))
         off := Math.abs(turn)
         if off < least - 1.5 * FACING_STEP or (off < least + 1.5 * FACING_STEP and turn > 0) {
@@ -58,71 +96,10 @@ starting_colours :: (size: V2, players: i64 -> identity: [MAX_PLAYERS] Identity)
     from_top := [MAX_PLAYERS] Identity⟨mono(.WHITE), mono(.BLUE), mono(.GREEN), mono(.BLACK), mono(.RED), 0⟩
     identity = ⟨⟩
     for colours, i: from_top { identity[(top + i) % MAX_PLAYERS] = colours }
-    // Who goes as the count comes down from six: the n-th, going to n - 1.
-    going := [MAX_PLAYERS + 1] Identity⟨0, 0, 0, mono(.GREEN), mono(.BLACK), mono(.WHITE), 0⟩
     *n: i64 = MAX_PLAYERS
     while n > Math.clamp(players, 2, MAX_PLAYERS) {
-        // Those staying, in order round, and where each faces.
-        *staying: [MAX_PLAYERS] Identity
-        *was: [MAX_PLAYERS] f32
-        *m: i64 = 0
-        *gone := false
-        for k: 0 < n {
-            if !gone and identity[k] == going[n] {
-                gone = true
-            } else {
-                staying[m] = identity[k]
-                was[m] = facing_of(layout.seats[k])
-                m += 1
-            }
-        }
-        next := lay_out(size, equal_splits(n - 1, size))
-        // The turn round the next count's seats that moves them least.
-        *best_turn: i64 = 0
-        *best_cost: f32 = 1e30
-        *best_way: f32 = 0
-        for turn: 0 < m {
-            *cost: f32 = 0
-            *way: f32 = 0
-            for i: 0 < m {
-                moved := turn_between(was[i], facing_of(next.seats[(i + turn) % m]))
-                cost += Math.abs(moved)
-                way += moved
-            }
-            tie := 1.5 * FACING_STEP * f32'm
-            if cost < best_cost - tie or (cost < best_cost + tie and way > best_way) {
-                best_turn = turn
-                best_cost = cost
-                best_way = way
-            }
-        }
-        identity = ⟨⟩
-        for colours, i: staying[:m] { identity[(i + best_turn) % m] = colours }
-        layout = next
+        identity = carried_down(identity, equal_splits(n - 1, size), equal_splits(n, size), seat_of(identity, n, GOING[n]))
         n -= 1
-    }
-}
-
-// The colours a game of to players takes from one of from players (on a
-// screen of a size). Each seat is a slot, named by its starting colours
-// (Reset's, which tell a count's slots apart; a slot's own colours are
-// whatever its player has set). A count's change keeps each slot both
-// counts have, its colours as they are, at its place in the new count; takes
-// away the slots the smaller lacks (from six down: the artifact deck's,
-// then white's, black's, green's); and gives a slot added its starting
-// colours.
-colours_for :: (identity: [MAX_PLAYERS] Identity, from: i64, to: i64, size: V2 -> colours: [MAX_PLAYERS] Identity) #pure {
-    a := Math.clamp(from, 2, MAX_PLAYERS)
-    b := Math.clamp(to, 2, MAX_PLAYERS)
-    was := starting_colours(size, a)
-    colours = starting_colours(size, b)
-    for j: 0 < b {
-        for k: 0 < a {
-            if was[k] == colours[j] {
-                colours[j] = identity[k]
-                break
-            }
-        }
     }
 }
 

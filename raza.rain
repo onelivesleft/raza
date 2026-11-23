@@ -477,16 +477,45 @@ lines_moving :: (counts: Count_Picker, players: i64 -> bool) #pure {
 }
 
 // The lines as the picker shows them: a count's, or part of the way to the
-// next's (eased).
+// next's (eased), the slot that comes or goes (GOING's) the one that opens
+// or closes.
 shown_splits :: (counts: Count_Picker, splits: [] Splits, size: V2 -> Splits) #pure {
     if counts.toward == counts.laid or Math.abs(counts.toward - counts.laid) != 1 then return splits_for(splits, counts.laid, size)
     // (eased in and out: smoothstep's curve)
     p := Math.clamp(counts.progress, 0, 1)
     t := p * p * (3 - 2 * p)
+    more := Math.max(counts.laid, counts.toward)
+    slot := slot_going(size, more)
     if counts.toward > counts.laid {
-        return morph_splits(splits_for(splits, counts.laid, size), splits_for(splits, counts.toward, size), t)
+        return morph_splits(splits_for(splits, counts.laid, size), splits_for(splits, counts.toward, size), t, slot)
     }
-    return morph_splits(splits_for(splits, counts.toward, size), splits_for(splits, counts.laid, size), 1 - t)
+    return morph_splits(splits_for(splits, counts.toward, size), splits_for(splits, counts.laid, size), 1 - t, slot)
+}
+
+// The seat of a count's whose slot goes as the count comes down by one
+// (GOING's), by its index.
+slot_going :: (size: V2, count: i64 -> i64) #pure {
+    return seat_of(starting_colours(size, count), count, GOING[count])
+}
+
+// The colours a game of to players takes from one of from players (each
+// count's lines as splits_for gives them, on a screen of a size), a count
+// at a time as the lines morph: down, the slot going taken away (GOING's)
+// and each other seat's colours, whatever they are, carried to the seat it
+// becomes; up, the slot coming given its starting colours.
+colours_for :: (identity: [MAX_PLAYERS] Identity, from: i64, to: i64, splits: [] Splits, size: V2 -> colours: [MAX_PLAYERS] Identity) #pure {
+    colours = identity
+    *n := Math.clamp(from, 2, MAX_PLAYERS)
+    target := Math.clamp(to, 2, MAX_PLAYERS)
+    while n > target {
+        colours = carried_down(colours, splits_for(splits, n - 1, size), splits_for(splits, n, size), slot_going(size, n))
+        n -= 1
+    }
+    while n < target {
+        coming := slot_going(size, n + 1)
+        colours = carried_up(colours, splits_for(splits, n, size), splits_for(splits, n + 1, size), coming, starting_colours(size, n + 1)[coming])
+        n += 1
+    }
 }
 
 // The lines moved on by a frame's time toward a count: a step at a time,
@@ -973,7 +1002,7 @@ save_snapshots :: (folder: string) [failed: string] {
             *none: [MAX_PLAYERS + 1] Splits
             picking := Count_Picker⟨open: true, held: true, shown: 5.2, laid: 4, toward: 5, progress: 0.5⟩
             moving := lay_out(screen_size, shown_splits(picking, none[:], screen_size))
-            preview := new_game(moving.count, colours_for(game.identity, game.players, moving.count, screen_size))
+            preview := new_game(moving.count, colours_for(game.identity, game.players, moving.count, none[:], screen_size))
             if fonts.resize_life(TEXT_FAMILIES[0], moving) is os_error then fail: failed = "no font: «os_error»"
             draw(canvas, moving, preview, fonts, ⟨counts: picking, previewing: true, can_undo: true, era: era⟩, settled_motes(moving, preview))
             counts_path := `scratch "«folder»/raza_counts.png"
@@ -1238,7 +1267,7 @@ main :: (args: [] string) [failed: string] {
                     count := i64'Math.round(screen.counts.shown)
                     if count != game.players {
                         history.add(game)
-                        game = new_game(count, colours_for(game.identity, game.players, count, size))
+                        game = new_game(count, colours_for(game.identity, game.players, count, splits[:], size))
                         call_off_volleys(motes, volleys, pending)
                     }
                     screen.counts.open = false
@@ -1273,7 +1302,7 @@ main :: (args: [] string) [failed: string] {
         screen.previewing = lines_moving(screen.counts, game.players)
         if screen.previewing {
             layout = lay_out(size, shown_splits(screen.counts, splits[:], size))
-            if layout.count != game.players then shown = new_game(layout.count, colours_for(game.identity, game.players, layout.count, size))
+            if layout.count != game.players then shown = new_game(layout.count, colours_for(game.identity, game.players, layout.count, splits[:], size))
         }
 
         // The motes moved on: each miasma fed, a drag's stream (as much as

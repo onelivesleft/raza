@@ -235,37 +235,50 @@ source_of :: (i: i64, doubled: i64 -> i64) #pure {
     return if i <= doubled then i else i - 1
 }
 
-// Lines part of the way (f, from 0 to 1) from a count's to the next's: the
-// first's, one of them doubled, each moved f of the way along the edge to
-// the line of the second's it becomes. Which is doubled, and which line
-// becomes which, is what moves them least: so going up one line splits in
-// two, and coming back two meet in one.
-morph_splits :: (a: Splits, b: Splits, f: f32 -> splits: Splits) #pure {
+// How a count's lines (a) become the next's (b): the line of a's that's
+// doubled, splitting in two, and the turn, b's line (i + turn) % m coming
+// from a's source_of(i, doubled). The part of b's between the doubled
+// line's two is the one that's new (b's part (doubled + turn) % m), and each
+// other part of b's, (i + turn) % m, is a's part source_of(i, doubled). Of
+// the ways that make the new part new (any, if new is -1), the one that
+// moves the lines least.
+morph_choice :: (a: Splits, b: Splits, new: i64 -> doubled: i64, turn: i64) #pure {
     n := a.count
     m := b.count
-    splits = ⟨count: m⟩
     assert(m == n + 1, "lines morph from a count to the next")
     *best_cost: f32 = 1e30
-    *best_doubled: i64 = 0
-    *best_turn: i64 = 0
-    for doubled: 0 < n {
-        for turn: 0 < m {
+    doubled = 0
+    turn = 0
+    for d: 0 < n {
+        for t: 0 < m {
+            if new >= 0 and (d + t) % m != new then continue
             *cost: f32 = 0
             for i: 0 < m {
-                source := a.at[source_of(i, doubled)]
-                cost += Math.abs(share_between(source, b.at[(i + turn) % m]))
+                source := a.at[source_of(i, d)]
+                cost += Math.abs(share_between(source, b.at[(i + t) % m]))
             }
             if cost < best_cost {
                 best_cost = cost
-                best_doubled = doubled
-                best_turn = turn
+                doubled = d
+                turn = t
             }
         }
     }
+}
+
+// Lines part of the way (f, from 0 to 1) from a count's to the next's: the
+// first's, one of them doubled, each moved f of the way along the edge to
+// the line of the second's it becomes (morph_choice's): so going up one line
+// splits in two about the part that's new, and coming back that part's two
+// meet in one.
+morph_splits :: (a: Splits, b: Splits, f: f32, new: i64 = -1 -> splits: Splits) #pure {
+    m := b.count
+    splits = ⟨count: m⟩
+    doubled, turn := morph_choice(a, b, new)
     for i: 0 < m {
-        source := a.at[source_of(i, best_doubled)]
-        target := b.at[(i + best_turn) % m]
-        splits.at[(i + best_turn) % m] = wrapped_share(source + share_between(source, target) * f)
+        source := a.at[source_of(i, doubled)]
+        target := b.at[(i + turn) % m]
+        splits.at[(i + turn) % m] = wrapped_share(source + share_between(source, target) * f)
     }
 }
 

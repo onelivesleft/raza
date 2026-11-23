@@ -597,8 +597,8 @@ colour_facing :: (layout: Layout, colours: [MAX_PLAYERS] Identity, degrees: f32 
 
 // The settings' Reset's colours: six from the top round clockwise white,
 // blue, green, black, red, artifact; fewer take players away (the artifact
-// deck, white, black, green), the rest staying as near where they were as
-// they can.
+// deck, white, black, green), the rest carried as the lines morph: five and
+// four where they're pinned here, three and two holding the colours left.
 resets_colours_from_the_top :: () #test {
     w := mono(.WHITE)
     u := mono(.BLUE)
@@ -619,10 +619,37 @@ resets_colours_from_the_top :: () #test {
             layout := laid_out(e.players, size)
             colours := starting_colours(size, e.players)
             for i: 0 < e.players {
-                got := colour_facing(layout, colours, e.ways[i])
-                assert(got == e.colours[i], "«e.players» players on «size», facing «e.ways[i]»: «got», not «e.colours[i]»")
+                if e.players >= 4 {
+                    got := colour_facing(layout, colours, e.ways[i])
+                    assert(got == e.colours[i], "«e.players» players on «size», facing «e.ways[i]»: «got», not «e.colours[i]»")
+                }
+                else {
+                    assert(holds(colours, e.players, e.colours[i]), "«e.players» players on «size» hold «e.colours[i]»: «colours»")
+                }
             }
         }
+    }
+}
+
+// The slot that goes is the seat that's seen to go: as the lines morph from
+// a count's down to one fewer's, the part that closes is the slot GOING
+// names; from six, that's the upper left (the artifact deck's), not the top.
+the_slot_going_is_the_part_that_closes :: () #test {
+    for size: [2] V2⟨LANDSCAPE, PORTRAIT⟩ {
+        for n: 3 <= MAX_PLAYERS {
+            slot := slot_going(size, n)
+            assert(starting_colours(size, n)[slot] == GOING[n], "«n» players on «size»: the slot going is GOING's")
+            closed := morph_splits(equal_splits(n - 1, size), equal_splits(n, size), 0, slot)
+            span := wrapped_share(closed.at[(slot + 1) % n] - closed.at[slot])
+            assert(span < 0.0001 or span > 0.9999, "«n» players on «size»: part «slot» closes, its span «span»")
+            for k: 0 < n {
+                if k == slot then continue
+                other := wrapped_share(closed.at[(k + 1) % n] - closed.at[k])
+                assert(other > 0.01 and other < 0.99, "«n» players on «size»: part «k» stays open, «other»")
+            }
+        }
+        six := laid_out(6, size)
+        assert(colour_facing(six, starting_colours(size, 6), 210) == 0, "six on «size»: the artifact deck's is the upper left")
     }
 }
 
@@ -643,6 +670,7 @@ slots_follow_the_count :: () #test {
     // (each slot's own colours: two colours each, told apart, none a default)
     own := [6] Identity⟨mono(.WHITE) | mono(.BLUE), mono(.BLUE) | mono(.BLACK), mono(.BLACK) | mono(.RED), mono(.RED) | mono(.GREEN),
                         mono(.GREEN) | mono(.WHITE), mono(.WHITE) | mono(.BLACK)⟩
+    *none: [MAX_PLAYERS + 1] Splits
     names := starting_colours(LANDSCAPE, 6)
     *colours := starting_colours(LANDSCAPE, 6)
     for k: 0 < 6 { colours[k] = own[k] }
@@ -653,7 +681,7 @@ slots_follow_the_count :: () #test {
     }
     for n: 0 < 4 {
         from := 6 - n
-        next := colours_for(colours, from, from - 1, LANDSCAPE)
+        next := colours_for(colours, from, from - 1, none[:], LANDSCAPE)
         next_names := starting_colours(LANDSCAPE, from - 1)
         assert(!holds(next, from - 1, own_of(names, own, gone[n])), "«from» to «from - 1» players drops the slot of «gone[n]»: «next»")
         for name, j: next_names[:from - 1] {
@@ -662,7 +690,7 @@ slots_follow_the_count :: () #test {
         colours = next
     }
     for to: 3 <= 6 {
-        colours = colours_for(colours, to - 1, to, LANDSCAPE)
+        colours = colours_for(colours, to - 1, to, none[:], LANDSCAPE)
         back_names := starting_colours(LANDSCAPE, to)
         name := gone[6 - to]
         for n, j: back_names[:to] {
