@@ -1167,11 +1167,11 @@ main :: (args: [] string) [failed: string] {
                     screen.counts = ⟨open: true, held: true, grabbed: mouse.y, from: count, shown: count, laid: screen.counts.laid,
                                      toward: screen.counts.toward, progress: screen.counts.progress⟩
                 case .RESET:
-                    // A new game of as many players, each seat's colours kept:
-                    // every life back to the start's, no damage (undo brings
-                    // the old one back).
+                    // A new game of as many players: every life back to the
+                    // start's, no damage, each seat its starting colours
+                    // (undo brings the old one back).
                     history.add(game)
-                    game = new_game(game.players, game.identity)
+                    game = new_game(game.players, starting_colours(lay_out(size, splits[game.players])))
                     call_off_volleys(motes, volleys, pending)
                 case .SYSTEM:
                     screen.settings_open = true

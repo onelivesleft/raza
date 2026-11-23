@@ -20,6 +20,46 @@ has_colour :: (identity: Identity, colour: Mana -> bool) #pure {
     return identity & (u8'1 << u8'colour) != 0
 }
 
+// The identity of one colour alone.
+mono :: (colour: Mana -> Identity) #pure {
+    return u8'1 << u8'colour
+}
+
+// The colours a reset gives, from the top seat round clockwise: white, blue,
+// green, black, red and an artifact deck (no colours) for six; five drop the
+// artifact, four white, three black, and two green. The top seat is the one
+// facing nearest straight up (of two as near, the one right of the top).
+starting_colours :: (layout: Layout -> identity: [MAX_PLAYERS] Identity) #pure {
+    n := layout.count
+    w := mono(.WHITE)
+    u := mono(.BLUE)
+    g := mono(.GREEN)
+    b := mono(.BLACK)
+    r := mono(.RED)
+    order: [MAX_PLAYERS] Identity = if n is {
+        case 6: ⟨w, u, g, b, r, 0⟩
+        case 5: ⟨w, u, g, b, r, 0⟩
+        case 4: ⟨u, g, b, r, 0, 0⟩
+        case 3: ⟨u, g, r, 0, 0, 0⟩
+        case: ⟨u, r, 0, 0, 0, 0⟩
+    }
+    up := -f32'Math.PI / 2
+    *top: i64 = 0
+    *least: f32 = 1e30
+    for seat, k: layout.seats[:n] {
+        turn := turn_between(up, Math.atan2(seat.toward.y, seat.toward.x))
+        off := Math.abs(turn)
+        // (within a step and a half of facing counts as as near: facings are
+        // rounded to steps, so two parts mirrored about the top may differ by one)
+        if off < least - 1.5 * FACING_STEP or (off < least + 1.5 * FACING_STEP and turn > 0) {
+            least = off
+            top = k
+        }
+    }
+    identity = ⟨⟩
+    for colours, i: order[:n] { identity[(top + i) % n] = colours }
+}
+
 Game :: struct {
     players:   i64 = 4
     life:      [MAX_PLAYERS] i32

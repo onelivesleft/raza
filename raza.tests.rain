@@ -577,6 +577,34 @@ aims_at_other_parts :: () #test {
     if _, _ := aim(layout, game, 1, layout.seats[1].middle) is not missed then assert(false, "its own part misses")
 }
 
+// A reset's colours start at the top seat and go round clockwise: white,
+// blue, green, black, red, artifact for six, and fewer drop some.
+resets_colours_from_the_top :: () #test {
+    expected := [5] [MAX_PLAYERS] Identity⟨
+        ⟨mono(.BLUE), mono(.RED), 0, 0, 0, 0⟩,
+        ⟨mono(.BLUE), mono(.GREEN), mono(.RED), 0, 0, 0⟩,
+        ⟨mono(.BLUE), mono(.GREEN), mono(.BLACK), mono(.RED), 0, 0⟩,
+        ⟨mono(.WHITE), mono(.BLUE), mono(.GREEN), mono(.BLACK), mono(.RED), 0⟩,
+        ⟨mono(.WHITE), mono(.BLUE), mono(.GREEN), mono(.BLACK), mono(.RED), 0⟩
+    ⟩
+    for size: [2] V2⟨LANDSCAPE, PORTRAIT⟩ {
+        for n: 2 <= MAX_PLAYERS {
+            layout := laid_out(n, size)
+            colours := starting_colours(layout)
+            // the top seat: facing nearest up, the right one of two as near
+            *top: i64 = 0
+            for seat, k: layout.seats[:n] {
+                best := layout.seats[top].toward
+                if seat.toward.y < best.y - 0.02 or (seat.toward.y < best.y + 0.02 and seat.toward.x > best.x) then top = k
+            }
+            for i: 0 < n {
+                got := colours[(top + i) % n]
+                assert(got == expected[n - 2][i], "«n» players, «i» round from the top: «got»")
+            }
+        }
+    }
+}
+
 // Commander damage is life lost too, and 21 from one commander is out.
 deals_commander_damage :: () #test {
     *game := new_game(4)
