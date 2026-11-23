@@ -299,11 +299,11 @@ settings_buttons_are_where_drawn :: () #test {
     }
     if at(layout, middle(RESET_LOW, RESET_HIGH)) is {
     case reset_lines: _
-    case era, quit, panel, outside: assert(false, "Reset's middle resets the lines")
+    case era, motion, quit, panel, outside: assert(false, "Reset's middle resets the lines")
     }
     if at(layout, middle(QUIT_LOW, QUIT_HIGH)) is {
     case quit: _
-    case era, reset_lines, panel, outside: assert(false, "Quit's middle quits")
+    case era, motion, reset_lines, panel, outside: assert(false, "Quit's middle quits")
     }
     for look: [3] Era⟨.ORIGINAL, .MODERN, .M15⟩ {
         low, high := era_button(look)
@@ -311,16 +311,24 @@ settings_buttons_are_where_drawn :: () #test {
         assert(high.x < SETTINGS_HALF.x and low.x > -SETTINGS_HALF.x, "«look»'s button is inside the panel")
         if at(layout, middle(low, high)) is {
         case era: assert(era == look, "«look»'s middle picks «era»")
-        case reset_lines, quit, panel, outside: assert(false, "«look»'s middle picks it")
+        case motion, reset_lines, quit, panel, outside: assert(false, "«look»'s middle picks it")
         }
     }
-    if at(layout, V2⟨-4.2, 1.9⟩) is {
+    for speed: [4] Motion⟨.OFF, .SLOW, .MEDIUM, .FAST⟩ {
+        low, high := motion_button(speed)
+        assert(high.x < SETTINGS_HALF.x and low.x > -SETTINGS_HALF.x and high.y < SETTINGS_HALF.y, "«speed»'s button is inside the panel")
+        if at(layout, middle(low, high)) is {
+        case motion: assert(motion == speed, "«speed»'s middle picks «motion»")
+        case era, reset_lines, quit, panel, outside: assert(false, "«speed»'s middle picks it")
+        }
+    }
+    if at(layout, V2⟨-4.5, 2.5⟩) is {
     case panel: _
-    case era, reset_lines, quit, outside: assert(false, "the panel's corner is the panel's")
+    case era, motion, reset_lines, quit, outside: assert(false, "the panel's corner is the panel's")
     }
     if at(layout, V2⟨0, SETTINGS_HALF.y + 0.5⟩) is {
     case outside: _
-    case era, reset_lines, quit, panel: assert(false, "below the panel is outside it")
+    case era, motion, reset_lines, quit, panel: assert(false, "below the panel is outside it")
     }
 }
 

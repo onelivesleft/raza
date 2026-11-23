@@ -548,7 +548,7 @@ fill_turned_box :: (canvas: *Draw.Canvas, origin: V2, angle: f32, at: V2, size: 
     canvas.fill_rounded_rect(low, high - low, radius, colour)
 }
 
-draw_seat :: (canvas: *Draw.Canvas, layout: Layout, game: Game, fonts: Fonts, k: i64, targeted: bool, era: Era) {
+draw_seat :: (canvas: *Draw.Canvas, layout: Layout, game: Game, fonts: Fonts, k: i64, targeted: bool, era: Era, time: f32) {
     seat := layout.seats[k]
     cell := cell_of(layout)
     out := is_out(game, k)
@@ -557,7 +557,7 @@ draw_seat :: (canvas: *Draw.Canvas, layout: Layout, game: Game, fonts: Fonts, k:
     // Its frame: its colours' gradient, across it as its player sees it
     // (left to right), with its era's surface over it.
     *colours: [Draw.MAX_GRADIENT_COLOURS] Draw.RGBA
-    n, pattern := part_fill(era, game.identity[k], cell, k, colours)
+    n, pattern := part_fill(era, game.identity[k], cell, k, time, colours)
     for *c: colours[:n] {
         if out then c = Math.mix(c, BACKGROUND, 0.7) else if targeted then c = lighter(c, 0.15)
     }
@@ -770,37 +770,61 @@ Screen_State :: struct {
     previewing:    bool          // the lines are another count's, or moving to one
     settings_open: bool
     era:           Era           // which era's frames the parts are like
+    motion:        Motion        // how fast their surfaces move
+    surface_time:  f32           // how far they've moved, in features
 }
 
 ////////////////////////////////
 // Settings: a panel over the middle of the screen: which era's frames the
-// parts are like, putting every count's lines back as they start, and
-// quitting.
+// parts are like, how fast their surfaces move, putting every count's lines
+// back as they start, and quitting. Its rows, each a name at LABEL_X and
+// its buttons from BUTTONS_LEFT to BUTTONS_RIGHT.
 
-SETTINGS_HALF :: V2⟨4.6, 2.1⟩      // in cells
-LABEL_X       :: -3.0              // the rows' names' middles
+SETTINGS_HALF :: V2⟨4.9, 2.75⟩     // in cells
+LABEL_X       :: -3.45             // the rows' names' middles
+BUTTONS_LEFT  :: -2.1
+BUTTONS_RIGHT :: 4.7
+TITLE_Y       :: -2.1
+FRAMES_Y      :: -0.8              // each row's middle
+MOTION_Y      :: 0.5
+LINES_Y       :: 1.8
 
-// The eras' buttons, in cells from the screen's centre: each from its low
-// corner to its high.
+// The button i of n in a row (its middle at y), in cells from the
+// screen's centre: from its low corner to its high.
+row_button :: (i: i64, n: i64, y: f32 -> low: V2, high: V2) #pure {
+    gap: f32 = 0.15
+    width := (BUTTONS_RIGHT - BUTTONS_LEFT - gap * f32'(n - 1)) / f32'n
+    left := BUTTONS_LEFT + f32'i * (width + gap)
+    low = ⟨left, y - 0.5⟩
+    high = ⟨left + width, y + 0.5⟩
+}
+
 era_button :: (era: Era -> low: V2, high: V2) #pure {
-    left := -1.6 + f32'i64'era * 2.05
-    low = ⟨left, -0.5⟩
-    high = ⟨left + 1.9, 0.5⟩
+    l, h := row_button(i64'era, 3, FRAMES_Y)
+    low = l
+    high = h
+}
+
+motion_button :: (motion: Motion -> low: V2, high: V2) #pure {
+    l, h := row_button(i64'motion, 4, MOTION_Y)
+    low = l
+    high = h
 }
 
 // The Quit button, in cells from the screen's centre, across from the
 // panel's title.
-QUIT_LOW  :: V2⟨2.8, -1.85⟩
-QUIT_HIGH :: V2⟨4.4, -1.05⟩
+QUIT_LOW  :: V2⟨3.1, TITLE_Y - 0.4⟩
+QUIT_HIGH :: V2⟨BUTTONS_RIGHT, TITLE_Y + 0.4⟩
 QUIT_RED  :: Draw.rgb(0x8A3030)
 
-// The Reset button, under the eras': every count's lines back where they
+// The Reset button, the last row: every count's lines back where they
 // start (equal_splits').
-RESET_LOW  :: V2⟨-1.6, 0.8⟩
-RESET_HIGH :: V2⟨4.4, 1.8⟩
+RESET_LOW  :: V2⟨BUTTONS_LEFT, LINES_Y - 0.5⟩
+RESET_HIGH :: V2⟨BUTTONS_RIGHT, LINES_Y + 0.5⟩
 
 Settings_Part :: union {
     era: Era
+    motion: Motion
     reset_lines
     quit
     panel
@@ -820,30 +844,44 @@ settings_part_at :: (layout: Layout, p: V2 -> Settings_Part) #pure {
         low, high := era_button(era)
         if in_box(local, low, high) then return Settings_Part.era(era)
     }
+    for motion: [4] Motion⟨.OFF, .SLOW, .MEDIUM, .FAST⟩ {
+        low, high := motion_button(motion)
+        if in_box(local, low, high) then return Settings_Part.motion(motion)
+    }
     return Settings_Part.panel
 }
 
-draw_settings :: (canvas: *Draw.Canvas, layout: Layout, fonts: Fonts, era: Era) {
+// A row's button: its colour, ringed when it's the one chosen, its name.
+draw_choice :: (canvas: *Draw.Canvas, fonts: Fonts, c: V2, cell: f32, low: V2, high: V2, colour: Draw.RGBA, chosen: bool, name: string) {
+    if chosen {
+        canvas.fill_rounded_rect(c + (low - V2⟨0.06, 0.06⟩) * cell, (high - low + V2⟨0.12, 0.12⟩) * cell, 0.2 * cell, INK)
+    }
+    canvas.fill_rounded_rect(c + low * cell, (high - low) * cell, 0.16 * cell, colour)
+    draw_centred(canvas, fonts.label, c + (low + high) / 2 * cell, 0, name, ink_on(colour))
+}
+
+draw_settings :: (canvas: *Draw.Canvas, layout: Layout, fonts: Fonts, era: Era, motion: Motion) {
     cell := cell_of(layout)
     c := layout.centre
+    label := lighter(CAPSULE, 0.6)
     canvas.fill_rect(⟨0, 0⟩, layout.size, Draw.rgba(0x000000, 0.45))
     canvas.fill_rounded_rect(c - SETTINGS_HALF * cell, SETTINGS_HALF * 2 * cell, 0.3 * cell, CAPSULE)
-    draw_centred(canvas, fonts.label, c + V2⟨LABEL_X, -1.45⟩ * cell, 0, "Settings", INK)
+    draw_centred(canvas, fonts.label, c + V2⟨LABEL_X, TITLE_Y⟩ * cell, 0, "Settings", INK)
     canvas.fill_rounded_rect(c + QUIT_LOW * cell, (QUIT_HIGH - QUIT_LOW) * cell, 0.16 * cell, QUIT_RED)
     draw_centred(canvas, fonts.label, c + (QUIT_LOW + QUIT_HIGH) / 2 * cell, 0, "Quit", INK)
-    draw_centred(canvas, fonts.label, c + V2⟨LABEL_X, 0.0⟩ * cell, 0, "Frames", lighter(CAPSULE, 0.6))
-    draw_centred(canvas, fonts.label, c + V2⟨LABEL_X, (RESET_LOW.y + RESET_HIGH.y) / 2⟩ * cell, 0, "Lines", lighter(CAPSULE, 0.6))
+    draw_centred(canvas, fonts.label, c + V2⟨LABEL_X, FRAMES_Y⟩ * cell, 0, "Frames", label)
+    draw_centred(canvas, fonts.label, c + V2⟨LABEL_X, MOTION_Y⟩ * cell, 0, "Motion", label)
+    draw_centred(canvas, fonts.label, c + V2⟨LABEL_X, LINES_Y⟩ * cell, 0, "Lines", label)
     canvas.fill_rounded_rect(c + RESET_LOW * cell, (RESET_HIGH - RESET_LOW) * cell, 0.16 * cell, lighter(CAPSULE, 0.25))
     draw_centred(canvas, fonts.label, c + (RESET_LOW + RESET_HIGH) / 2 * cell, 0, "Reset", INK)
-    // (each era's button in its gold, the chosen one ringed)
+    // (each era's button in its gold; the speeds in the capsule's colour)
     for choice: [3] Era⟨.ORIGINAL, .MODERN, .M15⟩ {
         low, high := era_button(choice)
-        colour := LOOKS[i64'choice][GOLD_LOOK].ground
-        if choice == era {
-            canvas.fill_rounded_rect(c + (low - V2⟨0.06, 0.06⟩) * cell, (high - low + V2⟨0.12, 0.12⟩) * cell, 0.2 * cell, INK)
-        }
-        canvas.fill_rounded_rect(c + low * cell, (high - low) * cell, 0.16 * cell, colour)
-        draw_centred(canvas, fonts.label, c + (low + high) / 2 * cell, 0, ERA_NAMES[i64'choice], ink_on(colour))
+        draw_choice(canvas, fonts, c, cell, low, high, LOOKS[i64'choice][GOLD_LOOK].ground, choice == era, ERA_NAMES[i64'choice])
+    }
+    for choice: [4] Motion⟨.OFF, .SLOW, .MEDIUM, .FAST⟩ {
+        low, high := motion_button(choice)
+        draw_choice(canvas, fonts, c, cell, low, high, lighter(CAPSULE, 0.25), choice == motion, MOTION_NAMES[i64'choice])
     }
 }
 
@@ -854,7 +892,7 @@ draw :: (canvas: *Draw.Canvas, layout: Layout, game: Game, fonts: Fonts, screen:
     if screen.drag.active {
         if to, _ := aim(layout, game, screen.drag.from, screen.mouse) is not missed then targeted = to
     }
-    for k: 0 < layout.count { draw_seat(canvas, layout, game, fonts, k, k == targeted, screen.era) }
+    for k: 0 < layout.count { draw_seat(canvas, layout, game, fonts, k, k == targeted, screen.era, screen.surface_time) }
     // The lines between the parts (the one being moved lit).
     for end, k: layout.ends[:layout.count] {
         moving := k == screen.moving_end
@@ -867,7 +905,7 @@ draw :: (canvas: *Draw.Canvas, layout: Layout, game: Game, fonts: Fonts, screen:
     if screen.counts.open or screen.counts.settling then draw_counts(canvas, layout, screen)
     if screen.drag.active then draw_drag(canvas, layout, game, fonts, screen.drag, screen.mouse, artifact_of(screen.era))
     if screen.picker.open then draw_picker(canvas, layout, fonts, screen.picker, game, artifact_of(screen.era))
-    if screen.settings_open then draw_settings(canvas, layout, fonts, screen.era)
+    if screen.settings_open then draw_settings(canvas, layout, fonts, screen.era, screen.motion)
 }
 
 ////////////////////////////////
@@ -1000,10 +1038,14 @@ main :: (args: [] string) [failed: string] {
     *splits: [MAX_PLAYERS + 1] Splits
     for n: 2 <= MAX_PLAYERS { splits[n] = Defaults.get(`scratch "splits.«n»", Splits⟨⟩) }
     *frames := Defaults.get("era", Era.ORIGINAL)
+    *speed := Defaults.get("motion", Motion.SLOW)
+    // (how far the surfaces have moved, in their features)
+    *surface_time: f32 = 0
     // (what was last stored, to store again only what's changed)
     *stored_game := game
     *stored_family := family
     *stored_frames := frames
+    *stored_speed := speed
     *last_frame := Time.seconds_since_start()
     *layout: Layout
     *fonts: Fonts
@@ -1077,6 +1119,7 @@ main :: (args: [] string) [failed: string] {
                 setting := settings_part_at(layout, mouse)
                 if setting is {
                 case era: frames = era
+                case motion: speed = motion
                 case reset_lines:
                     // Every count's lines forgotten, here and stored: a count
                     // whose lines don't fit is laid out as equal_splits starts it.
@@ -1201,6 +1244,10 @@ main :: (args: [] string) [failed: string] {
             if Defaults.set("era", frames) is os_error { }
             stored_frames = frames
         }
+        if speed != stored_speed {
+            if Defaults.set("motion", speed) is os_error { }
+            stored_speed = speed
+        }
 
         // The life totals sized for the parts drawn, whatever moved them
         // (a dragged line, lines settling on a count, a reset); the font's
@@ -1209,12 +1256,20 @@ main :: (args: [] string) [failed: string] {
 
         screen.can_undo = history.count > 0
         screen.era = frames
+        // (the surfaces moved on by the frame's time at the chosen speed)
+        surface_time += seconds * MOTION_RATES[i64'speed]
+        screen.motion = speed
+        screen.surface_time = surface_time
         draw(canvas, layout, shown, fonts, screen)
         canvas.present(w.handle, vsync: true)
         scratch.reset()
         still := !screen.drag.active and screen.moving_end < 0 and !screen.counts.held and !screen.counts.settling and !screen.previewing
+        // (still, it waits for input; with the surfaces moving, a twentieth
+        // of a second at most, so they move at 20 frames a second, and
+        // anything touched is answered at once)
         if still {
-            if _ := Window.wait_for_input(milliseconds: 1000) is timed_out { }
+            wait: u32 = if speed == .OFF then 1000 else 50
+            if _ := Window.wait_for_input(milliseconds: wait) is timed_out { }
         }
     }
 }

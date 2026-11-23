@@ -44,6 +44,19 @@ LOOKS :: [3][7] Look⟨
      ⟨Draw.rgb(0xD9B65C), .CLOUDS, 2.5, 0.2⟩⟩
 ⟩
 
+// How fast the surfaces move (a setting): still, or slowly to quickly.
+Motion :: enum u8 {
+    OFF
+    SLOW
+    MEDIUM
+    FAST
+}
+
+MOTION_NAMES :: [4] string⟨"Off", "Slow", "Medium", "Fast"⟩
+
+// Each speed, in a surface's features a second.
+MOTION_RATES :: [4] f32⟨0, 0.04, 0.12, 0.35⟩
+
 // How big the surfaces' features are against the looks' own scales (a
 // card's frame is fine-grained for its size, and a part is far bigger).
 SURFACE_SCALE :: 0.35
@@ -58,8 +71,8 @@ artifact_of :: (era: Era -> Draw.RGBA) #pure {
 
 // A part's fill, for its player's colours in an era: its gradient's colours
 // (into, how many) and its surface (features sized in pixels, cell's
-// share, seeded by its seat so neighbours differ).
-part_fill :: (era: Era, identity: Identity, cell: f32, seat: i64, into: [] *Draw.RGBA -> count: i64, pattern: Draw.Pattern) #pure {
+// share, seeded by its seat so neighbours differ, moved to time).
+part_fill :: (era: Era, identity: Identity, cell: f32, seat: i64, time: f32, into: [] *Draw.RGBA -> count: i64, pattern: Draw.Pattern) #pure {
     looks := LOOKS[i64'era]
     *colours: i64 = 0
     *only: i64 = 0
@@ -88,5 +101,5 @@ part_fill :: (era: Era, identity: Identity, cell: f32, seat: i64, into: [] *Draw
         into[1] = Math.mix(look.ground, BACKGROUND, 0.4)
         count = 2
     }
-    pattern = ⟨kind: look.kind, scale: look.scale * SURFACE_SCALE * cell, strength: look.strength, seed: f32'(seat + 1)⟩
+    pattern = ⟨kind: look.kind, scale: look.scale * SURFACE_SCALE * cell, strength: look.strength, seed: f32'(seat + 1), time: time⟩
 }
