@@ -730,13 +730,20 @@ draw_seat :: (canvas: *Draw.Canvas, layout: Layout, game: Game, fonts: Fonts, k:
             draw_centred(canvas, fonts.mana, place, seat.angle, MANA_GLYPHS[colour], Draw.rgba(0xF4EFE6, 0.5))
         }
     }
-    draw_centred(canvas, fonts.life, seat.middle, seat.angle, "«game.life[k]»", ink)
+    // Its life total: white with a black border and a drop shadow (falling
+    // as the parts' light, from the screen's top left, has it), on any part.
+    cap := f32'fonts.life.cap_height
+    life_colour := if out then Draw.rgba(0xFFFFFF, 0.55) else Draw.rgb(0xFFFFFF)
+    life_style := Draw.Text_Style⟨outline: Draw.rgb(0x000000), outline_width: Math.max(2, cap * LIFE_OUTLINE),
+                                  shadow: Draw.rgba(0x000000, 0.55), shadow_offset: V2⟨1, 1⟩ * (cap * LIFE_SHADOW), shadow_soft: cap * LIFE_SHADOW⟩
+    life_text := "«game.life[k]»"
+    life_width := f32'fonts.life.text_width(life_text)
+    canvas.draw_text(fonts.life, placed(seat.middle, seat.angle, ⟨-life_width / 2, cap / 2⟩), life_text, life_colour, life_style, seat.angle)
     // The commander damage it's taken, a chip in each commander's colour, in
     // a row below its life (or where chip_places finds room).
     *shown: i64 = 0
     for d: game.commander[k][:game.players] { if d > 0 then shown += 1 }
-    life_width := f32'fonts.life.text_width("«game.life[k]»")
-    chips := chip_places(layout, k, life_width, f32'fonts.life.cap_height, shown)
+    chips := chip_places(layout, k, life_width, cap, shown)
     *place: i64 = 0
     for d, from: game.commander[k][:game.players] {
         if d <= 0 then continue
@@ -752,6 +759,11 @@ draw_seat :: (canvas: *Draw.Canvas, layout: Layout, game: Game, fonts: Fonts, k:
         place += 1
     }
 }
+
+// A life total's border, and how far its shadow falls and how soft it is,
+// against its capitals' height.
+LIFE_OUTLINE :: 0.045
+LIFE_SHADOW :: 0.06
 
 // How big a commander damage chip is (cells), and how far apart they are.
 CHIP_RADIUS :: 0.4
@@ -1437,7 +1449,8 @@ main :: (args: [] string) [failed: string] {
                 case reset:
                     // Every count's lines forgotten, here and stored: a count
                     // whose lines don't fit is laid out as equal_splits starts it.
-                    // Then each seat its starting colours.
+                    // Then each seat its starting colours, and the motion
+                    // its default, slow.
                     for n: 2 <= MAX_PLAYERS {
                         splits[n] = ⟨⟩
                         if Defaults.remove(`scratch "splits.«n»") is { case absent, os_error: _ }
@@ -1445,6 +1458,7 @@ main :: (args: [] string) [failed: string] {
                     splits[game.players] = equal_splits(game.players, size)
                     layout = lay_out(size, splits[game.players])
                     game.identity = starting_colours(size, game.players)
+                    speed = Motion.SLOW
                 case quit:
                     // (what's changed is already stored, each frame's as it's made)
                     w.destroy()
