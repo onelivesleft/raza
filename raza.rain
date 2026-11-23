@@ -12,9 +12,19 @@
 // count's lines are kept from one run to the next (Defaults', the registry's).
 //
 //     rain -run raza.rain
+//
+// For the tablet, `rain -release raza.rain`: optimized through LLVM, each
+// frame's work about two thirds of a debug build's.
 
 Raza :: program {
     subsystem: .WINDOWS
+    debug {
+        mode: .DEBUG
+    }
+    release {
+        mode: .RELEASE
+        optimization: .SPEED
+    }
 }
 
 #import Draw(RENDERER: .VULKAN)
@@ -29,6 +39,7 @@ Raza :: program {
 #import Particles
 #import Random
 #import Icons(SETS: .MDI)
+#import Console
 #include "icons/icons.rain"
 
 #include "layout.rain"
@@ -204,13 +215,35 @@ icon_at :: (layout: Layout, game: Game, p: V2 -> i64) [absent] {
     fail: absent
 }
 
+// Each part's toggle places, kept: toggle_places searches, and the layout
+// changes only as a line moves or the screen's size does, so they're worked
+// out again only then (every frame of a line's moving, as before; once
+// otherwise).
+Toggle_Cache :: struct {
+    size:   V2
+    splits: Splits
+    places: [MAX_PLAYERS] [5] V2
+}
+
+toggle_cache: Toggle_Cache
+
+// A part's toggle places (toggle_places'), from the cache.
+toggles_of :: (layout: Layout, k: i64 -> [5] V2) {
+    if toggle_cache.size != layout.size or toggle_cache.splits != layout.splits {
+        toggle_cache.size = layout.size
+        toggle_cache.splits = layout.splits
+        for seat, s: layout.seats[:layout.count] { toggle_cache.places[s] = toggle_places(layout, seat) }
+    }
+    return toggle_cache.places[k]
+}
+
 // The colour toggle at a point: its part, and which colour; or absent.
 toggle_at :: (layout: Layout, p: V2 -> seat: i64, colour: i64) [absent] {
     seat = 0
     colour = 0
     r := TOGGLE_RADIUS * cell_of(layout)
     for s, k: layout.seats[:layout.count] {
-        for place, i: toggle_places(layout, s) {
+        for place, i: toggles_of(layout, k) {
             if Math.length(p - place) <= r * 1.15 {
                 seat = k
                 colour = i
@@ -628,7 +661,7 @@ draw_seat :: (canvas: *Draw.Canvas, layout: Layout, game: Game, fonts: Fonts, k:
     // Its colour toggles: a colour's symbol in its circle when it's set, a
     // dim one when not; each over a soft shadow that quiets the surface
     // around it, so the row reads the same on every frame.
-    places := toggle_places(layout, seat)
+    places := toggles_of(layout, k)
     r := TOGGLE_RADIUS * cell
     for place: places { canvas.fill_glow(place, r * 1.8, Draw.rgba(0x000000, 0.3)) }
     for place, i: places {
@@ -800,6 +833,10 @@ Screen_State :: struct {
 
 // How often the frames a second shown are worked out again, in seconds.
 FPS_WINDOW :: 0.5
+
+// The frames a second when nothing's being touched (the miasmas and the
+// surfaces still move): a frame's work, then a wait for input for the rest.
+IDLE_FPS :: 60.0
 
 // The frames a second, top right, on a chip of the capsule's colour, upright
 // to the screen.
@@ -1071,6 +1108,7 @@ save_snapshots :: (folder: string) [failed: string] {
 Options :: struct {
     black_snapshot: string ⟦help: "capture black attack stages into this folder, and quit"⟧
     snapshot: string ⟦help: "draw each count of players into PNGs in this folder (raza_2.png to raza_6.png, and raza_grid.png), and quit"⟧
+    quit_after: f64 = 0 ⟦help: "quit after this many seconds, as if Quit were pressed (to profile it: rain -profile raza.rain -quit_after:15)"⟧
 }
 
 main :: (args: [] string) [failed: string] {
@@ -1138,8 +1176,20 @@ main :: (args: [] string) [failed: string] {
     *pending: [MAX_PLAYERS] [MAX_PLAYERS] i32
     *volleys: Volleys
 
+    // (for -quit_after's report: each frame's work, from its start to its
+    // present, its waits for input left out)
+    started := Time.seconds_since_start()
+    *busy: f64 = 0
+    *slowest: f64 = 0
+    *busy_frames: i64 = 0
+    *woke := started
+    defer if options.quit_after > 0 and busy_frames > 0 {
+        echo("«busy_frames» frames in «Time.seconds_since_start() - started, ⟨precision: 1⟩» s; each frame's work «busy / f64'busy_frames * 1000, ⟨precision: 2⟩» ms on average, «slowest * 1000, ⟨precision: 2⟩» ms at most")
+    }
     while Window.update_windows() {
+        frame_start := Time.seconds_since_start()
         if w.close_requested then w.destroy()
+        if options.quit_after > 0 and Time.seconds_since_start() - started >= options.quit_after then w.destroy()
         if !w.is_open then break
         size := V2⟨f32'w.size[0], f32'w.size[1]⟩
         if canvas.size != w.size {
@@ -1392,12 +1442,23 @@ main :: (args: [] string) [failed: string] {
         screen.surface_time = surface_time
         draw(canvas, layout, shown, fonts, screen, motes, volleys)
         canvas.present(w.handle, vsync: true)
+        worked := Time.seconds_since_start() - frame_start
+        busy += worked
+        slowest = Math.max(slowest, worked)
+        busy_frames += 1
         scratch.reset()
         still := !screen.drag.active and screen.moving_end < 0 and !screen.counts.held and !screen.counts.settling and !screen.previewing
-        // (still, it waits for input, but a thirtieth of a second at most:
-        // the miasmas always swirl, and anything touched is answered at once)
+        // (still, it waits for input, but only for what's left of the frame
+        // after its work: the miasmas always swirl, at IDLE_FPS, and anything
+        // touched is answered at once)
         if still {
-            if _ := Window.wait_for_input(milliseconds: 33) is timed_out { }
+            // (the frame's whole time, its windows' messages too, from the
+            // last wait's end)
+            left := 1.0 / IDLE_FPS - (Time.seconds_since_start() - woke)
+            if left > 0.001 {
+                if _ := Window.wait_for_input(milliseconds: u32'(left * 1000)) is timed_out { }
+            }
         }
+        woke = Time.seconds_since_start()
     }
 }

@@ -481,9 +481,9 @@ settled_motes :: (layout: Layout, game: Game, from: i64 = -1, finger: V2 = ⟨0,
 // The flow field's eddies, in cells.
 MOTE_FLOW :: 1.5
 
-// How many points a heart's outline has (a GPU's shader takes 64 at most),
-// and how big one alone is, in cells.
-HEART_POINTS :: 48
+// How many points a heart's outline has (a GPU's shader takes 64 at most:
+// a soft, wavering edge needs no more), and how big one alone is, in cells.
+HEART_POINTS :: 36
 HEART_CELLS :: 1.6
 
 // What's at the heart of a colour's miasma.
@@ -600,7 +600,7 @@ draw_fire :: (canvas: *Draw.Canvas, at: V2, size: f32, angle: f32, time: f32, se
             up := (h - y) / (2 * h)
             // (its edge wavering with noise that climbs, more toward its tip)
             side: f32 = if t < f32'Math.PI then 1 else -1
-            waver := Patterns.layered(V2⟨side * 2.3 + seed, y / size * 4 + time * 2.4⟩, 3) - 0.5
+            waver := Patterns.layered(V2⟨side * 2.3 + seed, y / size * 4 + time * 2.4⟩, 2) - 0.5
             x := w * Math.sin(t) * Math.sin(t / 2) * (1 + waver * (0.3 + 0.9 * up)) + sway * size * up * up
             outline[i] = placed(at, angle, base + V2⟨x, y⟩)
         }
@@ -617,7 +617,7 @@ blob_outline :: (at: V2, size: f32, time: f32, seed: f32, speed: f32, wobble: f3
     for i: 0 < HEART_POINTS {
         a := f32'i / f32'HEART_POINTS * f32'Math.TAU
         way := V2⟨Math.cos(a), Math.sin(a)⟩
-        wander := Patterns.layered(way * 1.3 + V2⟨time * speed + seed * 3.1, seed * 1.7⟩, 3)
+        wander := Patterns.layered(way * 1.3 + V2⟨time * speed + seed * 3.1, seed * 1.7⟩, 2)
         outline[i] = at + way * (0.5 * size * (1 + 2 * wobble * (wander - 0.5)))
     }
     return outline
