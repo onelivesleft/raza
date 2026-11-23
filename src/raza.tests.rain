@@ -591,21 +591,30 @@ plus_opens_into_a_square :: () #test {
     assert(!in_controls(layout, c + V2⟨1.6, 1.6⟩ * cell, 0.5), "half open, it's not yet square")
 }
 
-// While a count's picked, the plus becomes the count column's groove: every
-// count's ring inside it wherever the column's been dragged to, undo's arm
-// gone.
-plus_becomes_the_count_groove :: () #test {
-    layout := laid_out(4, LANDSCAPE)
-    cell := cell_of(layout)
-    for shown: [3] f32⟨2, 4, 5.5⟩ {
-        for count: 2 <= MAX_PLAYERS {
-            ring := count_place(layout, shown, count)
-            assert(in_controls(layout, ring, 0, 1, shown), "«count»'s ring in the groove, the column at «shown»")
-            assert(in_controls(layout, ring + V2⟨0.5 * cell, 0⟩, 0, 1, shown), "«count»'s ring's width in the groove, at «shown»")
+// While a count's picked, the plus becomes the count runner: the count
+// bar, every count's ring on it, inside it wherever the bar's slid to (its
+// ends too, from one end of its travel to the other), the runner on the
+// screen either way up, undo's arm gone.
+plus_becomes_the_count_runner :: () #test {
+    for screen: [2] V2⟨LANDSCAPE, PORTRAIT⟩ {
+        layout := laid_out(4, screen)
+        cell := cell_of(layout)
+        for shown: [4] f32⟨2, 3.4, 5.5, 6⟩ {
+            for count: 2 <= MAX_PLAYERS {
+                ring := count_place(layout, shown, count)
+                assert(in_controls(layout, ring + V2⟨BAR_WIDTH * cell, 0⟩, 0, 1), "«count»'s ring's width in the runner, at «shown»")
+            }
+            middle := (count_place(layout, shown, 2) + count_place(layout, shown, MAX_PLAYERS)) / 2
+            for end: [2] f32⟨-1, 1⟩ {
+                tip := middle + V2⟨0, end * (BAR_HALF - 0.01) * cell⟩
+                assert(in_controls(layout, tip, 0, 1), "the bar's end at «tip» in the runner, at «shown»")
+            }
         }
+        reach := RUNNER_HALF * cell
+        assert(layout.centre.y - reach > 0 and layout.centre.y + reach < screen.y, "the runner on the screen, on «screen»")
+        assert(!in_controls(layout, capsule_centre(layout, .UNDO), 0, 1), "undo's arm gone")
+        assert(in_controls(layout, capsule_centre(layout, .UNDO), 0, 0), "undo's arm there before")
     }
-    assert(!in_controls(layout, capsule_centre(layout, .UNDO), 0, 1, 4), "undo's arm gone")
-    assert(in_controls(layout, capsule_centre(layout, .UNDO), 0, 0, 4), "undo's arm there before")
 }
 
 // The controls are a plus: the players in the middle, undo on the left

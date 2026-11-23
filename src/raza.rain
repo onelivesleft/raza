@@ -610,10 +610,10 @@ recess_distance :: (p: V2, shape: V4, more: V4, column: V4 -> f32) #pure {
 // settings' square: its middle and its arms' reach and half width (shape),
 // and its inside corners' rounding, the square's corners', how far it's
 // open (eased in and out), and its walls' width (more); and part of the way
-// (counts, eased in and out) to the count column's groove, the column at a
-// count (shown): its middle's offset down from the controls', its half width
-// and half height, and how far (column).
-recess_shape :: (layout: Layout, open: f32, counts: f32 = 0, shown: f32 = 4 -> shape: V4, more: V4, column: V4) #pure {
+// (counts, eased in and out) to the count runner, the upright groove the
+// count bar slides in: its middle's offset down from the controls' (none),
+// its half width and half height, and how far (column).
+recess_shape :: (layout: Layout, open: f32, counts: f32 = 0 -> shape: V4, more: V4, column: V4) #pure {
     cell := cell_of(layout)
     opened := Math.clamp(open, 0, 1)
     t := opened * opened * (3 - 2 * opened)
@@ -621,20 +621,21 @@ recess_shape :: (layout: Layout, open: f32, counts: f32 = 0, shown: f32 = 4 -> s
     more = ⟨PLUS_CORNER * cell, SETTINGS_ROUND * cell, t, RECESS_WALL * cell⟩
     grooved := Math.clamp(counts, 0, 1)
     c := grooved * grooved * (3 - 2 * grooved)
-    // (from 2's ring to MAX_PLAYERS', COLUMN_HALF beyond each)
-    middle := (f32'(2 + MAX_PLAYERS) / 2 - shown) * COUNT_PITCH
-    half := f32'(MAX_PLAYERS - 2) / 2 * COUNT_PITCH + COLUMN_HALF
-    column = ⟨middle * cell, COLUMN_HALF * cell, half * cell, c⟩
+    column = ⟨0, COLUMN_HALF * cell, RUNNER_HALF * cell, c⟩
 }
 
-// The count column's groove's half width, in cells (a button's, and its
-// round ends').
+// The count runner's half width, in cells (a button's, and its round ends'),
+// and its half length: as far as the count bar's end goes either way, the
+// bar's half length (BAR_HALF) beyond the most it slides from the middle
+// (the 2's ring at the button to MAX_PLAYERS' there).
 COLUMN_HALF :: 0.6
+BAR_HALF    :: f32'(MAX_PLAYERS - 2) / 2 * COUNT_PITCH + 0.55
+RUNNER_HALF :: f32'(MAX_PLAYERS - 2) / 2 * COUNT_PITCH + BAR_HALF + 0.05
 
 // Whether a point is in the controls' recess, open a share of the way (to
-// the settings' square, or to the count column's groove).
-in_controls :: (layout: Layout, p: V2, open: f32 = 0, counts: f32 = 0, shown: f32 = 4 -> bool) #pure {
-    shape, more, column := recess_shape(layout, open, counts, shown)
+// the settings' square, or to the count runner).
+in_controls :: (layout: Layout, p: V2, open: f32 = 0, counts: f32 = 0 -> bool) #pure {
+    shape, more, column := recess_shape(layout, open, counts)
     return recess_distance(p - shape.xy, shape, more, column) < 0
 }
 
@@ -678,10 +679,10 @@ Recess :: shader { vertex: Draw.quad_place; fragment: recess_shade }
 RECESS :: Recess(Draw.SHADER_TARGET)
 
 // The controls' recess drawn, open a share of the way into the settings'
-// square, or into the count column's groove (the column at a count, shown).
-draw_recess :: (canvas: *Draw.Canvas, layout: Layout, open: f32, counts: f32, shown: f32) {
-    shape, more, column := recess_shape(layout, open, counts, shown)
-    // (over the plus, and the groove's ends wherever the column's moved them)
+// square, or into the count runner.
+draw_recess :: (canvas: *Draw.Canvas, layout: Layout, open: f32, counts: f32) {
+    shape, more, column := recess_shape(layout, open, counts)
+    // (over the plus, and the runner's ends)
     margin := shape.z + 2
     *low := shape.xy - V2⟨margin, margin⟩
     *high := shape.xy + V2⟨margin, margin⟩
@@ -1049,7 +1050,7 @@ draw_capsule :: (canvas: *Draw.Canvas, layout: Layout, game: Game, screen: Scree
     // (and into the count column's groove while a count's picked, undo's and
     // redo's arms going as it grows)
     grooved := Math.clamp(screen.counts_shown, 0, 1)
-    draw_recess(canvas, layout, open, grooved, screen.counts.shown)
+    draw_recess(canvas, layout, open, grooved)
     plus_shows := Math.clamp(1 - 2 * open, 0, 1)
     // (the plus's own buttons fade out over the first half of the groove's
     // morph, and back in over the last half of its way back; the column's
@@ -1079,23 +1080,76 @@ faded :: (colour: Draw.RGBA, share: f32 -> Draw.RGBA) #pure {
     return ⟨colour.r, colour.g, colour.b, colour.a * share⟩
 }
 
-// The column of counts, each a ring of people, moving through the button:
-// the one nearest it bright, the rest fading with their distance from it.
+// The counts, each a ring of people engraved on one metal bar that slides
+// along the runner the plus has become (draw_capsule's recess) as the finger
+// moves it: the count at the button marked either side of the runner, its
+// ring darkest, the rest fainter with their distance from it. Shown over the
+// last half of the runner's morph, gone over the first half of its way back.
 draw_counts :: (canvas: *Draw.Canvas, layout: Layout, screen: Screen_State) {
     cell := cell_of(layout)
     active := i64'Math.round(screen.counts.shown)
-    // (in the groove the plus has become, from 2's ring to 6's: draw_capsule's
-    // recess; shown over the last half of its morph, and gone over the first
-    // half of its way back)
     shows := Math.clamp(2 * screen.counts_shown - 1, 0, 1)
     if shows <= 0 then return
-    canvas.fill_circle(capsule_centre(layout, .PLAYERS), 0.52 * cell, Draw.rgba(0xF4DFAB, 0.14 * shows))
+    // (the bar, from 2's ring to MAX_PLAYERS', BAR_HALF each way of its middle)
+    middle := (count_place(layout, screen.counts.shown, 2) + count_place(layout, screen.counts.shown, MAX_PLAYERS)) / 2
+    draw_metal_bar(canvas, middle, V2⟨BAR_WIDTH, BAR_HALF⟩ * cell, shows)
     for count: 2 <= MAX_PLAYERS {
         away := Math.abs(f32'count - screen.counts.shown)
-        fade := Math.clamp(1 - away * 0.4, 0.2, 1)
-        colour := if count == active then INK else Draw.rgba(0xF4EFE6, fade * 0.8)
-        draw_people(canvas, count_place(layout, screen.counts.shown, count), count, cell, faded(colour, shows))
+        engraved := if count == active then 0.9 else Math.clamp(0.75 - away * 0.2, 0.25, 0.75)
+        draw_people(canvas, count_place(layout, screen.counts.shown, count), count, cell, Draw.rgba(0x1C1A17, engraved * shows))
     }
+    // (the count at the button: a small pointer either side of the runner)
+    button := capsule_centre(layout, .PLAYERS)
+    for side: [2] f32⟨-1, 1⟩ {
+        tip := button + V2⟨side * (COLUMN_HALF + 0.06) * cell, 0⟩
+        back := tip + V2⟨side * 0.2 * cell, 0⟩
+        points := [3] V2⟨tip, back + V2⟨0, -0.13 * cell⟩, back + V2⟨0, 0.13 * cell⟩⟩
+        canvas.fill_polygon(points[:], faded(INK, shows))
+    }
+}
+
+// The count bar's half width, in cells: a little inside the runner's.
+BAR_WIDTH :: 0.5
+
+Metal_Bar_Params :: struct {
+    box:  V4      // its middle, and its half width and half length (pixels)
+    more: V4      // how much it shows, then unused
+}
+
+// A rounded steel bar, upright: its section round, so its surface turns from
+// facing out along its middle to facing sideways at its edges (and its
+// ends), reflecting a bright band from the light at the top left and a
+// softer one from the other side, brushed along its length, darker toward
+// its edges; laid over what's under it (its colour premultiplied).
+metal_bar_shade :: (from: Draw.Quad_Between, bar: Shader.Uniforms(Metal_Bar_Params) -> colour: V4) {
+    p := from.pixel - bar.box.xy
+    radius := bar.box.z
+    d := round_box_distance(p, bar.box.zw, radius)
+    if d > 1 then return ⟨0, 0, 0, 0⟩
+    coverage := Math.clamp(0.5 - d, 0, 1) * bar.more.x
+    // (the way out of it, and how far toward its edge: 0 on its spine, 1 at its edge)
+    gx := round_box_distance(p + V2⟨0.5, 0⟩, bar.box.zw, radius) - round_box_distance(p - V2⟨0.5, 0⟩, bar.box.zw, radius)
+    gy := round_box_distance(p + V2⟨0, 0.5⟩, bar.box.zw, radius) - round_box_distance(p - V2⟨0, 0.5⟩, bar.box.zw, radius)
+    outward := Math.normalize(V2⟨gx, gy⟩ + V2⟨0.00001, 0⟩)
+    edge := Math.clamp(1 + d / Math.max(radius, 1), 0, 1)
+    tilt := outward * edge
+    up := Math.sqrt(Math.max(1 - edge * edge, 0))
+    // (what it reflects: a view from straight above turned by its surface)
+    reflected := tilt * (2 * up)
+    key := Math.exp(0 - Math.pow(Math.dot(reflected, PART_LIGHT) - 0.55, 2) * 18)
+    fill := Math.exp(0 - Math.pow(Math.dot(reflected, PART_LIGHT * -1.0) - 0.7, 2) * 10)
+    brushed := Patterns.noise(V2⟨p.x * 0.35, p.y * 0.012⟩ + V2⟨3.1, 0⟩)
+    steel := V3⟨0.52, 0.54, 0.58⟩ * (0.86 + 0.18 * brushed) * (1 - 0.45 * edge * edge)
+    rgb := steel + V3⟨1, 0.97, 0.9⟩ * (key * 0.55) + V3⟨0.7, 0.78, 0.9⟩ * (fill * 0.2)
+    colour = V4⟨rgb.x, rgb.y, rgb.z, 1⟩ * coverage
+}
+
+Metal_Bar :: shader { vertex: Draw.quad_place; fragment: metal_bar_shade }
+METAL_BAR :: Metal_Bar(Draw.SHADER_TARGET)
+
+// The count bar drawn about a middle, half a size each way, showing a share.
+draw_metal_bar :: (canvas: *Draw.Canvas, middle: V2, half: V2, shows: f32) {
+    canvas.draw_shader(middle - half - V2⟨2, 2⟩, half * 2 + V2⟨4, 4⟩, METAL_BAR.code, METAL_BAR.bindings.bar, Metal_Bar_Params⟨V4⟨middle.x, middle.y, half.x, half.y⟩, V4⟨shows, 0, 0, 0⟩⟩)
 }
 
 // What's happening on the screen besides the game: what's being dragged,

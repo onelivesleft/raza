@@ -128,9 +128,13 @@ bigger burst. A spell's attack looks the same as combat damage's.
 ## The controls
 
 The plus in the middle: the players in its middle (touched, the plus
-morphs into the count column's groove, 0.11 s, its counts in it, the
-column following the finger; let go, that count's the game's, the same if
-it didn't move, and the groove morphs back), undo and redo on its wings, a new
+morphs into the count runner, 0.11 s: a long upright groove, fixed, as long
+as the count bar's whole travel; in it, one rounded steel bar (its own
+shader: a round section reflecting the light from the top left, brushed
+along its length) with each count's ring of people engraved on it, which
+slides with the finger, small pointers either side of the runner marking
+the count at the button; let go, that count's the game's, the same if it
+didn't move, and the runner morphs back), undo and redo on its wings, a new
 game above, the system's (settings and quitting) below, as a power button.
 The text is Crimson Pro.
 
