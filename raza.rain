@@ -1191,7 +1191,8 @@ main :: (args: [] string) [failed: string] {
                     if amount is {
                     case damage:
                         history.add(game)
-                        strike(game, motes, random, layout, pending, screen.drag.from, to, damage)
+                        _, bend, _ := stream_path(layout, game, screen.drag.from, mouse)
+                        strike(game, motes, random, layout, pending, screen.drag.from, to, damage, bend)
                     case asked:
                         screen.picker = ⟨true, screen.drag.from, to, DEFAULT_PICKED / 10, DEFAULT_PICKED % 10⟩
                     }
@@ -1265,6 +1266,7 @@ main :: (args: [] string) [failed: string] {
             feed_stream(motes, random, layout, game, screen.drag.from, mouse, amount, seconds)
         }
         motes.update(seconds)
+        if screen.drag.active then steer_stream(motes, layout, game, screen.drag.from, mouse, seconds)
         land_volleys(motes, random, layout, game, pending)
         if !screen.previewing then shown = shown_game(game, pending)
 

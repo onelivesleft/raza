@@ -8,38 +8,57 @@
 // A colour's motes: their colour over their life, how much light they add,
 // how they flicker, their size over their life and how long they live, how
 // they rise (toward the centre, from their player's side: negative falls
-// toward the player), how the flow field swirls them, how their speed
-// dies, how fast they start, and a second colour some of them are.
+// toward the player) and how the wind blows them (to their player's
+// right), how the flow field swirls them, how their speed dies, how fast
+// they start; how they're long (streaked along their motion, or ovals
+// turning); and a second colour some of them are, at a share of the size.
 Mote_Style :: struct {
     colour:       Draw.RGBA
     colour_end:   Draw.RGBA
-    add:          f32
-    flicker:      f32
+    add:          f32 = 0
+    flicker:      f32 = 0
     size:         f32               // cells
     size_end:     f32
     life:         f32               // seconds
-    rise:         f32               // cells a second, a second
-    swirl:        f32               // cells a second
-    drag:         f32
-    spread:       f32               // cells a second
+    rise:         f32 = 0           // cells a second, a second
+    wind:         f32 = 0
+    swirl:        f32 = 0           // cells a second
+    drag:         f32 = 1
+    spread:       f32 = 0.3         // cells a second
+    streak:       f32 = 0           // seconds of motion
+    elongation:   f32 = 1
+    spin:         f32 = 0
     glint:        Draw.RGBA
-    glint_chance: f32
+    glint_chance: f32 = 0
+    glint_size:   f32 = 1
+    glint_add:    f32 = 1
 }
 
 // Each colour's (WUBRG), then an artifact's.
 STYLES :: [6] Mote_Style⟨
-    // White: light, twinkling and rising, now and then gold.
-    ⟨Draw.rgb(0xFFFDF0), Draw.rgb(0xFFE9A8), 1, 0.7, 0.07, 0.03, 1.2, 0.3, 0.6, 1.0, 0.4, Draw.rgb(0xFFD36B), 0.2⟩,
-    // Blue: water, drops falling and eddying.
-    ⟨Draw.rgba(0x8FD0F5, 0.85), Draw.rgba(0x1F6CB4, 0.8), 0.35, 0.1, 0.10, 0.07, 1.6, -0.6, 1.2, 1.2, 0.5, Draw.rgb(0xE0F6FF), 0.15⟩,
-    // Black: roiling shadow, growing as it turns, with violet glints.
-    ⟨Draw.rgba(0x3A2F45, 0.6), Draw.rgba(0x120E18, 0.45), 0, 0, 0.18, 0.42, 1.8, 0.1, 2.0, 0.8, 0.3, Draw.rgb(0x9A5CD0), 0.12⟩,
-    // Red: fire, embers rising fast and flickering, yellow to red.
-    ⟨Draw.rgb(0xFFD27A), Draw.rgb(0xB3200A), 1, 0.6, 0.10, 0.03, 0.9, 1.6, 0.8, 0.6, 0.5, Draw.rgb(0xFFF4D0), 0.1⟩,
-    // Green: spores, spiralling up.
-    ⟨Draw.rgba(0xB8F0A8, 0.9), Draw.rgba(0x2D7A47, 0.8), 0.6, 0.2, 0.06, 0.09, 1.8, 0.2, 1.5, 1.0, 0.3, Draw.rgb(0xF2E27A), 0.15⟩,
+    // White: holy light, soft halos rising slowly and swelling, among small
+    // bright sparkles.
+    ⟨colour: Draw.rgba(0xFFF0C8, 0.14), colour_end: Draw.rgba(0xFFE7A0, 0.08), add: 1, flicker: 0.25, size: 0.13, size_end: 0.24,
+     life: 1.8, rise: 0.45, swirl: 0.35, drag: 1.4, spread: 0.3, glint: Draw.rgb(0xFFFFF4), glint_chance: 0.55, glint_size: 0.25⟩,
+    // Blue: water, drops falling, streaked as they fall, eddying, some catching
+    // the light.
+    ⟨colour: Draw.rgba(0xA8E0FF, 0.9), colour_end: Draw.rgba(0x3B8ED6, 0.85), add: 0.3, flicker: 0.05, size: 0.065, size_end: 0.05,
+     life: 1.3, rise: -1.6, swirl: 1.4, drag: 0.9, spread: 0.7, streak: 0.03, glint: Draw.rgba(0xF2FBFF, 0.95), glint_chance: 0.3, glint_size: 0.6, glint_add: 0.8⟩,
+    // Black: oily smoke, thick and dark, curling into tendrils (each wisp
+    // drawn long along its curl), a sheen of oil's colours now and then.
+    ⟨colour: Draw.rgba(0x0A090C, 0.8), colour_end: Draw.rgba(0x000000, 0.55), size: 0.10, size_end: 0.26,
+     life: 2.4, rise: 0.15, swirl: 2.6, drag: 0.7, spread: 0.35, streak: 0.35, glint: Draw.rgba(0x2E4A5A, 0.7), glint_chance: 0.2, glint_size: 0.7, glint_add: 0.5⟩,
+    // Red: sparks, small and white-hot, flung out fast, streaking, falling,
+    // gone quickly.
+    ⟨colour: Draw.rgb(0xFFF2C0), colour_end: Draw.rgb(0xFF6A20), add: 1, flicker: 0.4, size: 0.035, size_end: 0.015,
+     life: 0.5, rise: -1.3, swirl: 0.15, drag: 1.2, spread: 2.6, streak: 0.04, glint: Draw.rgb(0xFFFFFF), glint_chance: 0.25⟩,
+    // Green: leaves blown on the wind, tumbling, now and then an autumn one.
+    ⟨colour: Draw.rgba(0x8CCB5E, 0.95), colour_end: Draw.rgba(0x4E8A34, 0.9), add: 0.1, size: 0.055, size_end: 0.055,
+     life: 2.2, rise: -0.2, wind: 1.4, swirl: 1.0, drag: 1.2, spread: 0.5, elongation: 2.4, spin: 4,
+     glint: Draw.rgba(0xC9B44A, 0.95), glint_chance: 0.2, glint_add: 0.1⟩,
     // Artifact: metal sparks, flung out and falling.
-    ⟨Draw.rgb(0xE8EEF2), Draw.rgb(0x7A848C), 0.9, 0.3, 0.05, 0.02, 0.6, -0.8, 0.2, 2.0, 1.6, Draw.rgb(0xFFD99A), 0.2⟩
+    ⟨colour: Draw.rgb(0xE8EEF2), colour_end: Draw.rgb(0x7A848C), add: 0.9, flicker: 0.3, size: 0.05, size_end: 0.02,
+     life: 0.6, rise: -0.8, swirl: 0.2, drag: 2.0, spread: 1.6, streak: 0.03, glint: Draw.rgb(0xFFD99A), glint_chance: 0.2⟩
 ⟩
 
 ARTIFACT_STYLE :: 5
@@ -96,16 +115,19 @@ mote_of :: (random: *Random.Generator, identity: Identity, at: V2, velocity: V2,
     glinting := random.chance(f64'style.glint_chance)
     colour := if glinting then style.glint else style.colour
     colour_end := if glinting then style.glint else style.colour_end
-    add := if glinting then 1 else style.add
+    add := if glinting then style.glint_add else style.add
+    size: f32 = if glinting then style.glint_size else 1
     // (a random direction and speed up to its spread, and a life within a
-    // third either way of its own)
+    // third either way of its own; the wind to its player's right)
     angle := f32'random.below(0.0, Math.TAU)
     speed := f32'random.below(0.0, 1.0) * style.spread * cell
     life := style.life * f32'random.below(0.7, 1.3)
+    right := V2⟨0 - up.y, up.x⟩
     return ⟨at: at, velocity: velocity + V2⟨Math.cos(angle), Math.sin(angle)⟩ * speed, life: life,
-            size: style.size * MOTE_SCALE * cell, size_end: style.size_end * MOTE_SCALE * cell, colour: colour, colour_end: colour_end,
-            add: add, flicker: style.flicker, gravity: up * style.rise * cell, drag: style.drag,
-            swirl: style.swirl * cell, tag: tag, seed: f32'random.below(0.0, 100.0)⟩
+            size: style.size * size * MOTE_SCALE * cell, size_end: style.size_end * size * MOTE_SCALE * cell, colour: colour, colour_end: colour_end,
+            add: add, flicker: style.flicker, gravity: (up * style.rise + right * style.wind) * cell, drag: style.drag,
+            swirl: style.swirl * cell, streak: style.streak, elongation: style.elongation, spin: style.spin,
+            tag: tag, seed: f32'random.below(0.0, 100.0)⟩
 }
 
 // Each miasma kept going for a frame: motes born about its player's damage
@@ -135,35 +157,80 @@ births :: (random: *Random.Generator, rate: f32, seconds: f32 -> i64) {
     return whole
 }
 
-// The stream for a frame of a drag: motes from the dragger's miasma flowing
-// to the finger, more for a bigger amount, ending there.
+// The stream's path, as a drag's finger aims it: from the dragger's miasma
+// to the life total of whoever it's over (to the finger, over no one),
+// bent toward the finger (a curve through start and end, pulled toward bend).
+STREAM_BEND :: 0.6               // how far the bend goes toward the finger from the middle
+STREAM_TRAVEL :: 0.75            // seconds a mote takes along it
+STREAM_SWAY :: 0.45              // how far a mote strays from it at most, cells
+
+stream_path :: (layout: Layout, game: Game, from: i64, finger: V2 -> start: V2, bend: V2, end: V2) {
+    start = layout.seats[from].icon
+    *ends := finger
+    if to, _ := aim(layout, game, from, finger) is not missed then ends = layout.seats[to].middle
+    end = ends
+    middle := (start + ends) / 2
+    bend = middle + (finger - middle) * STREAM_BEND
+}
+
+// The point t of the way along a curve from a to c, pulled toward b.
+curve_at :: (a: V2, b: V2, c: V2, t: f32 -> V2) #pure {
+    return Math.mix(Math.mix(a, b, t), Math.mix(b, c, t), t)
+}
+
+// The stream for a frame of a drag: motes from the dragger's miasma, more
+// for a bigger amount, set off along its path (steer_stream moves them).
 feed_stream :: (motes: *Particles.System, random: *Random.Generator, layout: Layout, game: Game, from: i64, finger: V2, amount: i32, seconds: f32) {
     cell := cell_of(layout)
     seat := layout.seats[from]
     rate := f32'STREAM_RATE + f32'STREAM_RATE_A_POINT * f32'amount
-    along := finger - seat.icon
-    if Math.length(along) < 1 then return
-    toward := Math.normalize(along)
+    if Math.length(finger - seat.icon) < 1 then return
     for _: 0 < births(random, rate, seconds) {
-        *m := mote_of(random, game.identity[from], seat.icon, toward * 5 * cell, seat.toward * -1, cell, STREAM_MOTE)
-        m.home = finger
-        m.pull = 20
-        m.drag = Math.max(m.drag, 2)
-        m.arrive = 0.3 * cell
-        m.life = Math.max(m.life, 1.2)
+        *m := mote_of(random, game.identity[from], seat.icon, ⟨0, 0⟩, seat.toward * -1, cell, STREAM_MOTE)
+        m.life = STREAM_TRAVEL * f32'random.below(0.85, 1.15)
+        m.gravity = ⟨0, 0⟩
+        m.swirl = 0
+        m.drag = 0
         motes.add(m)
+    }
+}
+
+// The stream's motes moved along its path for a frame: each t of the way
+// (its age over its life) along the curve, swaying to one side by its own
+// share (none at either end, so it leaves the miasma and comes to the
+// life total as one), its velocity what it moved (for its streak).
+steer_stream :: (motes: *Particles.System, layout: Layout, game: Game, from: i64, finger: V2, seconds: f32) {
+    if seconds <= 0 then return
+    cell := cell_of(layout)
+    start, bend, end := stream_path(layout, game, from, finger)
+    for *m: motes.motes {
+        if m.tag & STREAM_MOTE == 0 then continue
+        t := Math.clamp(m.age / Math.max(m.life, 0.0001), 0, 1)
+        on := curve_at(start, bend, end, t)
+        ahead := curve_at(start, bend, end, Math.min(t + 0.01, 1)) - curve_at(start, bend, end, Math.max(t - 0.01, 0))
+        *way := V2⟨1, 0⟩
+        if Math.length(ahead) > 0.0001 then way = Math.normalize(ahead)
+        across := V2⟨0 - way.y, way.x⟩
+        share := Math.fract(m.seed * 0.618) * 2 - 1
+        sway := Math.sin(t * 3.14159) * (share * STREAM_SWAY + 0.08 * Math.sin(m.age * 7 + m.seed)) * cell
+        next := on + across * sway
+        m.velocity = (next - m.at) / seconds
+        m.at = next
     }
 }
 
 // A volley: a mote a point of damage, from the attacker's miasma to the
 // target's life, each a little after the last (quicker for more), each
-// flung out to one side or the other and pulled in. The last of a volley
-// whose commander damage became lethal is marked so.
-fire_volley :: (motes: *Particles.System, random: *Random.Generator, layout: Layout, identity: Identity, from: i64, to: i64, amount: i32, lethal: bool) {
+// set off toward the stream's bend, flung a little to one side or the
+// other, and pulled in. The last of a volley whose commander damage became
+// lethal is marked so.
+fire_volley :: (motes: *Particles.System, random: *Random.Generator, layout: Layout, identity: Identity, from: i64, to: i64, amount: i32, lethal: bool,
+                bend: V2) {
     cell := cell_of(layout)
     source := layout.seats[from].icon
     target := layout.seats[to].middle
-    along := Math.normalize(target - source)
+    *along := Math.normalize(target - source)
+    if Math.length(bend - source) > 1 then along = Math.normalize(bend - source)
     across := V2⟨0 - along.y, along.x⟩
     interval := Math.min(1.2 / f32'Math.max(amount, 1), 0.07)
     for i: 0 < i64'amount {
@@ -192,13 +259,16 @@ fire_volley :: (motes: *Particles.System, random: *Random.Generator, layout: Lay
 // pending, until they have). The volley's last is marked lethal when this
 // commander damage made it so.
 strike :: (game: *Game, motes: *Particles.System, random: *Random.Generator, layout: Layout, pending: *[MAX_PLAYERS] [MAX_PLAYERS] i32,
-           from: i64, to: i64, amount: i32) {
+           from: i64, to: i64, amount: i32, bend: V2 = ⟨0, 0⟩) {
     if amount <= 0 or from == to then return
     was := game.commander[to][from]
     game.deal(from, to, amount)
     lethal := was < LETHAL_COMMANDER_DAMAGE and game.commander[to][from] >= LETHAL_COMMANDER_DAMAGE
     pending[to][from] += amount
-    fire_volley(motes, random, layout, game.identity[from], from, to, amount, lethal)
+    // (no bend given: straight at them, by their middle)
+    *toward := bend
+    if toward == V2⟨0, 0⟩ then toward = (layout.seats[from].icon + layout.seats[to].middle) / 2
+    fire_volley(motes, random, layout, game.identity[from], from, to, amount, lethal, toward)
 }
 
 // What's landed since the last frame: each volley mote a point off the
@@ -268,8 +338,12 @@ settled_motes :: (layout: Layout, game: Game, from: i64 = -1, finger: V2 = ⟨0,
         seconds: f32 = 1.0 / 60
         feed_miasmas(made, random, layout, game, seconds)
         if from >= 0 and volley == 0 then feed_stream(made, random, layout, game, from, finger, amount, seconds)
-        if frame == 100 and volley > 0 then fire_volley(made, random, layout, game.identity[from], from, to, volley, false)
+        if frame == 100 and volley > 0 {
+            _, bend, _ := stream_path(layout, game, from, finger)
+            fire_volley(made, random, layout, game.identity[from], from, to, volley, false, bend)
+        }
         made.update(seconds)
+        if from >= 0 and volley == 0 then steer_stream(made, layout, game, from, finger, seconds)
         land_volleys(made, random, layout, game, pending)
     }
     motes = made
@@ -279,10 +353,13 @@ settled_motes :: (layout: Layout, game: Game, from: i64 = -1, finger: V2 = ⟨0,
 MOTE_FLOW :: 1.5
 
 // A soft pool of shadow under each miasma, so its light shows on a light part.
+// (A black player's is a pale haze instead, so their oily smoke shows on it.)
 draw_miasma_pools :: (canvas: *Draw.Canvas, layout: Layout, game: Game) {
     cell := cell_of(layout)
+    black_only := Identity'(u8'1 << u8'Mana.BLACK)
     for seat, k: layout.seats[:layout.count] {
         if is_out(game, k) then continue
-        canvas.fill_glow(seat.icon, 1.2 * cell, Draw.rgba(0x000000, 0.4))
+        pool := if game.identity[k] == black_only then Draw.rgba(0xA89CB0, 0.35) else Draw.rgba(0x000000, 0.4)
+        canvas.fill_glow(seat.icon, 1.2 * cell, pool)
     }
 }

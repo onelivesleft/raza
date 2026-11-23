@@ -364,6 +364,35 @@ volleys_land_a_point_at_a_time :: () #test {
     assert(ticked_down and pending[0][1] == 0 and shown_before == 33, "landed, shown as dealt: «shown_before», «pending[0][1]» pending")
 }
 
+// The stream always ends at the life total of whoever the finger's over,
+// wherever over them it is, bending toward the finger; over no one, it
+// ends at the finger. Its motes leave the miasma and arrive at that end.
+streams_end_at_the_life_total :: () #test {
+    layout := laid_out(4, LANDSCAPE)
+    game := new_game(4)
+    target := layout.seats[0]
+    for along: [3] f32⟨0.3, 0.6, 0.85⟩ {
+        entry := entry_point(layout.seats[1].icon, target.middle, target.outline[:target.count])
+        inner := Math.dot(entry - layout.centre, target.toward)
+        finger := entry + target.toward * (target.reach - inner) * along + V2⟨0, 60⟩
+        start, bend, end := stream_path(layout, game, 1, finger)
+        assert(near_point(end, target.middle), "ends at the life total, the finger «along» in: «end»")
+        assert(near_point(start, layout.seats[1].icon))
+        middle := (start + end) / 2
+        assert(Math.dot(bend - middle, finger - middle) > 0, "bends toward the finger")
+    }
+    _, _, loose := stream_path(layout, game, 1, layout.centre + V2⟨5, 5⟩)
+    assert(near_point(loose, layout.centre + V2⟨5, 5⟩), "over no one, to the finger: «loose»")
+    // (motes steered along it: at their start at the miasma, at their end at the life total)
+    *motes: Particles.System
+    finger := target.middle + V2⟨0, 80⟩
+    motes.add(⟨at: layout.seats[1].icon, life: 1, age: 0, tag: STREAM_MOTE, seed: 3⟩)
+    motes.add(⟨at: layout.seats[1].icon, life: 1, age: 0.999, tag: STREAM_MOTE, seed: 5⟩)
+    steer_stream(motes, layout, game, 1, finger, 1.0 / 60)
+    assert(near_point(motes.motes[0].at, layout.seats[1].icon), "leaves the miasma: «motes.motes[0].at»")
+    assert(Math.length(motes.motes[1].at - target.middle) < 3, "comes to the life total: «motes.motes[1].at»")
+}
+
 // An undo (or a new game) calls volleys off: their motes gone, nothing pending.
 undo_calls_off_volleys :: () #test {
     layout := laid_out(4, LANDSCAPE)
