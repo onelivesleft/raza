@@ -48,20 +48,28 @@ target_arrow_shade :: (from: Draw.Quad_Between, arrow: Shader.Uniforms(Target_Ar
 Target_Arrow :: shader { vertex: Draw.quad_place; fragment: target_arrow_shade }
 TARGET_ARROW :: Target_Arrow(Draw.SHADER_TARGET)
 
+// The free tip points away from the pressed button, along the drag.
+free_arrow_back :: (button: V2, tip: V2, outward: V2 -> V2) #pure {
+    delta := button - tip
+    length := Math.length(delta)
+    if length < 0.001 then return outward
+    return delta / length
+}
 draw_target_arrow :: (canvas: *Draw.Canvas, layout: Layout, drag: Drag, tip: V2, back: V2) {
     cell := cell_of(layout)
     source := layout.seats[drag.from]
     up := source.toward * -1.0
     start := damage_icon(layout, drag.from, drag.combat) + up * ((DAMAGE_ICON_RADIUS + 0.12) * cell)
-    head_length := 0.85 * cell
+    span := Math.length(tip - start)
+    head_length := Math.min(0.85 * cell, Math.max(0.05 * cell, span * 0.4))
     end := tip + back * head_length
-    lift := Math.max(1.4 * cell, Math.length(tip - start) * 0.45)
+    lift := Math.min(Math.max(1.4 * cell, span * 0.45), span * 0.6)
     first := start + up * lift
     second := end + back * lift
     params := Target_Arrow_Params⟨⟨start.x, start.y, first.x, first.y⟩,
                                   ⟨second.x, second.y, end.x, end.y⟩,
                                   ⟨tip.x, tip.y, back.x, back.y⟩,
-                                  ⟨DAMAGE_ICON_RADIUS * cell, 0.028 * cell, head_length, 0.68 * cell⟩,
+                                  ⟨DAMAGE_ICON_RADIUS * cell * 0.8, 0.028 * cell, head_length, 0.68 * cell⟩,
                                   ⟨0.25 * cell, 0.35 * cell, 0.10 * cell, 0.48⟩⟩
     pad := V2⟨1.2, 1.2⟩ * cell
     low := Math.min(Math.min(start, first), Math.min(second, tip)) - pad

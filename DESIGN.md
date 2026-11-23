@@ -94,7 +94,7 @@ stays behind what's on it.
 throws**, each colour as its own element, as combat damage or a spell's.
 
 - **Two damage icons per player**, at their damage spot, side by side as
-  they see it, each on a dark round chip turned to face them: Mana ms-battle
+  they see it, each white with a black outline and drop shadow, turned to face them: Mana ms-battle
   on their left for combat damage (commander damage: it takes life and
   counts toward the 21 from that commander), Mana ms-sorcery on their right for a
   spell's (or an ability's, or another creature's: life alone, never
@@ -122,7 +122,7 @@ A white arrow with a black outline starts just above the pressed attack
 button in its player's frame. It curves up from the button, over the table,
 and down onto the chosen victim's life total. A soft down-right shadow falls
 over everything beneath it, including the table, controls and life counts.
-The arrow is drawn after those layers. Its shaft is as wide as an attack button. It appears immediately on dragging, pointing at the finger until an eligible victim is selected. Its shadow lifts only through the arch, with both ends touching the table. The amount remains beside the finger, facing the attacker.
+The arrow is drawn after those layers. Its shaft is 80% of an attack button's diameter. Before a victim is selected, its head points along the drag direction, away from the pressed button. It appears immediately on dragging, pointing at the finger until an eligible victim is selected. Its shadow lifts only through the arch, with both ends touching the table. The pending amount sits above the victim's life total and arrow tip in the attacker's frame, facing the attacker.
 Selection emits no element streams or particles; released attacks retain
 their elemental volleys and impacts.
 ## The attack: the volley on release
@@ -153,8 +153,9 @@ bigger burst. A spell's attack looks the same as combat damage's.
 
 The pill in the middle, across the screen, its buttons 1.2 cells apart:
 from the left, undo and redo, the players in the middle, a new game, and the
-system's (settings and quitting) at the right end, as a power button. The
-text is Crimson Pro.
+system's (settings and quitting) at the right end, as a power button. Its
+edge is raised bronze piping (0.06 cells), a round bead lit from the top
+left with a highlight along it, casting a soft shadow down and to the right. The text is Crimson Pro.
 
 Undo goes back a step, and redo forward: damage dealt, a life drum's turn,
 a player's colours (their taps one after another, while their toggles stay
@@ -180,15 +181,17 @@ it. Drawn by a shader of its own (`recess_shade`) from its shape's distance.
 
 The power button splits the table along its horizontal seam, as the
 players' button splits it along the upright one: the halves above and below
-slide apart (0.16 s), each walled where it's cut and taking its half of the
-pill's outline with it, the upper one's shadow falling into the channel,
-while the pill stays where it is, its buttons as they are (the count slider
-seen through the players' button). In the steel channel that opens, each
-on a chip of the pill's floor: Reset, a place left of undo; and the motion,
-a place right of the power button, one button showing what it is (pause, or
-play's triangles: ▶ slow, ▶▶ medium, ▶▶▶ fast), each tap the next, round
-from pause to fast and back. The power button, touched again, quits. A tap
-anywhere else, or Escape, closes the table.
+slide apart (0.16 s), out from under the pill, each walled where it's cut,
+the upper one's shadow falling into the channel; the pill stays where it
+is, its buttons as they are (the count slider seen through the players'
+button), lying on the halves and over the channel with a soft shadow of its
+own (drawn apart, over the table drawn without it). In the steel channel that opens, each
+on a chip of the pill's floor: the motion, a place left of undo, one button
+showing what it is (pause, or play's triangles: ▶ slow, ▶▶ medium, ▶▶▶
+fast), each tap the next, round from pause to fast and back; Reset, a
+place right of the menu button, which closes the table, then resets; and
+Quit, the power icon, a place right of Reset. The menu button, touched
+again, closes the table, as a tap anywhere else, or Escape, does.
 
 ## Ideas kept for later
 

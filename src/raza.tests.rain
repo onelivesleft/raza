@@ -478,24 +478,35 @@ dragged_lines_pass_under_the_finger :: () #test {
 }
 
 // The settings' buttons are each where it's drawn, in the channel the
-// table opens: Reset a place left of undo, the motion's button a place
-// right of the system's, and Quit the system's button itself; the pill's
-// other buttons, or anywhere else, close the table.
+// table opens: the motion's a place left of undo, Reset a place right of
+// the system's, and Quit a place right of Reset; the pill's buttons, the
+// system's too, or anywhere else, close the table; and all of them are on
+// the screen, either way up.
 settings_buttons_are_where_drawn :: () #test {
+    for size: [2] V2⟨LANDSCAPE, PORTRAIT⟩ {
+        shown := laid_out(4, size)
+        last := shown.centre.x + (QUIT_PLACE.x * CAPSULE_PITCH + SETTINGS_BUTTON) * cell_of(shown)
+        first := shown.centre.x + (ANIMATION_PLACE.x * CAPSULE_PITCH - SETTINGS_BUTTON) * cell_of(shown)
+        assert(first > 0 and last < size.x, "the settings' buttons on the screen at «size»: «first» to «last»")
+    }
     layout := laid_out(4, LANDSCAPE)
     pitch := CAPSULE_PITCH * cell_of(layout)
     at :: (layout: Layout, place: V2, pitch: f32 -> Settings_Part) { return settings_part_at(layout, layout.centre + place * pitch) }
+    if at(layout, ⟨4, 0⟩, pitch) is {
+    case quit: _
+    case animation, reset, close: assert(false, "right of Reset quits")
+    }
     if at(layout, ⟨3, 0⟩, pitch) is {
-    case animation: _
-    case reset, quit, close: assert(false, "right of the system's button moves the motion on")
+    case reset: _
+    case animation, quit, close: assert(false, "right of the system's button resets")
     }
     if at(layout, ⟨-3, 0⟩, pitch) is {
-    case reset: _
-    case animation, quit, close: assert(false, "left of undo resets")
+    case animation: _
+    case reset, quit, close: assert(false, "left of undo moves the motion on")
     }
     if settings_part_at(layout, capsule_centre(layout, .SYSTEM)) is {
-    case quit: _
-    case animation, reset, close: assert(false, "the system's button quits")
+    case close: _
+    case animation, reset, quit: assert(false, "the system's button closes the table")
     }
     // (the settings' buttons are past the pill's ends, in the channel)
     reach := CAPSULE_REACH * cell_of(layout)
@@ -1255,4 +1266,13 @@ life_is_centred_in_the_asymmetric_bottom_region :: () #test {
     second := distance_to_segment(seat.middle, layout.centre, layout.ends[3])
     assert(Math.abs(first - second) < 0.01, "the 88 has equal clearance to its two channels")
     assert(seat.middle.x < 2000 and seat.middle.y > 1450, "the counter moves down and left from the area centroid")
+}
+free_arrow_points_along_the_drag :: () #test {
+    button := V2⟨1700, 1400⟩
+    finger := V2⟨1760, 1000⟩
+    back := free_arrow_back(button, finger, ⟨0.6, 0.8⟩)
+    forward := back * -1.0
+    assert(forward.y < 0 and forward.x > 0, "toward blue, not curling back toward the attacker")
+    assert(Math.dot(forward, Math.normalize(finger - button)) > 0.999)
+    assert(free_arrow_back(button, button, ⟨0, 1⟩) == V2⟨0, 1⟩)
 }

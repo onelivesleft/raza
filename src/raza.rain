@@ -483,8 +483,8 @@ move_split_with_clearance :: (splits: *Splits, k: i64, share: f32, size: V2) {
         }
     }
 }
-// Each player's two damage icons (not a player who's out's), each on a dark
-// round chip, turned to face them; the one being dragged from lit.
+// Each player's damage symbols: white, outlined in black, with a soft
+// down-right shadow, turned to match their life total.
 draw_damage_icons :: (canvas: *Draw.Canvas, layout: Layout, game: Game, drag: Drag, drum: Life_Drum, fonts: Fonts) {
     cell := cell_of(layout)
     for k: 0 < layout.count {
@@ -492,12 +492,15 @@ draw_damage_icons :: (canvas: *Draw.Canvas, layout: Layout, game: Game, drag: Dr
         seat := layout.seats[k]
         for combat: [2] bool⟨true, false⟩ {
             at := damage_icon(layout, k, combat)
-            dragged := drag.active and drag.from == k and drag.combat == combat
-            chip := if dragged then lighter(CAPSULE, 0.3) else Draw.rgba(0x16161C, 0.62)
             shows := player_controls_visibility(drum, k)
-            canvas.fill_circle(at, DAMAGE_ICON_RADIUS * cell, faded(chip, shows))
+            if shows <= 0 then continue
             glyph := if combat then COMBAT_GLYPH else SPELL_GLYPH
-            draw_centred(canvas, fonts.attack, at, seat.angle, glyph, faded(INK, shows))
+            width := f32'fonts.attack.text_width(glyph)
+            baseline := placed(at, seat.angle, ⟨0 - width / 2, f32'fonts.attack.cap_height / 2⟩)
+            style := Draw.Text_Style⟨outline: Draw.rgba(0x000000, shows), outline_width: Math.max(1.5, cell * 0.025),
+                                     shadow: Draw.rgba(0x000000, 0.55 * shows), shadow_offset: V2⟨0.04, 0.055⟩ * cell,
+                                     shadow_soft: 0.04 * cell⟩
+            canvas.draw_text(fonts.attack, baseline, glyph, Draw.rgba(0xFFFFFF, shows), style, seat.angle)
         }
     }
 }
@@ -800,7 +803,8 @@ picker_part_at :: (layout: Layout, picker: Picker, at: V2 -> Picker_Part) #pure 
 UNDO_ICON   :: icon(Mdi.UNDO)
 REDO_ICON   :: icon(Mdi.REDO)
 RESTART_ICON :: icon(Mdi.RESTORE)
-SYSTEM_ICON :: icon(Mdi.POWER)
+SYSTEM_ICON :: icon(Mdi.DOTS_HORIZONTAL)
+QUIT_ICON   :: icon(Mdi.POWER)
 PERSON_ICON :: icon(Mdi.ACCOUNT)
 TICK_ICON   :: icon(Mdi.CHECK)
 CROSS_ICON  :: icon(Mdi.CLOSE)
@@ -884,7 +888,7 @@ capsule_part_at :: (layout: Layout, at: V2 -> Capsule_Part) [absent] {
 // away. Its shape is the pill, CAPSULE_REACH either way, CAPSULE_HALF up
 // and down, its ends round (in cells); the settings appear in it, in place
 // of its buttons.
-RECESS_WALL :: 0.12             // how wide its walls are, from the surface to its floor
+RECESS_WALL :: 0.06             // how wide its bronze piping is, round its edge
 
 // How far a point is outside a box about 0, half its size each way, its
 // corners rounded by radius (negative inside).
@@ -947,33 +951,42 @@ Recess_Params :: struct {
     wall:   V4    // its walls' width (pixels), then unused
 }
 
-// The recess over the surface: its walls going down from the surface to
-// its floor, of a colour of its own (the capsule's), each wall shaded where
-// it faces away from the light and warmly lit where it faces it, given as
-// what to lay over the surface (its colour premultiplied).
+// The pill over the surface: its floor, of its own (the controls' metal),
+// edged with raised bronze piping, a round bead lit from the light at the
+// top left (a highlight along it where it turns toward the light), which
+// casts a soft shadow away from the light: onto the floor inside its upper
+// left edges, onto the surface outside its lower right ones. Given as what to
+// lay over the surface (its colour premultiplied).
 recess_shade :: (from: Draw.Quad_Between, recess: Shader.Uniforms(Recess_Params), texture: Shader.Texture_2D, filtering: Shader.Sampler -> colour: V4) {
     p := from.pixel - recess.shape.xy
     d := recess_distance(p, recess.shape, recess.column)
-    if d > 1 then return ⟨0, 0, 0, 0⟩
-    coverage := Math.clamp(0.5 - d, 0, 1)
-    // (the way out of it, toward the surface: its distance's slope)
+    width := Math.max(recess.wall.x, 1)
+    if d > width * 1.2 + 1 then return ⟨0, 0, 0, 0⟩
+    // (the way out of it, toward the surface: its distance's slope; and how
+    // squarely that edge faces the light)
     gx := recess_distance(p + V2⟨0.5, 0⟩, recess.shape, recess.column) - recess_distance(p - V2⟨0.5, 0⟩, recess.shape, recess.column)
     gy := recess_distance(p + V2⟨0, 0.5⟩, recess.shape, recess.column) - recess_distance(p - V2⟨0, 0.5⟩, recess.shape, recess.column)
     outward := Math.normalize(V2⟨gx, gy⟩ + V2⟨0.00001, 0⟩)
-    // (as the channels are: across 0 on its floor, 1 at the surface)
-    across := Math.clamp(1 + d / Math.max(recess.wall.x, 1), 0, 1)
-    wall := Math.sin(across * f32'Math.PI)
-    facing := Math.dot(outward * -1.0, PART_LIGHT)
-    // (the surface giving way to the floor down the wall, then the wall's
-    // shade, then its light, each laid over the last)
-    down := (1 + Math.cos(across * f32'Math.PI)) * 0.5
-    shade := Math.max(0 - facing, 0) * wall * 0.48
-    light := Math.max(facing, 0) * wall * 0.38
-    kept := (1 - shade) * (1 - light)
-    grain := control_material(texture, filtering, from.pixel / Math.max(recess.shape.z * 3, 1))
-    rgb := grain * (down * kept) + PART_WARM * light
-    alpha := 1 - (1 - down) * kept
-    colour = V4⟨rgb.x, rgb.y, rgb.z, alpha⟩ * coverage
+    toward := Math.dot(outward, PART_LIGHT)
+    // The piping: a half round from its inner side (across 0) to its outer
+    // (1), its surface turning from inward through up to outward.
+    across := Math.clamp(1 + d / width, 0, 1)
+    t := 2 * across - 1
+    normal := V3⟨outward.x * t, outward.y * t, Math.sqrt(Math.max(1 - t * t, 0))⟩
+    light := Math.normalize(V3⟨PART_LIGHT.x, PART_LIGHT.y, 1⟩)
+    diffuse := Math.max(Math.dot(normal, light), 0)
+    gleam := Math.pow(Math.max(Math.dot(normal, Math.normalize(light + V3⟨0, 0, 1⟩)), 0), 24)
+    bronze := V3⟨0.62, 0.45, 0.26⟩ * (0.3 + 0.8 * diffuse) + V3⟨1, 0.9, 0.7⟩ * (gleam * 0.55)
+    // The floor, its shadow from the piping along the edges facing the light.
+    floor := control_material(texture, filtering, from.pixel / Math.max(recess.shape.z * 3, 1))
+    within := Math.max(0 - d - width, 0)
+    shadow_in := Math.max(toward, 0) * (1 - Math.smoothstep(0, width * 1.2, within)) * 0.5
+    piped := Math.clamp(d + width + 0.5, 0, 1)
+    rgb := Math.mix(floor * (1 - shadow_in), bronze, piped)
+    // Outside, the piping's shadow on the surface along the edges facing away.
+    shadow_out := Math.max(0 - toward, 0) * (1 - Math.smoothstep(0, width * 1.2, Math.max(d, 0))) * 0.45
+    coverage := Math.clamp(0.5 - d, 0, 1)
+    colour = V4⟨rgb.x, rgb.y, rgb.z, 1⟩ * coverage + V4⟨0, 0, 0, shadow_out⟩ * (1 - coverage)
 }
 
 Recess :: shader { vertex: Draw.quad_place; fragment: recess_shade }
@@ -1683,16 +1696,29 @@ draw_drag :: (canvas: *Draw.Canvas, layout: Layout, game: Game, fonts: Fonts, dr
     seat := layout.seats[drag.from]
     if to, amount := aim(layout, game, drag.from, mouse) is not missed {
         draw_target_arrow(canvas, layout, drag, layout.seats[to].middle, layout.seats[to].toward * -1.0)
-        bubble := placed(mouse, seat.angle, ⟨0, -1.15 * cell⟩)
-        canvas.fill_circle(bubble, 0.55 * cell, INK)
+        victim := layout.seats[to]
+        up := seat.toward * -1.0
+        victim_right := V2⟨Math.cos(victim.angle), Math.sin(victim.angle)⟩
+        life_width := f32'fonts.life.text_width("«game.life[to]»")
+        // Clear the victim's rotated life total and the arrowhead, in the attacker's frame.
+        life_extent := Math.abs(Math.dot(up, victim_right)) * life_width / 2 +
+                       Math.abs(Math.dot(up, victim.toward)) * f32'fonts.life.cap_height / 2
+        label := victim.middle + up * (Math.max(life_extent, 0.85 * cell) + 0.75 * cell)
         text := if amount is { case damage: "«damage»"; case asked: "?" }
-        target := accent_of(game.identity[to], artifact)
-        // (the bubble's text in the target's colour, darkened if it's light)
-        bubble_ink := if lightness(target) > 0.6 then Math.mix(target, DARK_INK, 0.6) else target
-        draw_centred(canvas, fonts.output, bubble, seat.angle, text, bubble_ink)
+        glyph := if drag.combat then COMBAT_GLYPH else SPELL_GLYPH
+        icon_width := f32'fonts.attack.text_width(glyph)
+        number_width := f32'fonts.output.text_width(text)
+        gap := 0.16 * cell
+        left := (0 - icon_width - gap - number_width) / 2
+        style := Draw.Text_Style⟨outline: Draw.rgb(0x000000), outline_width: Math.max(1.5, 0.025 * cell)⟩
+        symbol_at := placed(label, seat.angle, ⟨left, f32'fonts.attack.cap_height / 2⟩)
+        number_at := placed(label, seat.angle, ⟨left + icon_width + gap, f32'fonts.output.cap_height / 2⟩)
+        canvas.draw_text(fonts.attack, symbol_at, glyph, Draw.rgb(0xFFFFFF), style, seat.angle)
+        canvas.draw_text(fonts.output, number_at, text, Draw.rgb(0xFFFFFF), style, seat.angle)
     }
     else {
-        draw_target_arrow(canvas, layout, drag, mouse, seat.toward * -1.0)
+        back := free_arrow_back(damage_icon(layout, drag.from, drag.combat), mouse, seat.toward)
+        draw_target_arrow(canvas, layout, drag, mouse, back)
     }
 }
 
@@ -1762,6 +1788,17 @@ draw_capsule :: (canvas: *Draw.Canvas, layout: Layout, game: Game, screen: Scree
     redo_ink := if screen.can_redo then INK else lighter(CAPSULE, 0.25)
     draw_icon_at(canvas, REDO_ICON, capsule_centre(layout, .REDO), 0.62 * cell, redo_ink)
     draw_icon_at(canvas, RESTART_ICON, capsule_centre(layout, .RESTART), 0.62 * cell, lighter(CAPSULE, 0.75))
+}
+
+// The motion's button's icon, as the motion is: pause, or play's triangles
+// (one slow, two medium, three fast).
+draw_motion :: (canvas: *Draw.Canvas, at: V2, motion: Motion, size: f32, ink: Draw.RGBA) {
+    if motion is {
+        case .OFF: draw_icon_at(canvas, PAUSE_ICON, at, size, ink)
+        case .SLOW: draw_play(canvas, at, 1, size, ink)
+        case .MEDIUM: draw_play(canvas, at, 2, size, ink)
+        case .FAST: draw_play(canvas, at, 3, size, ink)
+    }
 }
 
 // A colour, a share as opaque.
@@ -1885,11 +1922,11 @@ draw_fps :: (canvas: *Draw.Canvas, layout: Layout, fonts: Fonts, fps: f32) {
 ////////////////////////////////
 // Settings: the system's button splits the table along its horizontal
 // seam (draw_settings_split), the pill staying as it is, and in the channel
-// that opens are Reset, a place left of undo (every count's lines back where
-// they start, each seat its starting colours, the motion slow), and the
-// surfaces' motion, a place right of the system's button, one button going
-// round paused, slow, medium and fast. The system's button, touched again,
-// quits; anywhere else closes the table.
+// that opens are the surfaces' motion, a place left of undo, one button
+// going round paused, slow, medium and fast, and Reset, a place right of the
+// system's button (every count's lines back where they start, each seat its
+// starting colours, the motion slow), and Quit, a place right of Reset.
+// Anywhere else, the system's button too, closes the table.
 
 // The seconds the table takes to split (or close).
 SETTINGS_TIME :: 0.16
@@ -1920,11 +1957,11 @@ in_box :: (p: V2, low: V2, high: V2 -> bool) #pure {
 }
 
 // Where each of the settings' buttons is, in places from the pill's middle
-// (a place CAPSULE_PITCH cells): Reset left of undo, the motion right of the
-// system's button, and Quit the system's button itself.
-RESET_PLACE     :: V2⟨-3, 0⟩
-ANIMATION_PLACE :: V2⟨3, 0⟩
-QUIT_PLACE      :: V2⟨2, 0⟩
+// (a place CAPSULE_PITCH cells): the motion left of undo, Reset right of the
+// system's button, and Quit right of Reset.
+ANIMATION_PLACE :: V2⟨-3, 0⟩
+RESET_PLACE     :: V2⟨3, 0⟩
+QUIT_PLACE      :: V2⟨4, 0⟩
 SETTINGS_BUTTON :: 0.46        // a settings button's radius, in cells
 
 settings_part_at :: (layout: Layout, p: V2 -> Settings_Part) #pure {
@@ -1939,28 +1976,22 @@ settings_part_at :: (layout: Layout, p: V2 -> Settings_Part) #pure {
     return Settings_Part.close
 }
 
-// The settings' buttons in the channel, Reset and the motion's, each on a
-// chip of the pill's floor, rimmed, shown a share.
+// The settings' buttons in the channel, the motion's, Reset and Quit, each
+// on a chip of the pill's floor, rimmed, shown a share.
 draw_settings :: (canvas: *Draw.Canvas, layout: Layout, motion: Motion, shown: f32) {
     cell := cell_of(layout)
     pitch := CAPSULE_PITCH * cell
     c := layout.centre
     size := 0.62 * cell
     ink := faded(INK, shown)
-    for place: [2] V2⟨RESET_PLACE, ANIMATION_PLACE⟩ {
+    for place: [3] V2⟨ANIMATION_PLACE, RESET_PLACE, QUIT_PLACE⟩ {
         canvas.fill_circle(c + place * pitch + V2⟨0.03, 0.05⟩ * cell, SETTINGS_BUTTON * cell, Draw.rgba(0x000000, 0.4 * shown))
         canvas.fill_circle(c + place * pitch, SETTINGS_BUTTON * cell, faded(lighter(CAPSULE, 0.18), shown))
         canvas.fill_circle(c + place * pitch, (SETTINGS_BUTTON - 0.04) * cell, faded(CAPSULE, shown))
     }
-    // (the motion as it is: paused, or its speed's triangles)
-    at := c + ANIMATION_PLACE * pitch
-    if motion is {
-        case .OFF: draw_icon_at(canvas, PAUSE_ICON, at, size, ink)
-        case .SLOW: draw_play(canvas, at, 1, size, ink)
-        case .MEDIUM: draw_play(canvas, at, 2, size, ink)
-        case .FAST: draw_play(canvas, at, 3, size, ink)
-    }
+    draw_motion(canvas, c + ANIMATION_PLACE * pitch, motion, size, ink)
     draw_icon_at(canvas, RESET_ICON, c + RESET_PLACE * pitch, size, ink)
+    draw_icon_at(canvas, QUIT_ICON, c + QUIT_PLACE * pitch, size, ink)
 }
 
 // A speed's icon, play's triangles (one for slow, two, fast-forward's, for
@@ -1997,7 +2028,7 @@ draw_player_ui :: (canvas: *Draw.Canvas, layer: *Draw.Canvas, layout: Layout, ga
 }
 
 draw_table :: (canvas: *Draw.Canvas, layer: *Draw.Canvas, layout: Layout, game: Game, fonts: Fonts, screen: Screen_State, motes: Particles.System,
-         elements: Elements, volleys: Volleys = ⟨⟩) {
+         elements: Elements, volleys: Volleys = ⟨⟩, with_pill := true) {
     cell := cell_of(layout)
     *targeted: i64 = -1
     if screen.drag.active {
@@ -2022,8 +2053,8 @@ draw_table :: (canvas: *Draw.Canvas, layer: *Draw.Canvas, layout: Layout, game: 
         canvas.draw_shader_canvas(⟨0, 0⟩, layout.size, PLAYER_FADE.code, PLAYER_FADE.bindings.fade, fade,
                                   player_ui_canvas, PLAYER_FADE.bindings.content, PLAYER_FADE.bindings.filtering)
     }
-    draw_capsule(canvas, layout, game, screen)
-
+    // (the pill, unless it's drawn apart, lying over the table split)
+    if with_pill then draw_capsule(canvas, layout, game, screen)
 }
 
 ////////////////////////////////
@@ -2350,6 +2381,8 @@ main :: (args: [] string) [failed: string] {
     *timeline: Timeline
     // (the lines as a line's drag began, to undo it to)
     *lines_before: Lines
+    // (Reset touched: done once the table's closed)
+    *reset_pending := false
     if Defaults.remove("font") is { case absent, os_error: _ }
     if Defaults.remove("era") is { case absent, os_error: _ }
     *splits: [MAX_PLAYERS + 1] Splits
@@ -2468,24 +2501,9 @@ main :: (args: [] string) [failed: string] {
                 if setting is {
                 case animation: speed = next_motion(speed)
                 case reset:
-                    // Every count's lines forgotten, here and stored: a count
-                    // whose lines don't fit is laid out as equal_splits starts it.
-                    // Then each seat its starting colours, those who've left
-                    // the table forgotten, and the motion its default, slow.
-                    // (Undo brings the colours, those players and the lines
-                    // back; the motion's a setting, and stays.)
-                    timeline.remember(game, splits)
-                    for n: 2 <= MAX_PLAYERS {
-                        splits[n] = ⟨⟩
-                        if Defaults.remove(`scratch "splits.«n»") is { case absent, os_error: _ }
-                    }
-                    splits[game.players] = equal_splits(game.players, size)
-                    layout = lay_out(size, splits[game.players])
-                    reset_colours := starting_colours(size, game.players)
-                    for k: 0 < game.players { game.identity[k] = reset_colours[k] }
-                    forget_the_absent(game, reset_colours)
-                    speed = Motion.SLOW
-                    open_toggles(screen.toggles)
+                    // (the table closes, then resets: reset_pending's)
+                    screen.settings_open = false
+                    reset_pending = true
                 case quit:
                     // (what's changed is already stored, each frame's as it's made)
                     w.destroy()
@@ -2676,6 +2694,27 @@ main :: (args: [] string) [failed: string] {
         // (the settings coming into the pill, or going)
         opening: f32 = if screen.settings_open then 1 else -1
         screen.settings_shown = Math.clamp(screen.settings_shown + opening * seconds / SETTINGS_TIME, 0, 1)
+        if reset_pending and screen.settings_shown <= 0 {
+            // Reset, the table closed: every count's lines forgotten, here and
+            // stored (a count whose lines don't fit is laid out as
+            // equal_splits starts it); each seat its starting colours, those
+            // who've left the table forgotten, and the motion its default,
+            // slow. (Undo brings the colours, those players and the lines
+            // back; the motion's a setting, and stays.)
+            reset_pending = false
+            timeline.remember(game, splits)
+            for n: 2 <= MAX_PLAYERS {
+                splits[n] = ⟨⟩
+                if Defaults.remove(`scratch "splits.«n»") is { case absent, os_error: _ }
+            }
+            splits[game.players] = equal_splits(game.players, size)
+            layout = lay_out(size, splits[game.players])
+            reset_colours := starting_colours(size, game.players)
+            for k: 0 < game.players { game.identity[k] = reset_colours[k] }
+            forget_the_absent(game, reset_colours)
+            speed = Motion.SLOW
+            open_toggles(screen.toggles)
+        }
         // (and into the count column's groove while a finger's on the
         // column, back as it's let go)
         screen.counts_shown = step_count_opening(screen.counts_shown, screen.counts.held, seconds)

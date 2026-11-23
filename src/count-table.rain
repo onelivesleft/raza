@@ -38,6 +38,8 @@ destroy_count_table :: () {
     count_table_made = false
     if player_ui_made then player_ui_canvas.destroy()
     player_ui_made = false
+    if pill_made then pill_canvas.destroy()
+    pill_made = false
 }
 Count_Split_Params :: struct {
     screen: V4       // size, split x, half separation
@@ -126,9 +128,11 @@ draw_count_ring :: (canvas: *Draw.Canvas, layout: Layout, screen: Screen_State) 
 ////////////////////////////////
 // The settings: the system's button splits the table along its horizontal
 // seam, the halves above and below sliding apart (SETTINGS_SPLIT_HALF
-// cells each), while the pill stays where it is, its buttons as they are.
-// In the steel channel that opens, Reset to the left of undo and the
-// motion's button to the right of the system's (settings_place's).
+// cells each) out from under the pill, which stays where it is, its buttons
+// as they are, lying on them (drawn apart, over them, with its shadow). In
+// the steel channel that opens, the motion's button to the left of undo,
+// Reset to the right of the system's button, and Quit to the right of
+// Reset.
 
 SETTINGS_SPLIT_HALF :: CAPSULE_HALF + 0.06
 
@@ -144,43 +148,63 @@ Settings_Split_Params :: struct {
     shadow: V4       // down-right offset, softness, opacity
 }
 
-// The table split: the pill as it is (the players' button's hole cut in
-// it), and the halves above and below the seam moved apart, each its edges
-// (the seam's, and the pill's half cut out of it) walled as the channels
-// between players are.
+// The table's halves (the table drawn without the pill), above and below
+// the seam, moved apart, each its cut edge walled as the channels between
+// players are.
 settings_split_shade :: (from: Draw.Quad_Between, split: Shader.Uniforms(Settings_Split_Params), table: Shader.Texture_2D, filtering: Shader.Sampler -> colour: V4) {
     p := from.pixel
-    size := split.screen.xy
-    // (the pill, staying)
-    hole := if split.button.z > 0 then Math.length(p - split.button.xy) - split.button.z else 1000000.0
-    kept := Math.clamp(0.5 - pill_at(p, split.pill), 0, 1) * Math.clamp(hole + 0.5, 0, 1)
-    pill := Shader.sample_level(table, filtering, p / size, 0) * kept
-    // (the half this side of the seam, moved away from it)
     side: f32 = if p.y < split.screen.z then -1 else 1
     s := split.screen.w
     source := p - V2⟨0, side * s⟩
-    seam_distance := if s > 0.01 then side * (source.y - split.screen.z) else 1000000.0
-    notch := pill_at(source, split.pill)
-    depth := Math.min(seam_distance, notch)
-    *slab := V4⟨0, 0, 0, 0⟩
-    if depth > -0.5 {
-        coverage := Math.clamp(depth + 0.5, 0, 1)
-        surface := Shader.sample_level(table, filtering, source / size, 0)
-        across := Math.clamp(depth / Math.max(split.button.w, 1), 0, 1)
-        wall := Math.sin(across * f32'Math.PI)
-        floor := (1 + Math.cos(across * f32'Math.PI)) * 0.5
-        *outward := V2⟨0, 0 - side⟩
-        if notch < seam_distance {
-            gx := pill_at(source + V2⟨0.5, 0⟩, split.pill) - pill_at(source - V2⟨0.5, 0⟩, split.pill)
-            gy := pill_at(source + V2⟨0, 0.5⟩, split.pill) - pill_at(source - V2⟨0, 0.5⟩, split.pill)
-            outward = Math.normalize(V2⟨0 - gx, 0 - gy⟩ + V2⟨0.00001, 0⟩)
-        }
-        facing := Math.dot(outward, PART_LIGHT)
-        shaded := surface.xyz * (1 - floor * 0.68) * (1 + Math.min(facing, 0) * wall * 0.48)
-        rgb := Math.mix(shaded, PART_WARM, Math.max(facing, 0) * wall * 0.38)
-        slab = V4⟨rgb.x, rgb.y, rgb.z, 1⟩ * coverage
+    seam := if s > 0.01 then side * (source.y - split.screen.z) else 1000000.0
+    hole := Math.length(source - split.button.xy) - split.button.z
+    depth := Math.min(seam, hole)
+    if depth < -0.5 then return ⟨0, 0, 0, 0⟩
+    coverage := Math.clamp(depth + 0.5, 0, 1)
+    surface := Shader.sample_level(table, filtering, source / split.screen.xy, 0)
+    across := Math.clamp(depth / Math.max(split.button.w, 1), 0, 1)
+    wall := Math.sin(across * f32'Math.PI)
+    floor := (1 + Math.cos(across * f32'Math.PI)) * 0.5
+    outward := if hole < seam then Math.normalize(split.button.xy - source) else V2⟨0, 0 - side⟩
+    facing := Math.dot(outward, PART_LIGHT)
+    shaded := surface.xyz * (1 - floor * 0.68) * (1 + Math.min(facing, 0) * wall * 0.48)
+    rgb := Math.mix(shaded, PART_WARM, Math.max(facing, 0) * wall * 0.38)
+    return V4⟨rgb.x, rgb.y, rgb.z, 1⟩ * coverage
+}
+
+// The pill, drawn apart (pill_canvas), laid over the halves: its shape, but
+// for the players' button's hole.
+pill_over_shade :: (from: Draw.Quad_Between, split: Shader.Uniforms(Settings_Split_Params), pill: Shader.Texture_2D, filtering: Shader.Sampler -> colour: V4) {
+    p := from.pixel
+    hole := if split.button.z > 0 then Math.length(p - split.button.xy) - split.button.z else 1000000.0
+    kept := Math.clamp(0.5 - pill_at(p, split.pill), 0, 1) * Math.clamp(hole + 0.5, 0, 1)
+    return Shader.sample_level(pill, filtering, p / split.screen.xy, 0) * kept
+}
+Pill_Over :: shader { vertex: Draw.quad_place; fragment: pill_over_shade }
+PILL_OVER :: Pill_Over(Draw.SHADER_TARGET)
+
+// The pill's own shadow on what's under it, down and to the right, soft.
+pill_shadow_shade :: (from: Draw.Quad_Between, split: Shader.Uniforms(Settings_Split_Params) -> colour: V4) {
+    d := pill_at(from.pixel - split.shadow.xy, split.pill)
+    return ⟨0, 0, 0, (1 - Math.smoothstep(0 - split.shadow.z, split.shadow.z, d)) * split.shadow.w⟩
+}
+Pill_Shadow :: shader { vertex: Draw.quad_place; fragment: pill_shadow_shade }
+PILL_SHADOW :: Pill_Shadow(Draw.SHADER_TARGET)
+
+// The canvas the pill's drawn in apart, while the table's split.
+pill_canvas: Draw.Canvas
+pill_made: bool
+
+prepare_pill :: (size: Wide.i32x2 -> bool) {
+    if !pill_made {
+        if made := Draw.create_canvas(size) { pill_canvas = made }
+        else if os_error { return false }
+        pill_made = true
     }
-    return pill + slab * (1 - pill.w)
+    else if pill_canvas.size != size {
+        if pill_canvas.resize(size) is os_error then return false
+    }
+    return true
 }
 // How far a point is outside the pill (pill: its middle, half width, half
 // height; negative inside).
@@ -195,7 +219,10 @@ SETTINGS_SPLIT :: Settings_Split(Draw.SHADER_TARGET)
 settings_shadow_shade :: (from: Draw.Quad_Between, split: Shader.Uniforms(Settings_Split_Params) -> colour: V4) {
     p := from.pixel - split.shadow.xy
     below := p.y - (split.screen.z - split.screen.w)
-    alpha := (1 - Math.smoothstep(0 - split.shadow.z, split.shadow.z, below)) * split.shadow.w
+    source := p + V2⟨0, split.screen.w⟩
+    hole := split.button.z - Math.length(source - split.button.xy)
+    distance := Math.max(below, hole)
+    alpha := (1 - Math.smoothstep(0 - split.shadow.z, split.shadow.z, distance)) * split.shadow.w
     return ⟨0, 0, 0, alpha⟩
 }
 Settings_Shadow :: shader { vertex: Draw.quad_place; fragment: settings_shadow_shade }
@@ -211,11 +238,18 @@ draw_steel :: (canvas: *Draw.Canvas, layout: Layout) {
 
 // The table drawn split along its horizontal seam, opened a share of the
 // way: the steel, the count slider seen through the players' button, the
-// settings' buttons in the channel, the upper half's shadow, then the
-// table's halves and the pill.
+// settings' buttons in the channel, the upper half's shadow, the table's
+// halves (the table drawn without the pill), then the pill over them with
+// its shadow.
 draw_settings_split :: (canvas: *Draw.Canvas, layout: Layout, screen: Screen_State, game: Game) {
     cell := cell_of(layout)
     s := settings_split_offset(cell, screen.settings_shown)
+    *pill_drawn := false
+    if prepare_pill(canvas.size) {
+        pill_canvas.clear(Draw.rgb(0x000000))
+        draw_capsule(pill_canvas, layout, game, screen)
+        pill_drawn = true
+    }
     draw_steel(canvas, layout)
     draw_count_bed(canvas, layout, 0)
     draw_counts(canvas, layout, screen, game)
@@ -228,6 +262,15 @@ draw_settings_split :: (canvas: *Draw.Canvas, layout: Layout, screen: Screen_Sta
     canvas.draw_shader(⟨0, 0⟩, layout.size, SETTINGS_SHADOW.code, SETTINGS_SHADOW.bindings.split, params)
     canvas.draw_shader_canvas(⟨0, 0⟩, layout.size, SETTINGS_SPLIT.code, SETTINGS_SPLIT.bindings.split, params,
                               count_table_canvas, SETTINGS_SPLIT.bindings.table, SETTINGS_SPLIT.bindings.filtering)
+    if pill_drawn {
+        // (its shadow growing as the halves slide out from under it)
+        *lying := params
+        lying.shadow = ⟨0.04 * cell, 0.07 * cell, Math.max(0.06 * cell, 1), Math.smoothstep(0, 0.3 * cell, s) * 0.45⟩
+        reach := V2⟨CAPSULE_REACH + 0.4, CAPSULE_HALF + 0.4⟩ * cell
+        canvas.draw_shader(layout.centre - reach, reach * 2, PILL_SHADOW.code, PILL_SHADOW.bindings.split, lying)
+        canvas.draw_shader_canvas(layout.centre - reach, reach * 2, PILL_OVER.code, PILL_OVER.bindings.split, lying,
+                                  pill_canvas, PILL_OVER.bindings.pill, PILL_OVER.bindings.filtering)
+    }
 }
 
 draw :: (canvas: *Draw.Canvas, layer: *Draw.Canvas, layout: Layout, game: Game, fonts: Fonts, screen: Screen_State, motes: Particles.System,
@@ -235,7 +278,8 @@ draw :: (canvas: *Draw.Canvas, layer: *Draw.Canvas, layout: Layout, game: Game, 
     cell := cell_of(layout)
     shift := count_split_offset(cell, screen.counts_shown)
     if screen.settings_shown > 0 and prepare_count_table(canvas.size) {
-        draw_table(count_table_canvas, layer, layout, game, fonts, screen, motes, elements, volleys)
+        // (the table without the pill, which lies over its halves)
+        draw_table(count_table_canvas, layer, layout, game, fonts, screen, motes, elements, volleys, with_pill: false)
         draw_settings_split(canvas, layout, screen, game)
     }
     else if prepare_count_table(canvas.size) {
