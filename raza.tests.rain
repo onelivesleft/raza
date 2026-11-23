@@ -447,7 +447,7 @@ bolts_land_together :: () #test {
 black_strikes_once :: () #test {
     layout := laid_out(2, LANDSCAPE)
     for amount: [3] i32⟨1, 18, 40⟩ {
-        #with scratch.rewind()
+        with scratch.rewind()
         `scratch {
             *game := new_game(2)
             game.identity[1] = (u8'1 << u8'Mana.BLACK) | (u8'1 << u8'Mana.RED)

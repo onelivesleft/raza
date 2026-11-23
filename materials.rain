@@ -34,7 +34,7 @@ material_flow :: (atlas: Shader.Texture_2D, filtering: Shader.Sampler, q: V2, ti
 }
 
 // The atlas follows WUBRG, then colourless and gold; never infer an identity
-// from its current RGB palette, which each era is free to change.
+// from its current RGB palette, which may change.
 material_tile :: (identity: Identity -> i32) #pure {
     *count: i32 = 0
     *tile: i32 = 5

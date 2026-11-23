@@ -843,6 +843,7 @@ CHIP_PITCH :: 0.95
 // the free place nearest that row's middle, of rows below and above the
 // life and columns beside it, half a chip's pitch apart.
 chip_places :: (layout: Layout, k: i64, life_width: f32, life_height: f32, count: i64 -> places: [5] V2) {
+    with scratch.rewind()
     cell := cell_of(layout)
     seat := layout.seats[k]
     toggles := toggles_of(layout, k)
@@ -862,7 +863,6 @@ chip_places :: (layout: Layout, k: i64, life_width: f32, life_height: f32, count
     places = row
     if fits then return
     // (else each the nearest free place to it)
-    #with scratch.rewind()
     *spots: [..] V2 in scratch
     for y: [5] f32⟨below, below + pitch, below + 2 * pitch, 0 - below, 0 - below - pitch⟩ {
         for j: -8 <= 8 { `scratch spots.add(V2⟨f32'j * 0.5 * pitch, y⟩) }
@@ -1379,6 +1379,8 @@ Options :: struct {
 }
 
 main :: (args: [] string) [failed: string] {
+    // (the screen kept on while it runs: it's watched, not typed into)
+    with System.keep_awake()
     if Draw.add_font(MANA) is bad_font then fail: failed = "Mana isn't a font Draw can read"
     if Draw.add_font(CRIMSON_PRO) is bad_font then fail: failed = "Crimson Pro isn't a font Draw can read"
     *options: Options
@@ -1402,8 +1404,6 @@ main :: (args: [] string) [failed: string] {
         if save_snapshots(options.snapshot) is failed then fail: failed
         return
     }
-    #with System.keep_awake()
-
     *w: ^Window = null
     if made := Window.create_window("", ⟨1280, 800⟩, background: 0x131318) { w = made } else if os_error {
         fail: failed = "can't open a window: «os_error»"

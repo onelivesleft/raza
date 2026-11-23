@@ -151,9 +151,18 @@ part_shade :: (from: Draw.Quad_Between, part: Shader.Uniforms(Part_Params), atla
         right := part.hybrid_looks[1]
         left_look := V4⟨left.y, part.look.y, left.z, part.look.w⟩
         right_look := V4⟨right.y, part.look.y, right.z, part.look.w⟩
-        left_material := shade_panel_material(p, local_x, local_y, part.stops[0].xyz, left_look, part.more, angle, left.w, i32'left.x, atlas, filtering)
-        right_material := shade_panel_material(p, local_x, local_y, part.stops[1].xyz, right_look, part.more, angle, right.w, i32'right.x, atlas, filtering)
-        rgb = Math.mix(left_material, right_material, Math.smoothstep(0.35, 0.65, u))
+        // (each half worked out only where it shows: both only in the
+        // blend between them, from 35% to 65% across)
+        blend := Math.smoothstep(0.35, 0.65, u)
+        *left_material := V3⟨0, 0, 0⟩
+        *right_material := V3⟨0, 0, 0⟩
+        if blend < 1 {
+            left_material = shade_panel_material(p, local_x, local_y, part.stops[0].xyz, left_look, part.more, angle, left.w, i32'left.x, atlas, filtering)
+        }
+        if blend > 0 {
+            right_material = shade_panel_material(p, local_x, local_y, part.stops[1].xyz, right_look, part.more, angle, right.w, i32'right.x, atlas, filtering)
+        }
+        rgb = Math.mix(left_material, right_material, blend)
     }
     else {
         rgb = shade_panel_material(p, local_x, local_y, base, part.look, part.more, angle, part.toward.w, tile, atlas, filtering)
@@ -263,118 +272,6 @@ open_water_at :: (at: V2, base: V3, scale: f32, seed: f32, time: f32 -> V3) {
     water := Math.mix(deep, sky, sun * 0.28) * (0.91 + ripple * 0.18)
     return water + V3⟨0.48, 0.66, 0.69⟩ * crest * (0.025 + sun * 0.07) + V3⟨0.95, 0.95, 0.83⟩ * glint * (0.12 + sun * 0.4)
 }
-// Rusting metal, at a point in its player's frame (pixels): steel, finely
-// grained and brushed along its player's x; rust in patches where slow
-// noise is high, ragged at their edges and a darker rim about them, mottled
-// orange to brown, pitted; streaks of it running down from them (down its
-// player's frame).
-rust_at :: (at: V2, base: V3, scale: f32, seed: f32 -> V3) {
-    q := at / (scale * 2.5) + V2⟨seed * 2.3, seed * 4.1⟩
-    // (steel: brushed grain, weathered darker in slow patches)
-    grain := Patterns.layered(V2⟨at.x / (scale * 0.6), at.y / (scale * 0.08)⟩ + V2⟨seed, seed⟩, 3)
-    weather := Patterns.layered(q * 1.7 + V2⟨7.1, 0⟩, 4)
-    steel := base * ((0.9 + 0.16 * grain) * (0.86 + 0.24 * weather))
-    // (where the rust is: patches, ragged, streaking down)
-    ragged := Patterns.noise(q * 3.0) - 0.5
-    patch := Patterns.layered(q + V2⟨ragged * 0.4, 0⟩, 5)
-    streak := Patterns.layered(V2⟨q.x * 6.0, q.y * 0.6⟩ + V2⟨seed, 0⟩, 3)
-    m := patch + (streak - 0.5) * 0.25
-    // (a stain spreading about each patch, then the rust itself, thicker
-    // toward its middle)
-    stain := Math.smoothstep(0.4, 0.58, m)
-    rust := Math.smoothstep(0.5, 0.68, m)
-    thick := Math.smoothstep(0.6, 0.8, m)
-    mottle := Patterns.layered(at / (scale * 0.3) + V2⟨seed, 0⟩, 3)
-    rust_colour := Math.mix(V3⟨0.3, 0.15, 0.08⟩, V3⟨0.56, 0.29, 0.13⟩, mottle)
-    *rgb := Math.mix(steel, steel * V3⟨0.85, 0.7, 0.58⟩, stain * 0.6)
-    rgb = Math.mix(rgb, rust_colour, rust * 0.85)
-    rgb = Math.mix(rgb, rust_colour * 0.7, thick * 0.4)
-    // (a few pits, deep in the thickest)
-    pits := Patterns.cells(at / (scale * 0.5) + V2⟨seed, seed⟩).x
-    pit := (1 - Math.smoothstep(0.02, 0.07, pits)) * thick
-    return rgb * (1 - 0.5 * pit)
-}
-
-// A layer of fallen leaves at q (in leaves' cells): in each cell a leaf about
-// a point scattered in it, turned its own way, pointed at both ends with a
-// vein down it, its colour one of a forest's (green, olive, brown, yellow,
-// dark); of the cells about q, the leaf on top (each cell's place in the
-// pile its own). Its colour, and how much it covers.
-leaf_layer :: (q: V2, seed: f32 -> rgb: V3, cover: f32) {
-    cell := Math.floor(q)
-    f := q - cell
-    *top: f32 = -1
-    rgb = V3⟨0, 0, 0⟩
-    cover = 0
-    for oy: -1 <= 1 {
-        for ox: -1 <= 1 {
-            o := V2⟨f32'ox, f32'oy⟩
-            id := cell + o + V2⟨seed * 7.1, seed * 3.3⟩
-            centre := o + Patterns.hash2(id)
-            turn := Patterns.hash(id * 1.7 + V2⟨2.1, 0.3⟩) * f32'Math.TAU
-            rel := f - centre
-            along := rel.x * Math.cos(turn) + rel.y * Math.sin(turn)
-            across := rel.y * Math.cos(turn) - rel.x * Math.sin(turn)
-            long := 0.5 + 0.3 * Patterns.hash(id + V2⟨9.7, 4.1⟩)
-            wide := long * 0.38 * Math.max(1 - (along / long) * (along / long), 0)
-            m := Math.clamp((wide - Math.abs(across)) * 40, 0, 1) * Math.step(Math.abs(along), long)
-            order := Patterns.hash(id + V2⟨1.3, 8.8⟩)
-            if m > 0.01 and order > top {
-                top = order
-                pick := Patterns.hash(id + V2⟨5.5, 2.2⟩)
-                *leaf := V3⟨0.36, 0.42, 0.16⟩
-                if pick > 0.8 then leaf = V3⟨0.62, 0.5, 0.18⟩
-                else if pick > 0.6 then leaf = V3⟨0.45, 0.3, 0.13⟩
-                else if pick > 0.4 then leaf = V3⟨0.46, 0.44, 0.2⟩
-                else if pick > 0.25 then leaf = V3⟨0.26, 0.19, 0.1⟩
-                // (its vein, and lighter toward its tip)
-                vein := 1 - Math.clamp(Math.abs(across) * 60, 0, 1)
-                rgb = leaf * (0.85 + 0.3 * (along / long * 0.5 + 0.5)) * (1 - 0.3 * vein)
-                cover = m
-            }
-        }
-    }
-}
-
-// A forest floor, at a point in its player's frame (pixels): soil and moss
-// (the part's green), two layers of fallen leaves over it, the lower in the
-// upper's shade, a few twigs on top, and dappled light through the canopy
-// drifting slowly over it all.
-forest_at :: (at: V2, base: V3, scale: f32, seed: f32, time: f32 -> V3) {
-    q := at / (scale * 1.3)
-    // (soil and moss)
-    moss := Patterns.layered(q * 0.6 + V2⟨seed, 0⟩, 5)
-    soil := V3⟨0.2, 0.14, 0.08⟩
-    *rgb := Math.mix(soil, base * 0.9, Math.smoothstep(0.35, 0.65, moss))
-    // (the lower leaves, in shade, then the upper, casting a little shadow)
-    lower, lower_cover := leaf_layer(q * 1.35 + V2⟨11.3, 4.7⟩, seed + 1)
-    rgb = Math.mix(rgb, lower * 0.62, lower_cover)
-    _, shadowed := leaf_layer(q + V2⟨0.06, 0.08⟩, seed)
-    rgb = rgb * (1 - 0.35 * shadowed)
-    upper, upper_cover := leaf_layer(q, seed)
-    rgb = Math.mix(rgb, upper, upper_cover)
-    // (twigs: a few, each a thin dark stick across a cell of a coarser grid)
-    t := q * 0.45 + V2⟨seed * 2.9, 5.1⟩
-    tcell := Math.floor(t)
-    *sticks: f32 = 0
-    for oy: -1 <= 1 {
-        for ox: -1 <= 1 {
-            id := tcell + V2⟨f32'ox, f32'oy⟩
-            if Patterns.hash(id + V2⟨3.3, 7.7⟩) < 0.3 {
-                mid := id + Patterns.hash2(id)
-                turn := Patterns.hash(id * 2.3) * f32'Math.PI
-                way := V2⟨Math.cos(turn), Math.sin(turn)⟩
-                h := Math.clamp(Math.dot(t - mid, way), -0.6, 0.6)
-                d := Math.length(t - mid - way * h)
-                sticks = Math.max(sticks, Math.clamp((0.022 - d) * 300, 0, 1))
-            }
-        }
-    }
-    rgb = Math.mix(rgb, V3⟨0.17, 0.11, 0.06⟩, sticks)
-    // (dappled light, drifting)
-    dapple := Math.smoothstep(0.5, 0.72, Patterns.layered(q * 0.22 + V2⟨time * 0.03, seed⟩, 4))
-    return rgb * (V3⟨0.78, 0.78, 0.78⟩ + V3⟨1.0, 0.95, 0.8⟩ * (0.45 * dapple))
-}
 
 Part_Surface :: shader { vertex: Draw.quad_place; fragment: part_shade }
 PART_SURFACE :: Part_Surface(Draw.SHADER_TARGET)
@@ -408,6 +305,8 @@ draw_part :: (canvas: *Draw.Canvas, layout: Layout, k: i64, colours: [] Draw.RGB
         bottom = Math.max(bottom, l.y)
     }
     for c, i: colours[:Math.min(colours.count, 5)] { params.stops[i] = V4⟨c.r, c.g, c.b, 1⟩ }
+    // (two colours: each half's own look; three or more: gold, lit by a
+    // lamp of each colour, which the shader reads only then)
     if colours.count > 1 {
         *lamp: i64 = 0
         for mana: [5] Mana⟨.WHITE, .BLUE, .BLACK, .RED, .GREEN⟩ {
@@ -418,6 +317,8 @@ draw_part :: (canvas: *Draw.Canvas, layout: Layout, k: i64, colours: [] Draw.RGB
                 if mana == .BLUE then hybrid_surface = .WATER
                 else if mana == .GREEN then hybrid_surface = .FOREST
                 params.hybrid_looks[lamp] = V4⟨f32'u8'mana, f32'i32'look.kind, look.strength * SURFACE_QUIET, f32'u8'hybrid_surface⟩
+                lamp += 1
+                continue
             }
             direction := identity_light_direction(colours.count, lamp)
             extent_x := if direction.x < 0 then 0 - left else right
@@ -502,10 +403,11 @@ part_fill :: (identity: Identity, cell: f32, seat: i64, time: f32, angle: f32, i
 SURFACE_FEATURES :: 1.5
 SURFACE_QUIET :: 0.6
 
-// Light colours come directly from MANA_GROUNDS, shared with the toggles.
-// Local x is right, y down, as the player reads the section.
+// Where a gold part's lamp of each of its colours (3 to 5 of them) shines
+// from: the index'th in WUBRG order. Light colours come directly from
+// MANA_GROUNDS, shared with the toggles. Local x is right, y down, as the
+// player reads the section.
 identity_light_direction :: (count: i64, index: i64 -> V2) #pure {
-    if count == 2 then return if index == 0 then V2⟨-1, 0⟩ else V2⟨1, 0⟩
     if count == 3 {
         directions := [3] V2⟨⟨-0.8660254, -0.5⟩, ⟨0.8660254, -0.5⟩, ⟨0, 1⟩⟩
         return directions[index]
@@ -520,8 +422,6 @@ identity_light_direction :: (count: i64, index: i64 -> V2) #pure {
 }
 
 identity_lights_follow_the_section :: () #test {
-    assert(identity_light_direction(2, 0) == V2⟨-1, 0⟩)
-    assert(identity_light_direction(2, 1) == V2⟨1, 0⟩)
     assert(identity_light_direction(3, 2) == V2⟨0, 1⟩)
     for i: 0 < 3 {
         a := identity_light_direction(3, i)
@@ -533,7 +433,7 @@ identity_lights_follow_the_section :: () #test {
         assert(Math.abs(corner.x) == 1 and Math.abs(corner.y) == 1)
     }
     assert(Math.length(identity_light_direction(5, 0) - V2⟨0, -1⟩) < 0.0001)
-    for count: 2 <= 5 {
+    for count: 3 <= 5 {
         for i: 0 < count {
             local := identity_light_direction(count, i) * 100
             for turn: [4] f32⟨0, 1.5707963, 3.1415927, 4.712389⟩ {
@@ -577,7 +477,7 @@ living_artifact :: (q: V2, texture: V3, time: f32, seed: f32 -> V3) {
     reflection := Math.fract(q.x * 0.19 + q.y * 0.11 + bend * 0.16 - time * 0.08)
     shine := Math.exp(0 - (reflection - 0.42) * (reflection - 0.42) * 850)
     broad := Math.exp(0 - (reflection - 0.54) * (reflection - 0.54) * 35)
-    // Original artifact ground, 0x9A8A76, retained in every era.
+    // (the artifact's ground, 0x9A8A76: ARTIFACT)
     metal := V3⟨0.604, 0.541, 0.463⟩ * (0.34 - detail * 0.15 + grain * 0.05 - broad * 0.06 - shine * 0.045)
     growth := Patterns.layered(q * 0.6 + V2⟨time * 0.16, seed - time * 0.11⟩, 4)
     weather := Patterns.layered(q * 2.8 + V2⟨seed, 0⟩, 5) * 0.55 + grain * 0.25 + growth * 0.35

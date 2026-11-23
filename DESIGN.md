@@ -218,9 +218,9 @@ turbulence and used greenbird10's supplied underwater example as a visual
 reference (labelled CC BY-NC-SA 3.0); the current open_water_at uses noise
 fields instead of either example's wave formulation.
 
-Multicolour gold lights use the MANA_GROUNDS colours shared with the toggles.
-In the section's local orientation: two shine from left/right; three form a
-triangle with the last at the bottom; four occupy corners clockwise from
+Multicolour gold lights (three colours or more; two are a hybrid, below) use
+the MANA_GROUNDS colours shared with the toggles. In the section's local
+orientation: three form a triangle with the last at the bottom; four occupy corners clockwise from
 top left; five follow WUBRG clockwise from white at the top. Their edge washes
 fade into the gold interior. Coloured reflections are diffuse, elongated and
 irregular rather than round spots; black makes a dark reflection. Small studio
