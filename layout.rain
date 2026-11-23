@@ -394,10 +394,15 @@ seat_at :: (layout: Layout, p: V2 -> i64) [absent] {
     fail: absent
 }
 
-// The line whose end is within reach of a point, or absent.
-end_at :: (layout: Layout, p: V2, reach: f32 -> i64) [absent] {
+// How much of a line, from its end at the edge inward, is grabbed to move it.
+GRABBED_SHARE :: 0.2
+
+// The line whose outer part (GRABBED_SHARE of it, at the edge) is within
+// reach of a point, or absent.
+line_at :: (layout: Layout, p: V2, reach: f32 -> i64) [absent] {
     for end, k: layout.ends[:layout.count] {
-        if Math.length(p - end) <= reach then return k
+        inner := end + (layout.centre - end) * GRABBED_SHARE
+        if distance_to_segment(p, inner, end) <= reach then return k
     }
     fail: absent
 }

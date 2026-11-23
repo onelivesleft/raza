@@ -23,6 +23,7 @@ Raza :: program {
 #import Wide
 #import Arguments
 #import Defaults
+#import Time
 
 #include "layout.rain"
 #include "game.rain"
@@ -67,8 +68,6 @@ middle_of :: (colours: [] Draw.RGBA -> Draw.RGBA) #pure {
 BACKGROUND :: Draw.rgb(0x131318)
 INK        :: Draw.rgb(0xF4EFE6)
 CAPSULE    :: Draw.rgb(0x26262E)
-SEAT_COLOURS :: [MAX_PLAYERS] Draw.RGBA⟨Draw.rgb(0x6A3D7A), Draw.rgb(0x2F6B57), Draw.rgb(0x8A4030), Draw.rgb(0x2F527F),
-                                       Draw.rgb(0x86712C), Draw.rgb(0x55556B)⟩
 
 // The unit the controls are measured in: a share of the screen's shorter side.
 CELL_SHARE :: 0.075
@@ -194,15 +193,44 @@ toggle_at :: (layout: Layout, p: V2 -> seat: i64, colour: i64) [absent] {
     fail: absent
 }
 
-// The colours a part is drawn in: none (its own colour), one (a light to
-// dark gradient of it), or several (each, in WUBRG order).
-part_colours :: (identity: Identity, into: [] *Draw.RGBA -> count: i64) #pure {
+// A player's own colour, where one stands for them (the commander damage
+// they've done, their damage icon, their drag): their identity's first
+// colour (WUBRG), or an artifact's when they've none.
+accent_of :: (identity: Identity, artifact: Draw.RGBA -> Draw.RGBA) #pure {
+    for colour, i: [5] Mana⟨.WHITE, .BLUE, .BLACK, .RED, .GREEN⟩ {
+        if has_colour(identity, colour) then return MANA_GROUNDS[i]
+    }
+    return artifact
+}
+
+// Ink that reads on a colour: dark on a light one.
+ink_on :: (colour: Draw.RGBA -> Draw.RGBA) #pure {
+    return if lightness(colour) > 0.6 then DARK_INK else INK
+}
+
+// Which artifact colour a colourless player is: today's frames' silver, or
+// the old frames' brown (a setting).
+Artifact_Look :: enum u8 {
+    NEW
+    OLD
+}
+
+ARTIFACT_COLOURS :: [2] Draw.RGBA⟨Draw.rgb(0xA3ADB5), Draw.rgb(0x8E7B66)⟩
+
+// The colours a part is drawn in: one (a light to dark gradient of it: an
+// artifact's, with none), or several (each, in WUBRG order).
+part_colours :: (identity: Identity, artifact: Draw.RGBA, into: [] *Draw.RGBA -> count: i64) #pure {
     count = 0
     for colour, i: [5] Mana⟨.WHITE, .BLUE, .BLACK, .RED, .GREEN⟩ {
         if has_colour(identity, colour) {
             into[count] = MANA_GROUNDS[i]
             count += 1
         }
+    }
+    // (no colours: colourless, an artifact's colour)
+    if count == 0 {
+        into[0] = artifact
+        count = 1
     }
     if count == 1 {
         into[1] = Math.mix(into[0], BACKGROUND, 0.4)
@@ -407,9 +435,10 @@ capsule_part_at :: (layout: Layout, at: V2 -> Capsule_Part) [absent] {
 // The count of players, picked by dragging: touched, the players' button
 // shows every count (each a ring of people) in a column through it, fewer
 // above, which moves with the finger; the count nearest the button is the
-// one that's active, and the lines move toward its as the column goes, one
-// splitting into two (or two into one). Let go, it's that count; touched
-// and let go without moving, the column stays for a drag.
+// one that's active, and as it changes the lines snap to its, animated a
+// count at a time (one splitting into two, or two meeting in one). Let go,
+// it's that count; touched and let go without moving, the column stays for
+// a drag.
 Count_Picker :: struct {
     open:     bool
     held:     bool           // a finger's on the column
@@ -417,6 +446,48 @@ Count_Picker :: struct {
     from:     f32            // the count the column was at then (shown)
     shown:    f32            // the count at the button now, between whole counts as it moves
     settling: bool           // let go: shown moving to the whole count it's become
+    // The lines, as they're shown: a count's (laid), or moving from it to
+    // the next count up or down (toward), progress of the way.
+    laid:     i64
+    toward:   i64
+    progress: f32
+}
+
+// How long the lines take to move from a count's to the next's, in seconds.
+LINES_STEP_TIME :: 0.18
+
+// Whether the lines are shown as anything but the game's count's.
+lines_moving :: (counts: Count_Picker, players: i64 -> bool) #pure {
+    return counts.laid != 0 and (counts.laid != players or counts.toward != counts.laid)
+}
+
+// The lines as the picker shows them: a count's, or part of the way to the
+// next's (eased).
+shown_splits :: (counts: Count_Picker, splits: [] Splits, size: V2 -> Splits) #pure {
+    if counts.toward == counts.laid then return splits_for(splits, counts.laid, size)
+    // (eased in and out: smoothstep's curve)
+    p := Math.clamp(counts.progress, 0, 1)
+    t := p * p * (3 - 2 * p)
+    if counts.toward > counts.laid {
+        return morph_splits(splits_for(splits, counts.laid, size), splits_for(splits, counts.toward, size), t)
+    }
+    return morph_splits(splits_for(splits, counts.toward, size), splits_for(splits, counts.laid, size), 1 - t)
+}
+
+// The lines moved on by a frame's time toward a count: a step at a time,
+// each LINES_STEP_TIME, starting the next when one's done.
+move_lines :: (counts: *Count_Picker, target: i64, seconds: f32) {
+    if counts.laid == 0 then counts.laid = target
+    if counts.toward == counts.laid {
+        if target == counts.laid then return
+        counts.toward = if target > counts.laid then counts.laid + 1 else counts.laid - 1
+        counts.progress = 0
+    }
+    counts.progress += seconds / LINES_STEP_TIME
+    if counts.progress >= 1 {
+        counts.laid = counts.toward
+        counts.progress = 0
+    }
 }
 
 COUNT_PITCH :: 1.15          // between counts in the column, in cells
@@ -431,15 +502,6 @@ count_place :: (layout: Layout, shown: f32, count: i64 -> V2) #pure {
 splits_for :: (splits: [] Splits, count: i64, size: V2 -> Splits) #pure {
     if splits_fit(splits[count], count) then return splits[count]
     return equal_splits(count, size)
-}
-
-// The lines with the column at a count, between whole counts: part of the
-// way from the count below's lines to the count above's.
-splits_between :: (splits: [] Splits, shown: f32, size: V2 -> Splits) #pure {
-    low := Math.clamp(i64'Math.floor(shown), 2, MAX_PLAYERS)
-    f := shown - f32'low
-    if low >= MAX_PLAYERS or f < 0.001 then return splits_for(splits, low, size)
-    return morph_splits(splits_for(splits, low, size), splits_for(splits, low + 1, size), f)
 }
 
 // Whether a point is on the column (as wide as the button, from 2's to 6's).
@@ -482,39 +544,33 @@ fill_turned_box :: (canvas: *Draw.Canvas, origin: V2, angle: f32, at: V2, size: 
     canvas.fill_rounded_rect(low, high - low, radius, colour)
 }
 
-draw_seat :: (canvas: *Draw.Canvas, layout: Layout, game: Game, fonts: Fonts, k: i64, targeted: bool) {
+draw_seat :: (canvas: *Draw.Canvas, layout: Layout, game: Game, fonts: Fonts, k: i64, targeted: bool, artifact: Draw.RGBA) {
     seat := layout.seats[k]
     cell := cell_of(layout)
     out := is_out(game, k)
-    base := SEAT_COLOURS[k]
-    fill := if out then Math.mix(base, BACKGROUND, 0.7) else if targeted then lighter(base, 0.15) else base
-    // Its colours' gradient, across it as its player sees it (left to right),
-    // or its own colour while it has none.
-    *colours: [Draw.MAX_GRADIENT_COLOURS] Draw.RGBA
-    n := part_colours(game.identity[k], colours)
     points := seat.outline[:seat.count]
-    if n == 0 {
-        canvas.fill_polygon(points, fill)
+    // Its colours' gradient, across it as its player sees it (left to right).
+    *colours: [Draw.MAX_GRADIENT_COLOURS] Draw.RGBA
+    n := part_colours(game.identity[k], artifact, colours)
+    for *c: colours[:n] {
+        if out then c = Math.mix(c, BACKGROUND, 0.7) else if targeted then c = lighter(c, 0.15)
     }
-    else {
-        for *c: colours[:n] {
-            if out then c = Math.mix(c, BACKGROUND, 0.7) else if targeted then c = lighter(c, 0.15)
-        }
-        *left: f32 = 1e30
-        *right: f32 = -1e30
-        for p: points {
-            l := local_of(seat.middle, seat.angle, p)
-            left = Math.min(left, l.x)
-            right = Math.max(right, l.x)
-        }
-        from := placed(seat.middle, seat.angle, ⟨left, 0⟩)
-        to := placed(seat.middle, seat.angle, ⟨right, 0⟩)
-        canvas.fill_polygon(points, Draw.Gradient⟨from: from, to: to, colours: colours[:n]⟩)
+    *left: f32 = 1e30
+    *right: f32 = -1e30
+    for p: points {
+        l := local_of(seat.middle, seat.angle, p)
+        left = Math.min(left, l.x)
+        right = Math.max(right, l.x)
     }
+    start := placed(seat.middle, seat.angle, ⟨left, 0⟩)
+    finish := placed(seat.middle, seat.angle, ⟨right, 0⟩)
+    canvas.fill_polygon(points, Draw.Gradient⟨from: start, to: finish, colours: colours[:n]⟩)
+    // (a part too thin for its displays, as it opens or closes, is its colour alone)
+    if seat.room < 0.6 * cell then return
     // (dark ink where its colours are light at its middle, where its life is)
-    ground := if n == 0 then fill else middle_of(colours[:n])
-    light_ink := if lightness(ground) > 0.6 then DARK_INK else INK
-    ink := if out then Math.mix(light_ink, ground, 0.6) else light_ink
+    ground := middle_of(colours[:n])
+    ink := if out then Math.mix(ink_on(ground), ground, 0.6) else ink_on(ground)
+    accent := accent_of(game.identity[k], artifact)
     // Its colour toggles: a colour's symbol in its circle when it's set, faint when not.
     for place, i: toggle_places(layout, seat) {
         set := has_colour(game.identity[k], Mana'u8'i)
@@ -539,25 +595,27 @@ draw_seat :: (canvas: *Draw.Canvas, layout: Layout, game: Game, fonts: Fonts, k:
         if d <= 0 then continue
         x := (f32'place - f32'(shown - 1) / 2) * 0.95 * cell
         middle := placed(seat.middle, seat.angle, ⟨x, row⟩)
-        // (a lethal one ringed in white)
+        // (in the colour of the commander that did it: a lethal one ringed
+        // in the life total's ink)
         lethal := d >= LETHAL_COMMANDER_DAMAGE
-        ring := if lethal then INK else SEAT_COLOURS[from]
-        chip := if lethal then SEAT_COLOURS[from] else lighter(SEAT_COLOURS[from], 0.1)
+        source := accent_of(game.identity[from], artifact)
+        ring := if lethal then ink else Math.mix(source, BACKGROUND, 0.35)
         canvas.fill_circle(middle, 0.4 * cell, ring)
-        canvas.fill_circle(middle, 0.4 * cell - 3, chip)
-        draw_centred(canvas, fonts.small, middle, seat.angle, "«d»", INK)
+        canvas.fill_circle(middle, 0.4 * cell - 3, source)
+        draw_centred(canvas, fonts.small, middle, seat.angle, "«d»", ink_on(source))
         place += 1
     }
     if !out {
-        canvas.fill_circle(seat.icon, 0.45 * cell, lighter(base, 0.35))
-        draw_centred(canvas, fonts.icon, seat.icon, seat.angle, DAMAGE_GLYPH, Math.mix(base, BACKGROUND, 0.5))
+        icon_ground := lighter(accent, 0.35)
+        canvas.fill_circle(seat.icon, 0.45 * cell, icon_ground)
+        draw_centred(canvas, fonts.icon, seat.icon, seat.angle, DAMAGE_GLYPH, Math.mix(ink_on(icon_ground), icon_ground, 0.3))
     }
 }
 
-draw_drag :: (canvas: *Draw.Canvas, layout: Layout, game: Game, fonts: Fonts, drag: Drag, mouse: V2) {
+draw_drag :: (canvas: *Draw.Canvas, layout: Layout, game: Game, fonts: Fonts, drag: Drag, mouse: V2, artifact: Draw.RGBA) {
     cell := cell_of(layout)
     seat := layout.seats[drag.from]
-    colour := lighter(SEAT_COLOURS[drag.from], 0.5)
+    colour := lighter(accent_of(game.identity[drag.from], artifact), 0.5)
     start := seat.icon
     along := mouse - start
     if Math.length(along) < 2 then return
@@ -572,15 +630,18 @@ draw_drag :: (canvas: *Draw.Canvas, layout: Layout, game: Game, fonts: Fonts, dr
         bubble := placed(mouse, seat.angle, ⟨0, -1.15 * cell⟩)
         canvas.fill_circle(bubble, 0.55 * cell, INK)
         text := if amount is { case damage: "«damage»"; case asked: "?" }
-        draw_centred(canvas, fonts.output, bubble, seat.angle, text, SEAT_COLOURS[to])
+        target := accent_of(game.identity[to], artifact)
+        // (the bubble's text in the target's colour, darkened if it's light)
+        bubble_ink := if lightness(target) > 0.6 then Math.mix(target, DARK_INK, 0.6) else target
+        draw_centred(canvas, fonts.output, bubble, seat.angle, text, bubble_ink)
     }
 }
 
-draw_picker :: (canvas: *Draw.Canvas, layout: Layout, fonts: Fonts, picker: Picker) {
+draw_picker :: (canvas: *Draw.Canvas, layout: Layout, fonts: Fonts, picker: Picker, game: Game, artifact: Draw.RGBA) {
     cell := cell_of(layout)
     origin := layout.centre
     angle := layout.seats[picker.from].angle
-    accent := SEAT_COLOURS[picker.from]
+    accent := accent_of(game.identity[picker.from], artifact)
     canvas.fill_rect(⟨0, 0⟩, layout.size, Draw.rgba(0x000000, 0.45))
     fill_turned_box(canvas, origin, angle, PANEL_LOW * cell, (PANEL_HIGH - PANEL_LOW) * cell, 0.3 * cell, CAPSULE)
     for column: 0 < 10 {
@@ -594,7 +655,7 @@ draw_picker :: (canvas: *Draw.Canvas, layout: Layout, fonts: Fonts, picker: Pick
             fill_turned_box(canvas, origin, angle, ⟨left, top⟩, ⟨width, ROW_HEIGHT * cell - 0.1 * cell⟩, 0.15 * cell, key)
             label := if row == 0 then "«column»0" else "«column»"
             middle := placed(origin, angle, ⟨left + width / 2, top + (ROW_HEIGHT - 0.1) * cell / 2⟩)
-            draw_centred(canvas, fonts.label, middle, angle, label, INK)
+            draw_centred(canvas, fonts.label, middle, angle, label, ink_on(key))
         }
     }
     // The number, then the tick and the cross.
@@ -660,9 +721,9 @@ draw_capsule :: (canvas: *Draw.Canvas, layout: Layout, game: Game, screen: Scree
     }
     head := u + V2⟨-r, 0⟩
     canvas.fill_polygon(⟨head + V2⟨-0.13 * cell, -0.02 * cell⟩, head + V2⟨0.13 * cell, -0.02 * cell⟩, head + V2⟨0, 0.15 * cell⟩⟩, undo_ink)
-    // Settings (to come): a gear, faded.
+    // Settings: a gear.
     g := capsule_centre(layout, .SETTINGS)
-    gear := lighter(CAPSULE, 0.3)
+    gear := if screen.settings_open then INK else lighter(CAPSULE, 0.75)
     for i: 0 < 8 {
         a := f32'i / 8 * 4 * half_pi
         d := V2⟨Math.cos(a), Math.sin(a)⟩
@@ -694,13 +755,65 @@ draw_counts :: (canvas: *Draw.Canvas, layout: Layout, screen: Screen_State) {
 // What's happening on the screen besides the game: what's being dragged,
 // and what's open.
 Screen_State :: struct {
-    drag:       Drag
-    picker:     Picker
-    counts:     Count_Picker
-    moving_end: i64 = -1         // the line whose end is being dragged along the edge
-    mouse:      V2
-    can_undo:   bool
-    previewing: bool             // the layout's lines are moving to another count's: its parts drawn plain
+    drag:          Drag
+    picker:        Picker
+    counts:        Count_Picker
+    moving_end:    i64 = -1      // the line whose end is being dragged along the edge
+    mouse:         V2
+    can_undo:      bool
+    previewing:    bool          // the lines are another count's, or moving to one
+    settings_open: bool
+    look:          Artifact_Look
+    artifact:      Draw.RGBA     // a colourless player's colour (look's)
+}
+
+////////////////////////////////
+// Settings: a panel over the middle of the screen (for now, which artifact
+// colour a colourless player is)
+
+SETTINGS_HALF :: V2⟨3.4, 1.5⟩      // in cells
+
+// The artifact colours' buttons, in cells from the screen's centre: each
+// from its low corner to its high.
+look_button :: (look: Artifact_Look -> low: V2, high: V2) #pure {
+    left: f32 = if look == .NEW then -0.2 else 1.6
+    low = ⟨left, 0.0⟩
+    high = ⟨left + 1.6, 1.0⟩
+}
+
+Settings_Part :: union {
+    artifact: Artifact_Look
+    panel
+    outside
+}
+
+settings_part_at :: (layout: Layout, p: V2 -> Settings_Part) #pure {
+    local := (p - layout.centre) / cell_of(layout)
+    if Math.abs(local.x) > SETTINGS_HALF.x or Math.abs(local.y) > SETTINGS_HALF.y then return Settings_Part.outside
+    for look: [2] Artifact_Look⟨.NEW, .OLD⟩ {
+        low, high := look_button(look)
+        if local.x >= low.x and local.x <= high.x and local.y >= low.y and local.y <= high.y then return Settings_Part.artifact(look)
+    }
+    return Settings_Part.panel
+}
+
+draw_settings :: (canvas: *Draw.Canvas, layout: Layout, fonts: Fonts, look: Artifact_Look) {
+    cell := cell_of(layout)
+    c := layout.centre
+    canvas.fill_rect(⟨0, 0⟩, layout.size, Draw.rgba(0x000000, 0.45))
+    canvas.fill_rounded_rect(c - SETTINGS_HALF * cell, SETTINGS_HALF * 2 * cell, 0.3 * cell, CAPSULE)
+    draw_centred(canvas, fonts.label, c + V2⟨-2.1, -0.85⟩ * cell, 0, "Settings", INK)
+    draw_centred(canvas, fonts.label, c + V2⟨-1.75, 0.5⟩ * cell, 0, "Artifacts", lighter(CAPSULE, 0.6))
+    for choice, i: [2] Artifact_Look⟨.NEW, .OLD⟩ {
+        low, high := look_button(choice)
+        colour := ARTIFACT_COLOURS[i]
+        if choice == look {
+            canvas.fill_rounded_rect(c + (low - V2⟨0.06, 0.06⟩) * cell, (high - low + V2⟨0.12, 0.12⟩) * cell, 0.2 * cell, INK)
+        }
+        canvas.fill_rounded_rect(c + low * cell, (high - low) * cell, 0.16 * cell, colour)
+        name := if choice == .NEW then "New" else "Old"
+        draw_centred(canvas, fonts.label, c + (low + high) / 2 * cell, 0, name, ink_on(colour))
+    }
 }
 
 draw :: (canvas: *Draw.Canvas, layout: Layout, game: Game, fonts: Fonts, screen: Screen_State) {
@@ -710,26 +823,20 @@ draw :: (canvas: *Draw.Canvas, layout: Layout, game: Game, fonts: Fonts, screen:
     if screen.drag.active {
         if to, _ := aim(layout, game, screen.drag.from, screen.mouse) is not missed then targeted = to
     }
-    if screen.previewing {
-        for seat, k: layout.seats[:layout.count] { canvas.fill_polygon(seat.outline[:seat.count], SEAT_COLOURS[k]) }
-    }
-    else {
-        for k: 0 < layout.count { draw_seat(canvas, layout, game, fonts, k, k == targeted) }
-    }
-    // The lines between the parts, and a handle at each's end to move it by.
+    for k: 0 < layout.count { draw_seat(canvas, layout, game, fonts, k, k == targeted, screen.artifact) }
+    // The lines between the parts (the one being moved lit).
     for end, k: layout.ends[:layout.count] {
         moving := k == screen.moving_end
         width: f32 = if moving then 9 else 5
         line := if moving then INK else BACKGROUND
-        handle := if moving then INK else lighter(BACKGROUND, 0.12)
         canvas.draw_line(layout.centre, end, width, line)
-        canvas.fill_circle(end, 0.22 * cell, handle)
     }
     draw_capsule(canvas, layout, game, screen)
     draw_font_button(canvas, layout, fonts)
     if screen.counts.open or screen.counts.settling then draw_counts(canvas, layout, screen)
-    if screen.drag.active then draw_drag(canvas, layout, game, fonts, screen.drag, screen.mouse)
-    if screen.picker.open then draw_picker(canvas, layout, fonts, screen.picker)
+    if screen.drag.active then draw_drag(canvas, layout, game, fonts, screen.drag, screen.mouse, screen.artifact)
+    if screen.picker.open then draw_picker(canvas, layout, fonts, screen.picker, game, screen.artifact)
+    if screen.settings_open then draw_settings(canvas, layout, fonts, screen.look)
 }
 
 ////////////////////////////////
@@ -773,22 +880,29 @@ save_snapshots :: (folder: string) [failed: string] {
         entry := entry_point(layout.seats[1].icon, target.middle, target.outline[:target.count])
         inner := Math.dot(entry - layout.centre, target.toward)
         finger := entry + target.toward * (target.reach - inner) * 0.5
-        draw(canvas, layout, game, fonts, ⟨drag: ⟨true, 1⟩, mouse: finger, can_undo: true⟩)
+        artifact := ARTIFACT_COLOURS[i % 2]
+        draw(canvas, layout, game, fonts, ⟨drag: ⟨true, 1⟩, mouse: finger, can_undo: true, artifact: artifact, look: Artifact_Look'u8'(i % 2)⟩)
         path := `scratch "«folder»/«names[i]».png"
         if canvas.save_png(path) is os_error then fail: failed = "can't write «path»: «os_error»"
         if counts[i] == 4 {
             picker := Picker⟨true, 1, 0, DEFAULT_PICKED / 10, DEFAULT_PICKED % 10⟩
-            draw(canvas, layout, game, fonts, ⟨picker: picker, mouse: finger, can_undo: true⟩)
+            draw(canvas, layout, game, fonts, ⟨picker: picker, mouse: finger, can_undo: true, artifact: artifact⟩)
             grid_path := `scratch "«folder»/raza_grid.png"
             if canvas.save_png(grid_path) is os_error then fail: failed = "can't write «grid_path»: «os_error»"
-            // The column dragged most of the way from four to five: the
-            // lines part of the way there.
-            shown: f32 = 4.6
+            // The column dragged past five: the lines half way through
+            // snapping from four's to five's, a new game of five shown.
             *none: [MAX_PLAYERS + 1] Splits
-            moving := lay_out(screen_size, splits_between(none[:], shown, screen_size))
-            draw(canvas, moving, game, fonts, ⟨counts: ⟨open: true, held: true, shown: shown⟩, previewing: true, can_undo: true⟩)
+            picking := Count_Picker⟨open: true, held: true, shown: 5.2, laid: 4, toward: 5, progress: 0.5⟩
+            moving := lay_out(screen_size, shown_splits(picking, none[:], screen_size))
+            preview := new_game(moving.count, game.identity)
+            if fonts.resize_life(TEXT_FAMILIES[0], moving) is os_error then fail: failed = "no font: «os_error»"
+            draw(canvas, moving, preview, fonts, ⟨counts: picking, previewing: true, can_undo: true, artifact: artifact⟩)
             counts_path := `scratch "«folder»/raza_counts.png"
             if canvas.save_png(counts_path) is os_error then fail: failed = "can't write «counts_path»: «os_error»"
+            // The settings.
+            draw(canvas, layout, game, fonts, ⟨settings_open: true, can_undo: true, artifact: artifact, look: Artifact_Look'u8'(i % 2)⟩)
+            settings_path := `scratch "«folder»/raza_settings.png"
+            if canvas.save_png(settings_path) is os_error then fail: failed = "can't write «settings_path»: «os_error»"
         }
     }
 }
@@ -837,9 +951,12 @@ main :: (args: [] string) [failed: string] {
     *family := Math.clamp(Defaults.get("font", i64'0), 0, 1)
     *splits: [MAX_PLAYERS + 1] Splits
     for n: 2 <= MAX_PLAYERS { splits[n] = Defaults.get(`scratch "splits.«n»", Splits⟨⟩) }
+    *look := Defaults.get("artifact", Artifact_Look.NEW)
     // (what was last stored, to store again only what's changed)
     *stored_game := game
     *stored_family := family
+    *stored_look := look
+    *last_frame := Time.seconds_since_start()
     *layout: Layout
     *fonts: Fonts
     *fonts_for := V2⟨0, 0⟩           // the size the fonts were made for (0: none yet)
@@ -869,6 +986,7 @@ main :: (args: [] string) [failed: string] {
         if w.keys[.F11].PRESSED then w.set_fullscreen(!w.is_fullscreen)
         if w.keys[.ESCAPE].PRESSED {
             if screen.picker.open then screen.picker.open = false
+            else if screen.settings_open then screen.settings_open = false
             else if screen.counts.open then screen.counts.open = false
             else if w.is_fullscreen then w.set_fullscreen(false)
         }
@@ -907,23 +1025,33 @@ main :: (args: [] string) [failed: string] {
                 family = 1 - family
                 if fonts.reload_fonts(TEXT_FAMILIES[family], layout) is os_error then fail: failed = "no font: «os_error»"
             }
+            else if screen.settings_open {
+                setting := settings_part_at(layout, mouse)
+                if setting is {
+                case artifact: look = artifact
+                case outside: screen.settings_open = false
+                case panel: _
+                }
+            }
             else if part := capsule_part_at(layout, mouse) is not absent {
                 if part is {
                 case .UNDO:
                     if history.count > 0 then game = history.pop()
                 case .PLAYERS:
                     count := f32'game.players
-                    screen.counts = ⟨open: true, held: true, grabbed: mouse.y, from: count, shown: count⟩
-                case .SETTINGS: _
+                    screen.counts = ⟨open: true, held: true, grabbed: mouse.y, from: count, shown: count, laid: screen.counts.laid,
+                                     toward: screen.counts.toward, progress: screen.counts.progress⟩
+                case .SETTINGS:
+                    screen.settings_open = true
                 }
-            }
-            else if end := end_at(layout, mouse, 0.6 * cell) is not absent {
-                screen.moving_end = end
             }
             else if seat, colour := toggle_at(layout, mouse) is not absent {
                 bit := u8'1 << u8'colour
                 was := game.identity[seat]
                 game.identity[seat] = if was & bit != 0 then was & ~bit else was | bit
+            }
+            else if line := line_at(layout, mouse, 0.5 * cell) is not absent {
+                screen.moving_end = line
             }
             else {
                 for k: 0 < layout.count {
@@ -989,11 +1117,20 @@ main :: (args: [] string) [failed: string] {
                 screen.counts.settling = false
             }
         }
-        // While it moves, the parts are laid out part of the way from one
-        // count's lines to the next's.
-        screen.previewing = screen.counts.held or screen.counts.settling
+        // The lines snap to the count at the button as it changes (or, let
+        // go, to the game's), a count at a time; while they're another
+        // count's, the parts show what a new game of that count would.
+        now := Time.seconds_since_start()
+        seconds := f32'Math.min(now - last_frame, 0.1)
+        last_frame = now
+        target := if screen.counts.open then i64'Math.round(screen.counts.shown) else game.players
+        screen.counts.move_lines(target, seconds)
+        *shown := game
+        screen.previewing = lines_moving(screen.counts, game.players)
         if screen.previewing {
-            layout = lay_out(size, splits_between(splits[:], screen.counts.shown, size))
+            layout = lay_out(size, shown_splits(screen.counts, splits[:], size))
+            if layout.count != game.players then shown = new_game(layout.count, game.identity)
+            if fonts.resize_life(TEXT_FAMILIES[family], layout) is os_error then fail: failed = "no font: «os_error»"
         }
 
         // What changed this frame, stored (a failure to store isn't the game's).
@@ -1005,12 +1142,19 @@ main :: (args: [] string) [failed: string] {
             if Defaults.set("font", family) is os_error { }
             stored_family = family
         }
+        if look != stored_look {
+            if Defaults.set("artifact", look) is os_error { }
+            stored_look = look
+        }
 
         screen.can_undo = history.count > 0
-        draw(canvas, layout, game, fonts, screen)
+        screen.look = look
+        screen.artifact = ARTIFACT_COLOURS[i64'look]
+        draw(canvas, layout, shown, fonts, screen)
         canvas.present(w.handle, vsync: true)
         scratch.reset()
-        if !screen.drag.active and screen.moving_end < 0 and !screen.counts.held and !screen.counts.settling {
+        still := !screen.drag.active and screen.moving_end < 0 and !screen.counts.held and !screen.counts.settling and !screen.previewing
+        if still {
             if _ := Window.wait_for_input(milliseconds: 1000) is timed_out { }
         }
     }

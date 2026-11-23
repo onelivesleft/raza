@@ -189,6 +189,36 @@ toggles_keep_their_gap :: () #test {
     }
 }
 
+// The lines snap toward a count a step at a time: from three to six they
+// pass through four's and five's, each a whole step, and stop at six's.
+lines_step_toward_a_count :: () #test {
+    *picking := Count_Picker⟨laid: 3, toward: 3⟩
+    *seen: [MAX_PLAYERS + 1] bool
+    for _: 0 < 200 {
+        picking.move_lines(6, 0.02)
+        seen[picking.laid] = true
+        assert(Math.abs(picking.toward - picking.laid) <= 1, "a step at a time: «picking.laid» toward «picking.toward»")
+    }
+    assert(seen[4] and seen[5] and picking.laid == 6 and picking.toward == 6, "through four and five to six")
+    *none: [MAX_PLAYERS + 1] Splits
+    halfway := Count_Picker⟨laid: 4, toward: 5, progress: 0.5⟩
+    assert(shown_splits(halfway, none[:], LANDSCAPE).count == 5, "between four and five, five's lines (one splitting)")
+    assert(!lines_moving(Count_Picker⟨laid: 4, toward: 4⟩, 4) and lines_moving(halfway, 4))
+}
+
+// A line is grabbed by its outer part, at the edge, not near the centre.
+lines_are_grabbed_at_the_edge :: () #test {
+    layout := laid_out(4, LANDSCAPE)
+    reach := 0.5 * cell_of(layout)
+    for end, k: layout.ends[:4] {
+        outer := end + (layout.centre - end) * 0.1
+        inner := end + (layout.centre - end) * 0.5
+        if line := line_at(layout, outer, reach) { assert(line == k, "line «k»'s outer part is line «line»'s") }
+        else if absent { assert(false, "line «k»'s outer part grabs it") }
+        if middle := line_at(layout, inner, reach) is not absent then assert(false, "line «k»'s middle grabs line «middle»")
+    }
+}
+
 // A turn there and back is where it began.
 frames_turn_back :: () #test {
     for angle: [4] f32⟨0, f32'Math.PI / 2, f32'Math.PI, -f32'Math.PI / 2⟩ {
