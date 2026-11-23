@@ -9,7 +9,7 @@
 Era :: enum u8 {
     ORIGINAL       // 1993 to 2003: painterly, mottled and dark
     MODERN         // 2003 to 2014: smoother, more saturated, silver artifacts
-    M15            // 2014 on: lighter and quieter still, brushed metal
+    M15            // 2014 on: finest, lighter and quieter still, brushed metal
 }
 
 ERA_NAMES :: [3] string⟨"Original", "Modern", "M15"⟩
@@ -27,23 +27,35 @@ Look :: struct {
 ARTIFACT_LOOK :: 0
 GOLD_LOOK     :: 6
 
-// Each era's looks, in the order above.
+// Each era's looks, in the order above. Each later era's features are
+// smaller (finer) and its contrast lower (quieter) than the one before's.
 LOOKS :: [3][7] Look⟨
     // Original: a grey-brown artifact's grain, an ivory's soft clouds, water
     // drops, black marble, cracked red rock, mottled green, marbled gold.
-    ⟨⟨Draw.rgb(0x9A8A76), .GRAIN, 1.2, 0.35⟩, ⟨Draw.rgb(0xE6DFCA), .CLOUDS, 2.5, 0.22⟩, ⟨Draw.rgb(0x2A5E9A), .DROPS, 1.5, 0.5⟩,
-     ⟨Draw.rgb(0x2A2521), .MARBLE, 2.6, 0.45⟩, ⟨Draw.rgb(0xB3442B), .CRACKS, 1.9, 0.45⟩, ⟨Draw.rgb(0x3A6C39), .MOTTLE, 1.6, 0.45⟩,
-     ⟨Draw.rgb(0xC29A3E), .MARBLE, 2.6, 0.35⟩⟩,
-    // Modern: silver grain, smoother and brighter colours.
-    ⟨⟨Draw.rgb(0xA7AFB6), .GRAIN, 2.0, 0.22⟩, ⟨Draw.rgb(0xF0ECDF), .CLOUDS, 3.0, 0.15⟩, ⟨Draw.rgb(0x1F6CB4), .CLOUDS, 2.5, 0.3⟩,
-     ⟨Draw.rgb(0x24201F), .MARBLE, 3.0, 0.3⟩, ⟨Draw.rgb(0xC64A31), .MOTTLE, 2.0, 0.3⟩, ⟨Draw.rgb(0x2D7A47), .MOTTLE, 2.0, 0.3⟩,
-     ⟨Draw.rgb(0xD3AE52), .MARBLE, 3.0, 0.25⟩⟩,
-    // M15: brushed silver, the lightest and lowest in contrast (its scales
-    // are no smaller than the others': softer, not finer, as yet).
-    ⟨⟨Draw.rgb(0xA3ADB5), .BRUSHED, 1.5, 0.3⟩, ⟨Draw.rgb(0xF3EFE3), .CLOUDS, 3.5, 0.12⟩, ⟨Draw.rgb(0x1B71C1), .CLOUDS, 3.0, 0.25⟩,
-     ⟨Draw.rgb(0x272320), .MOTTLE, 3.0, 0.22⟩, ⟨Draw.rgb(0xCF4B35), .CRACKS, 2.5, 0.18⟩, ⟨Draw.rgb(0x2E8050), .MOTTLE, 2.5, 0.25⟩,
-     ⟨Draw.rgb(0xD9B65C), .CLOUDS, 2.5, 0.2⟩⟩
+    ⟨⟨Draw.rgb(0x9A8A76), .GRAIN, 1.0, 0.35⟩, ⟨Draw.rgb(0xE6DFCA), .CLOUDS, 2.0, 0.22⟩, ⟨Draw.rgb(0x2A5E9A), .DROPS, 1.3, 0.45⟩,
+     ⟨Draw.rgb(0x2A2521), .MARBLE, 1.8, 0.42⟩, ⟨Draw.rgb(0xB3442B), .CRACKS, 1.6, 0.42⟩, ⟨Draw.rgb(0x3A6C39), .MOTTLE, 1.3, 0.42⟩,
+     ⟨Draw.rgb(0xC29A3E), .MARBLE, 1.8, 0.32⟩⟩,
+    // Modern: silver grain, smoother and brighter colours, three-quarters
+    // the size.
+    ⟨⟨Draw.rgb(0xA7AFB6), .GRAIN, 0.8, 0.2⟩, ⟨Draw.rgb(0xF0ECDF), .CLOUDS, 1.5, 0.14⟩, ⟨Draw.rgb(0x1F6CB4), .CLOUDS, 1.2, 0.26⟩,
+     ⟨Draw.rgb(0x24201F), .MARBLE, 1.4, 0.28⟩, ⟨Draw.rgb(0xC64A31), .MOTTLE, 1.0, 0.28⟩, ⟨Draw.rgb(0x2D7A47), .MOTTLE, 1.0, 0.28⟩,
+     ⟨Draw.rgb(0xD3AE52), .MARBLE, 1.4, 0.24⟩⟩,
+    // M15: brushed silver, the finest, lightest and quietest.
+    ⟨⟨Draw.rgb(0xA3ADB5), .BRUSHED, 0.8, 0.2⟩, ⟨Draw.rgb(0xF3EFE3), .CLOUDS, 1.1, 0.1⟩, ⟨Draw.rgb(0x1B71C1), .CLOUDS, 1.0, 0.2⟩,
+     ⟨Draw.rgb(0x272320), .MOTTLE, 0.8, 0.2⟩, ⟨Draw.rgb(0xCF4B35), .CRACKS, 1.0, 0.16⟩, ⟨Draw.rgb(0x2E8050), .MOTTLE, 0.8, 0.22⟩,
+     ⟨Draw.rgb(0xD9B65C), .CLOUDS, 1.0, 0.18⟩⟩
 ⟩
+
+// Each era's feel, over all its looks: how much the slow variation larger
+// than its features counts (broad: Original's painterly swings, M15's
+// least), and how much fine grain is over it (Original's rough; Modern's
+// smooth; M15's a fine, printed grain).
+Era_Feel :: struct {
+    broad: f32
+    grain: f32
+}
+
+ERA_FEELS :: [3] Era_Feel⟨⟨0.7, 0.22⟩, ⟨0.4, 0.05⟩, ⟨0.25, 0.12⟩⟩
 
 // How fast the surfaces move (a setting): still, or slowly to quickly.
 Motion :: enum u8 {
@@ -60,7 +72,7 @@ MOTION_RATES :: [4] f32⟨0, 0.04, 0.12, 0.35⟩
 
 // How big the surfaces' features are against the looks' own scales (a
 // card's frame is fine-grained for its size, and a part is far bigger).
-SURFACE_SCALE :: 0.35
+SURFACE_SCALE :: 0.32
 
 // How far gold leans toward each of a part's colours.
 GOLD_TINT :: 0.25
@@ -103,5 +115,6 @@ part_fill :: (era: Era, identity: Identity, cell: f32, seat: i64, time: f32, ang
         into[1] = Math.mix(look.ground, BACKGROUND, 0.4)
         count = 2
     }
-    pattern = ⟨kind: look.kind, scale: look.scale * SURFACE_SCALE * cell, strength: look.strength, seed: f32'(seat + 1), time: time, angle: angle⟩
+    pattern = ⟨kind: look.kind, scale: look.scale * SURFACE_SCALE * cell, strength: look.strength, seed: f32'(seat + 1), time: time, angle: angle,
+               broad: ERA_FEELS[i64'era].broad, grain: ERA_FEELS[i64'era].grain⟩
 }

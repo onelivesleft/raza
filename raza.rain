@@ -580,17 +580,21 @@ draw_seat :: (canvas: *Draw.Canvas, layout: Layout, game: Game, fonts: Fonts, k:
     ground := middle_of(colours[:n])
     ink := if out then Math.mix(ink_on(ground), ground, 0.6) else ink_on(ground)
     accent := accent_of(game.identity[k], artifact)
-    // Its colour toggles: a colour's symbol in its circle when it's set, faint when not.
-    for place, i: toggle_places(layout, seat) {
+    // Its colour toggles: a colour's symbol in its circle when it's set, a
+    // dim one when not; each over a soft shadow that quiets the surface
+    // around it, so the row reads the same on every frame.
+    places := toggle_places(layout, seat)
+    r := TOGGLE_RADIUS * cell
+    for place: places { canvas.fill_glow(place, r * 1.8, Draw.rgba(0x000000, 0.3)) }
+    for place, i: places {
         set := has_colour(game.identity[k], Mana'u8'i)
-        r := TOGGLE_RADIUS * cell
         if set {
             canvas.fill_circle(place, r, MANA_CIRCLES[i])
             draw_centred(canvas, fonts.mana, place, seat.angle, MANA_GLYPHS[i], MANA_INK)
         }
         else {
-            canvas.fill_circle(place, r, Draw.rgba(0x000000, 0.18))
-            draw_centred(canvas, fonts.mana, place, seat.angle, MANA_GLYPHS[i], Draw.rgba(0xF4EFE6, 0.35))
+            canvas.fill_circle(place, r, Draw.rgba(0x000000, 0.34))
+            draw_centred(canvas, fonts.mana, place, seat.angle, MANA_GLYPHS[i], Draw.rgba(0xF4EFE6, 0.5))
         }
     }
     draw_centred(canvas, fonts.life, seat.middle, seat.angle, "«game.life[k]»", ink)

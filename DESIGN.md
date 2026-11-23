@@ -16,10 +16,13 @@ settings (Frames: Original, Modern, M15; Original unless chosen).
 - **Each colour its own surface, as the frames have them.** In the Original
   era: white an ivory's soft clouding, blue water drops, black marble with
   pale veins, red cracked rock, green mottling, an artifact's grey-brown
-  grain, gold marble. Modern is smoother and brighter (silver artifacts);
-  M15 lighter and lower in contrast still (brushed silver). The intent is
-  for the eras to get finer too, but their feature sizes don't yet (see
-  REVIEW.md: size and contrast are separate things to tune).
+  grain, gold marble. Each era sets four things apart: feature size,
+  contrast, how much slow variation larger than the features shows
+  (broad), and fine grain. Original is painterly (broad swings, rough
+  grain); Modern smoother, its features three-quarters the size, little
+  grain; M15 finest and quietest (brushed silver, a fine printed grain).
+  Each era's features are no bigger, and its contrast no higher, than the
+  one before's (a test keeps it so).
 - **No colour outside the player's identity appears.** One colour: that
   colour's frame. None: an artifact's. Several: gold, shaded across the
   part toward each of the player's colours in turn (gold stays recognisably
@@ -38,7 +41,8 @@ settings (Frames: Original, Modern, M15; Original unless chosen).
   Fast.
 - **Smooth.** Gradients and surfaces are dithered, so nothing bands.
 - **Readable.** The life total, its commander damage and the colour toggles
-  stay legible on every surface.
+  stay legible on every surface: the toggle row sits on a soft shadow that
+  quiets the surface under it.
 
 ## The motes: damage
 

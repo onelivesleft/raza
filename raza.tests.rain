@@ -509,6 +509,20 @@ miasmas_are_balanced :: () #test {
     }
 }
 
+// Each era is finer and quieter than the one before: every look's features
+// no bigger, its contrast no higher, and the era's broad variation less.
+eras_get_finer :: () #test {
+    for era: 1 < 3 {
+        for which: 0 < 7 {
+            before := LOOKS[era - 1][which]
+            now := LOOKS[era][which]
+            assert(now.scale <= before.scale, "era «era», look «which»: «now.scale» features, bigger than «before.scale»")
+            assert(now.strength <= before.strength, "era «era», look «which»: «now.strength» contrast, more than «before.strength»")
+        }
+        assert(ERA_FEELS[era].broad < ERA_FEELS[era - 1].broad, "era «era»'s broad variation is less")
+    }
+}
+
 // A turn there and back is where it began.
 frames_turn_back :: () #test {
     for angle: [4] f32⟨0, f32'Math.PI / 2, f32'Math.PI, -f32'Math.PI / 2⟩ {
