@@ -464,7 +464,7 @@ lines_moving :: (counts: Count_Picker, players: i64 -> bool) #pure {
 // The lines as the picker shows them: a count's, or part of the way to the
 // next's (eased).
 shown_splits :: (counts: Count_Picker, splits: [] Splits, size: V2 -> Splits) #pure {
-    if counts.toward == counts.laid then return splits_for(splits, counts.laid, size)
+    if counts.toward == counts.laid or Math.abs(counts.toward - counts.laid) != 1 then return splits_for(splits, counts.laid, size)
     // (eased in and out: smoothstep's curve)
     p := Math.clamp(counts.progress, 0, 1)
     t := p * p * (3 - 2 * p)
@@ -477,7 +477,12 @@ shown_splits :: (counts: Count_Picker, splits: [] Splits, size: V2 -> Splits) #p
 // The lines moved on by a frame's time toward a count: a step at a time,
 // each LINES_STEP_TIME, starting the next when one's done.
 move_lines :: (counts: *Count_Picker, target: i64, seconds: f32) {
-    if counts.laid == 0 then counts.laid = target
+    // (the first frame: the lines start as the game's, still)
+    if counts.laid == 0 {
+        counts.laid = target
+        counts.toward = target
+        counts.progress = 0
+    }
     if counts.toward == counts.laid {
         if target == counts.laid then return
         counts.toward = if target > counts.laid then counts.laid + 1 else counts.laid - 1

@@ -200,6 +200,11 @@ lines_step_toward_a_count :: () #test {
         assert(Math.abs(picking.toward - picking.laid) <= 1, "a step at a time: «picking.laid» toward «picking.toward»")
     }
     assert(seen[4] and seen[5] and picking.laid == 6 and picking.toward == 6, "through four and five to six")
+    // A picker that's never moved starts still, at the count it's given,
+    // however long its first frame.
+    *fresh: Count_Picker
+    for _: 0 < 30 { fresh.move_lines(4, 0.1) }
+    assert(fresh.laid == 4 and fresh.toward == 4, "a fresh picker stays at four: «fresh.laid» toward «fresh.toward»")
     *none: [MAX_PLAYERS + 1] Splits
     halfway := Count_Picker⟨laid: 4, toward: 5, progress: 0.5⟩
     assert(shown_splits(halfway, none[:], LANDSCAPE).count == 5, "between four and five, five's lines (one splitting)")
