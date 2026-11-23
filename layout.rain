@@ -3,11 +3,12 @@
 // out to their side, with their life total facing them.
 //
 // The parts are split by lines from the centre to the screen's edge, each
-// line's end a place on the edge (Splits). To start with every part has the
-// same area, and they're mirrored about the screen's upright middle: one
-// line goes straight up when there's an odd number of players, and the top
-// part is centred on the top when there's an even, so two players have the
-// halves, four an X between the corners. A player drags a line's end along
+// line's end a place on the edge (Splits). To start with every life total
+// has the same margins either side (each part as wide across it, from one
+// line to the other), and the parts are mirrored about the screen's upright
+// middle: one line goes straight up when there's an odd
+// number of players, and the top part is centred on the top when there's an
+// even, so two players have the halves. A player drags a line's end along
 // the edge to move it.
 
 MAX_PLAYERS :: 6
@@ -153,18 +154,50 @@ edge_point :: (centre: V2, half: V2, angle: f32 -> V2) #pure {
     return centre + d * Math.min(across, down)
 }
 
-// The lines a count of players starts with on a screen of a size: every
-// part the same area, and the whole mirrored about the screen's upright
-// middle. An odd count's first line goes straight up; an even count's top
+// Lines giving every part the same area, mirrored about the screen's upright
+// middle: an odd count's first line goes straight up; an even count's top
 // part is centred on the top (its first line half a part's area round from
 // the top's middle). Each line after is a part's area round from the last.
-equal_splits :: (players: i64, size: V2 -> splits: Splits) #pure {
+equal_area_splits :: (players: i64, size: V2 -> splits: Splits) #pure {
     n := Math.clamp(players, 2, MAX_PLAYERS)
     splits = ⟨count: n⟩
     each := size.x * size.y / f32'n
     top_middle := size.x / 2 / perimeter_of(size)
     splits.at[0] = if n % 2 == 1 then top_middle else share_after_area(size, top_middle, each / 2)
     for k: 1 < n { splits.at[k] = share_after_area(size, splits.at[k - 1], each) }
+}
+
+// How near (in pixels) the parts' widths across their life totals must come
+// to each other for the lines a count starts with to be done.
+ACROSS_AGREES :: 0.5
+
+// The lines a count of players starts with on a screen of a size: every life
+// total with the same margins either side, each part as wide across its life
+// total (width_across) from one of its lines to the other, mirrored about the
+// screen's upright middle. From equal areas, each line is moved toward
+// whichever of its two parts is wider, by a share of the difference (all at
+// once, so what's mirrored stays so), until they agree.
+equal_splits :: (players: i64, size: V2 -> splits: Splits) #pure {
+    splits = equal_area_splits(players, size)
+    n := splits.count
+    perimeter := perimeter_of(size)
+    for _: 0 < 400 {
+        layout := lay_out(size, splits)
+        *widths: [MAX_PLAYERS] f32
+        for k: 0 < n { widths[k] = width_across(layout, k) }
+        *moved: [MAX_PLAYERS] f32
+        *most: f32 = 0
+        for k: 0 < n {
+            // (line k ends part k - 1 and starts part k: moved on round, the
+            // first gains and the second loses)
+            before := widths[(k + n - 1) % n]
+            after := widths[k]
+            moved[k] = Math.clamp(0.25 * (after - before) / perimeter, -0.004, 0.004)
+            most = Math.max(most, Math.abs(after - before))
+        }
+        if most < ACROSS_AGREES then return
+        for k: 0 < n { splits.at[k] = wrapped_share(splits.at[k] + moved[k]) }
+    }
 }
 
 // Splits that can be used for a count of players: as many lines, each
@@ -285,13 +318,44 @@ centroid :: (points: [] V2 -> V2) #pure {
     return sum / (3 * area)
 }
 
+// Halfway round from one line from the centre to the next (as an angle from
+// the centre, y down).
+halfway_between :: (centre: V2, first: V2, next: V2 -> f32) #pure {
+    a := Math.atan2(first.y - centre.y, first.x - centre.x)
+    b := Math.atan2(next.y - centre.y, next.x - centre.x)
+    return a + wrapped(b - a) / 2
+}
+
 // Which way a player between two lines faces (as an angle from the centre,
 // y down): halfway round from the first line to the next, in FACING_STEPs.
 facing_between :: (centre: V2, first: V2, next: V2 -> f32) #pure {
-    a := Math.atan2(first.y - centre.y, first.x - centre.x)
-    b := Math.atan2(next.y - centre.y, next.x - centre.x)
-    halfway := a + wrapped(b - a) / 2
-    return Math.round(halfway / FACING_STEP) * FACING_STEP
+    return Math.round(halfway_between(centre, first, next) / FACING_STEP) * FACING_STEP
+}
+
+// How wide a part is across its life total: along a line through the life
+// total's centre, square to halfway between the part's lines (as its player
+// faces, unrounded), from one of its lines (from the centre, on past the
+// screen's edge if need be) to the other. A part whose lines that line
+// never meets (two players' halves) is as wide as the screen's diagonal.
+width_across :: (layout: Layout, k: i64 -> f32) #pure {
+    n := layout.count
+    first := layout.ends[k] - layout.centre
+    next := layout.ends[(k + 1) % n] - layout.centre
+    way := halfway_between(layout.centre, layout.ends[k], layout.ends[(k + 1) % n])
+    along := V2⟨-Math.sin(way), Math.cos(way)⟩
+    from := layout.seats[k].middle - layout.centre
+    widest := Math.length(layout.size)
+    // (where the line from the middle along `along` meets a line from the
+    // centre along d, as a distance along it: from + t along = s d)
+    meet :: (p: V2, v: V2, d: V2 -> f32) #pure {
+        cross := v.x * d.y - v.y * d.x
+        if Math.abs(cross) < 0.000_001 then return 1e30
+        return (d.x * p.y - d.y * p.x) / cross
+    }
+    a := meet(from, along, first)
+    b := meet(from, along, next)
+    if Math.abs(a) > widest or Math.abs(b) > widest then return widest
+    return Math.abs(a - b)
 }
 
 // The turn of a player's text, the right way up for them, when they're
