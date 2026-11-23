@@ -432,6 +432,25 @@ motes_are_born_in_their_fields :: () #test {
     }
 }
 
+// A volley's bolts leave one after another once it's gathered, and every
+// one lands as the volley does (its points counted then); more damage, more
+// bolts, up to each element's most, and one for those that throw a mass.
+bolts_land_together :: () #test {
+    landing: f32 = VOLLEY_GATHER + VOLLEY_TRAVEL
+    for shape, which: VOLLEY_SHAPES {
+        for amount: [4] i32⟨1, 5, 12, 40⟩ {
+            n := volley_bolts(which, amount)
+            assert(n >= 1 and n <= Math.max(shape.bolts, 1), "«which» throws «n» for «amount»")
+            if shape.bolts == 1 then assert(n == 1, "«which» throws one mass")
+            for j: 0 < n {
+                assert(bolt_along(VOLLEY_GATHER - 0.01, j, n) < 0, "«which»'s bolt «j» leaves before it's gathered")
+                assert(Math.abs(bolt_along(landing, j, n) - 1) < 0.001, "«which»'s bolt «j» of «n» isn't there as the volley lands")
+            }
+        }
+    }
+    assert(volley_bolts(.FIRE, 12) > volley_bolts(.FIRE, 1), "more damage, more bolts")
+}
+
 // Each colour's element, in WUBRG order, and an artifact's (no colours)
 // liquid metal.
 elements_are_the_colours :: () #test {

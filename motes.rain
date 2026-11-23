@@ -342,6 +342,62 @@ steer_volleys :: (motes: *Particles.System, volleys: *Volleys, random: *Random.G
     }
 }
 
+// How many motes a second each element's volley throws off as it flies
+// (shared among its bolts): the storm's its debris, the deluge's its spray.
+VOLLEY_MOTES :: [Element] f32⟨SUN: 45, WATER: 120, OIL: 25, FIRE: 80, WIND: 170, CHROME: 25⟩
+
+// Each volley's motes as it flies, thrown off each of its heads ahead
+// along its path: the storm's leaves (and now and then a twig), fire's
+// sparks, the deluge's spray, the energy's sparkles, oil's and metal's
+// drops. (Tagged as a landing's: an undo calls them off.)
+feed_volleys :: (motes: *Particles.System, random: *Random.Generator, layout: Layout, game: Game, volleys: Volleys, seconds: f32) {
+    cell := cell_of(layout)
+    for v: volleys.list {
+        if v.age < VOLLEY_GATHER or v.age >= VOLLEY_GATHER + VOLLEY_TRAVEL then continue
+        *list: [6] Element
+        n := elements_of(game.identity[v.from], list)
+        size := volley_cells(v.amount) * cell
+        across := across_path(v.start, v.end)
+        speed := Math.length(v.end - v.start) * 1.15 / VOLLEY_TRAVEL
+        up := layout.seats[v.from].toward * -1
+        for which, i: list[:n] {
+            shape := VOLLEY_SHAPES[which]
+            bolts := volley_bolts(which, v.amount)
+            braid := braided(v.start, v.bend, v.end, i, n, cell)
+            for j: 0 < bolts {
+                p := bolt_along(v.age, j, bolts)
+                if p <= 0 or p >= 1 then continue
+                side := (f32'j - f32'(bolts - 1) / 2) * shape.apart * cell
+                bend := braid + across * (side * 2)
+                head := curve_at(v.start, bend, v.end, p)
+                ahead := curve_at(v.start, bend, v.end, Math.min(p + 0.02, 1)) - curve_at(v.start, bend, v.end, Math.max(p - 0.02, 0))
+                *way := V2⟨0, 0⟩
+                if Math.length(ahead) > 0.0001 then way = Math.normalize(ahead)
+                reach := size * shape.reach
+                for _: 0 < births(random, VOLLEY_MOTES[which] / f32'bolts, seconds) {
+                    angle := f32'random.below(0.0, Math.TAU)
+                    at := head + V2⟨Math.cos(angle), Math.sin(angle)⟩ * (Math.sqrt(f32'random.below(0.0, 1.0)) * reach * 0.8)
+                    *m := mote_of_style(random, which, at, way * (speed * f32'random.below(0.3, 0.9)), up, cell, SPLASH_MOTE)
+                    m.life = m.life * 0.6
+                    if which == .WIND and random.chance(0.25) then twig(m)
+                    motes.add(m)
+                }
+            }
+        }
+    }
+}
+
+// A leaf mote made a twig: brown, long and thin, tumbling.
+twig :: (m: *Particles.Mote) {
+    m.colour = Draw.rgba(0x6E4B2A, 0.95)
+    m.colour_end = Draw.rgba(0x4A3220, 0.9)
+    m.elongation = 5
+    m.size = m.size * 0.75
+    m.size_end = m.size
+    m.add = 0
+    m.shape = .LEAF
+}
+
 // A landing's splash at a place: motes of the attacker's thrown out from
 // it; a lethal volley's a much bigger burst.
 splash :: (motes: *Particles.System, random: *Random.Generator, layout: Layout, identity: Identity, to: i64, at: V2, lethal: bool) {
@@ -407,6 +463,7 @@ settled_motes :: (layout: Layout, game: Game, from: i64 = -1, finger: V2 = ⟨0,
         for *c: fields.clock { c += seconds }
         feed_elements(made, random, layout, game, fields, seconds)
         if frame == thrown_at and volley > 0 then strike(dealt, made, thrown, random, layout, pending, from, to, volley, finger)
+        feed_volleys(made, random, layout, game, thrown, seconds)
         made.update(seconds)
         steer_volleys(made, thrown, random, layout, game, pending, seconds)
     }

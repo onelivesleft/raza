@@ -1182,7 +1182,7 @@ save_snapshots :: (folder: string) [failed: string] {
 
 // The element sheet (draw_element_sheet's), into folder as raza_elements.png.
 save_element_sheet :: (folder: string) [failed: string] {
-    size := Wide.i32x2⟨2400, 900⟩
+    size := Wide.i32x2⟨2400, 1300⟩
     *canvas: Draw.Canvas
     if c := Draw.create_canvas(size) { canvas = c } else if os_error { fail: failed = "no canvas: «os_error»" }
     defer canvas.destroy()
@@ -1524,6 +1524,7 @@ main :: (args: [] string) [failed: string] {
         motes.flow_scale = MOTE_FLOW * cell
         feed_elements(motes, random, layout, shown, elements, seconds)
         if screen.drag.active then feed_stream(motes, random, layout, game, screen.drag.from, mouse, seconds)
+        feed_volleys(motes, random, layout, game, volleys, seconds)
         motes.update(seconds)
         steer_volleys(motes, volleys, random, layout, game, pending, seconds)
         if !screen.previewing then shown = shown_game(game, pending)

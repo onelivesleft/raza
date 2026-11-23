@@ -45,8 +45,9 @@ elements_of :: (identity: Identity, into: [] *Element -> count: i64) #pure {
 // times width_from at the start of what's covered and width_to at its end.
 // Then its time (its own clock: how far its features have moved), how
 // stirred it is (0 at rest, 1 touched), its seed, how much of it shows
-// (fade), and whether this is its light, for the light layer (glow 1), or
-// its matter (0).
+// (fade), whether this is its light, for the light layer (glow 1), or its
+// matter (0), and its form (an element's stream may look unlike its matter:
+// fire's crackles as lightning, the sun's is a beam).
 Field :: struct {
     start:      V2
     bend:       V2
@@ -62,7 +63,8 @@ Field :: struct {
     seed:       f32 = 0
     fade:       f32 = 1
     glow:       f32 = 0
-    _:          [2] u32
+    form:       f32 = 0          // how it's drawn: its matter (0), or its stream as a drag selects with it (1)
+    _:          u32
 }
 
 // How finely a drawn-out field's curve is followed (steps along it).
@@ -92,6 +94,7 @@ field_place :: (pixel: V2, start: V2, bend: V2, end: V2, up: V2, reach: f32, wid
         *best_u: f32 = 0
         *best_side: f32 = 1
         *best_along: f32 = 0
+        *best_across: f32 = 0
         *walked: f32 = 0
         *a := curve_at(start, bend, end, from)
         for i: 1 <= STREAM_STEPS {
@@ -99,20 +102,24 @@ field_place :: (pixel: V2, start: V2, bend: V2, end: V2, up: V2, reach: f32, wid
             b := curve_at(start, bend, end, Math.mix(from, to, u))
             ab := b - a
             long := Math.max(Math.length(ab), 0.0001)
-            h := Math.clamp(Math.dot(pixel - a, ab) / (long * long), 0, 1)
+            reach_along := Math.dot(pixel - a, ab) / (long * long)
+            h := Math.clamp(reach_along, 0, 1)
             off := pixel - (a + ab * h)
             d := Math.length(off)
             if d < best {
                 best = d
                 best_u = (f32'(i - 1) + h) / f32'STREAM_STEPS
                 best_side = if ab.x * off.y - ab.y * off.x < 0 then -1.0 else 1.0
-                best_along = walked + h * long
+                // (how far along and across, from the segment's own line, so
+                // its texture goes on past its ends without a seam)
+                best_along = walked + reach_along * long
+                best_across = (ab.x * (pixel.y - a.y) - ab.y * (pixel.x - a.x)) / long
             }
             walked += long
             a = b
         }
         width := Math.mix(width_from, width_to, best_u)
-        q = V2⟨best_side * best, 0 - best_along⟩ / reach
+        q = V2⟨best_across, 0 - best_along⟩ / reach
         out = V2⟨best_side * best / (reach * width), 0⟩
         drawn = 1
     }
@@ -192,6 +199,19 @@ sun_at :: (q: V2, out: V2, drawn: f32, time: f32, seed: f32, stir: f32 -> paint:
     light = ball * (cover * 0.25) + glow * 0.6
 }
 
+// White's stream as it selects: a beam of light, white-hot along its spine
+// to a warm glow at its edges, shimmering as light runs along it.
+beam_at :: (q: V2, out: V2, time: f32, seed: f32 -> paint: V4, light: V3) {
+    r := Math.length(out)
+    along := 0 - q.y
+    shimmer := 0.8 + 0.4 * Patterns.noise(V2⟨along * 2.5 - time * 7, seed⟩)
+    core := Math.exp(0 - r * r / 0.03)
+    halo := (1 - r) * (1 - r)
+    rgb := V3⟨1.0, 0.97, 0.88⟩ * (core * 1.4 * shimmer) + V3⟨1.0, 0.78, 0.42⟩ * (halo * 0.5 * shimmer)
+    paint = V4⟨rgb.x, rgb.y, rgb.z, Math.clamp(core * 0.85 + halo * 0.25, 0, 1)⟩
+    light = rgb * 0.9
+}
+
 ////////////////////////////////
 // Red's fire
 
@@ -229,6 +249,29 @@ fire_at :: (q: V2, out: V2, drawn: f32, time: f32, seed: f32, stir: f32 -> paint
     light = fire * 0.7
 }
 
+// Red's stream as it selects: crackling lightning, a jagged bolt about its
+// spine that strikes anew many times a second (its path the noise across of
+// that strike), white-hot in its core with a fiery glow, a branch forking
+// off it now and then.
+LIGHTNING_STRIKES :: 14.0        // new paths a second
+lightning_at :: (q: V2, out: V2, time: f32, seed: f32 -> paint: V4, light: V3) {
+    r := Math.length(out)
+    along := 0 - q.y
+    flash_at := Math.floor(time * LIGHTNING_STRIKES)
+    jag := (Patterns.layered(V2⟨along * 2.4, flash_at * 1.37 + seed⟩, 4) - 0.5) * 1.1
+    d := Math.abs(q.x - jag)
+    // (a branch, off the bolt where its own noise is high)
+    fork := jag + (Patterns.layered(V2⟨along * 3.1 + 7.3, flash_at * 2.11 + seed⟩, 3) - 0.5) * 1.2
+    forking := Math.smoothstep(0.55, 0.7, Patterns.noise(V2⟨along * 1.3, flash_at * 0.71 + seed * 3⟩))
+    d2 := Math.abs(q.x - fork)
+    flash := 0.7 + 0.3 * Patterns.hash(V2⟨flash_at, seed⟩)
+    core := (Math.exp(0 - d * d / 0.0012) + 0.6 * forking * Math.exp(0 - d2 * d2 / 0.0006)) * flash
+    glow := (Math.exp(0 - d * 7) + 0.5 * forking * Math.exp(0 - d2 * 9)) * flash * Math.smoothstep(1.0, 0.6, r)
+    rgb := V3⟨1.0, 0.95, 0.85⟩ * (core * 1.5) + V3⟨1.0, 0.38, 0.1⟩ * (glow * 0.8)
+    paint = V4⟨rgb.x, rgb.y, rgb.z, Math.clamp(core + glow * 0.35, 0, 1)⟩
+    light = rgb
+}
+
 ////////////////////////////////
 // Blue's water
 
@@ -252,7 +295,13 @@ water_waves :: (q: V2, time: f32, seed: f32, stir: f32 -> height: f32, slope: V2
 water_at :: (q: V2, out: V2, drawn: f32, time: f32, seed: f32, stir: f32 -> paint: V4, light: V3) {
     r := Math.length(out)
     edge := r + (Patterns.noise(q * 2.1 + V2⟨seed, time * 0.4⟩) - 0.5) * 0.16
-    body := Math.clamp((WATER_BODY - edge) / 0.1, 0, 1)
+    *body := Math.clamp((WATER_BODY - edge) / 0.1, 0, 1)
+    if drawn > 1.5 {
+        // (a hose's spray: whole along its middle, broken into droplets
+        // racing along it toward its edges)
+        spray := Patterns.noise(V2⟨(0 - q.y) * 6 - time * 9, q.x * 14 + seed⟩)
+        body = body * Math.smoothstep(0.3, 0.5, spray + 0.55 * (1 - r))
+    }
     across := edge / WATER_BODY
     dome := Math.sqrt(Math.max(1 - across * across, 0))
     height, slope := water_waves(q, time, seed, stir)
@@ -344,18 +393,21 @@ chrome_at :: (q: V2, out: V2, drawn: f32, time: f32, seed: f32, stir: f32 -> pai
 // them and dapples of light through leaves, faint, fading out to its reach.
 wind_at :: (q: V2, out: V2, drawn: f32, time: f32, seed: f32, stir: f32 -> paint: V4, light: V3) {
     r := Math.length(out)
-    blow := time * (0.5 + 0.8 * stir)
-    curl := Patterns.noise(q * 1.4 + V2⟨0 - blow * 0.4, seed⟩)
-    v := Patterns.layered(V2⟨q.x * 0.35 - blow, q.y * 4.5 + curl * 1.2⟩ + V2⟨seed * 2.3, 0⟩, 3)
-    // (thin bands where the noise crosses a level, long across the wind's
+    // (at rest, blowing to its player's right; drawn out, along its curve,
+    // toward its end, faster)
+    p := if drawn > 0.5 then V2⟨0 - q.y, q.x⟩ else q
+    blow := time * (0.5 + 0.8 * stir) * (1 + 2 * Math.min(drawn, 1))
+    curl := Patterns.noise(p * 1.4 + V2⟨0 - blow * 0.4, seed⟩)
+    v := Patterns.layered(V2⟨p.x * 0.35 - blow, p.y * 4.5 + curl * 1.2⟩ + V2⟨seed * 2.3, 0⟩, 3)
+    // (thin bands where the noise crosses a level, long along the wind's
     // way, broken into gusts)
-    gust := Math.smoothstep(0.42, 0.7, Patterns.noise(q * 1.6 + V2⟨0 - blow * 1.3, seed * 1.9⟩))
+    gust := Math.smoothstep(0.42, 0.7, Patterns.noise(p * 1.6 + V2⟨0 - blow * 1.3, seed * 1.9⟩))
     streak := Math.clamp(1 - Math.abs(v - 0.55) / 0.03, 0, 1) * gust
-    dapple := Math.smoothstep(0.62, 0.85, Patterns.layered(q * 2.4 + V2⟨0 - blow * 0.25, seed⟩, 3))
+    dapple := Math.smoothstep(0.62, 0.85, Patterns.layered(p * 2.4 + V2⟨0 - blow * 0.25, seed⟩, 3))
     fade := Math.smoothstep(1.0, 0.35, r)
     leaf := V3⟨0.78, 0.96, 0.58⟩
-    haze := Patterns.layered(q * 1.2 + V2⟨0 - blow * 0.5, seed * 0.7⟩, 3)
-    a := (streak * 0.85 + dapple * 0.18 + haze * 0.14) * fade * (1 + 0.5 * stir)
+    haze := Patterns.layered(p * 1.2 + V2⟨0 - blow * 0.5, seed * 0.7⟩, 3)
+    a := (streak * 0.85 + dapple * 0.18 + haze * 0.14) * fade * (1 + 0.5 * stir) * (1 + 0.8 * Math.min(drawn, 1))
     paint = V4⟨leaf.x * a, leaf.y * a, leaf.z * a, a * 0.8⟩
     light = leaf * (streak * fade * 0.25)
 }
@@ -370,9 +422,16 @@ Oil_Field :: shader { vertex: Draw.quad_place; fragment: oil_shade }
 Chrome_Field :: shader { vertex: Draw.quad_place; fragment: chrome_shade }
 Wind_Field :: shader { vertex: Draw.quad_place; fragment: wind_shade }
 
+// (Each stage: where the pixel is in the field, nothing past its reach,
+// then its element's colour there. drawn is 2 for a stream drawn as it
+// selects, form 1: its element's own look for that.)
 sun_shade :: (from: Draw.Quad_Between, field: Shader.Uniforms(Field) -> colour: V4) {
     q, out, drawn := field_place(from.pixel, field.start, field.bend, field.end, field.up, field.reach, field.width_from, field.width_to, field.from, field.to)
     if Math.length(out) >= 1 then return ⟨0, 0, 0, 0⟩
+    if field.form > 0.5 {
+        beam, beam_light := beam_at(q, out, field.time, field.seed)
+        return field_colour(beam, beam_light, field.fade, field.glow)
+    }
     paint, light := sun_at(q, out, drawn, field.time, field.seed, field.stir)
     colour = field_colour(paint, light, field.fade, field.glow)
 }
@@ -380,6 +439,10 @@ sun_shade :: (from: Draw.Quad_Between, field: Shader.Uniforms(Field) -> colour: 
 fire_shade :: (from: Draw.Quad_Between, field: Shader.Uniforms(Field) -> colour: V4) {
     q, out, drawn := field_place(from.pixel, field.start, field.bend, field.end, field.up, field.reach, field.width_from, field.width_to, field.from, field.to)
     if Math.length(out) >= 1 then return ⟨0, 0, 0, 0⟩
+    if field.form > 0.5 {
+        bolt, bolt_light := lightning_at(q, out, field.time, field.seed)
+        return field_colour(bolt, bolt_light, field.fade, field.glow)
+    }
     paint, light := fire_at(q, out, drawn, field.time, field.seed, field.stir)
     colour = field_colour(paint, light, field.fade, field.glow)
 }
@@ -387,7 +450,7 @@ fire_shade :: (from: Draw.Quad_Between, field: Shader.Uniforms(Field) -> colour:
 water_shade :: (from: Draw.Quad_Between, field: Shader.Uniforms(Field) -> colour: V4) {
     q, out, drawn := field_place(from.pixel, field.start, field.bend, field.end, field.up, field.reach, field.width_from, field.width_to, field.from, field.to)
     if Math.length(out) >= 1 then return ⟨0, 0, 0, 0⟩
-    paint, light := water_at(q, out, drawn, field.time, field.seed, field.stir)
+    paint, light := water_at(q, out, drawn * (1 + field.form), field.time, field.seed, field.stir)
     colour = field_colour(paint, light, field.fade, field.glow)
 }
 
@@ -408,7 +471,7 @@ chrome_shade :: (from: Draw.Quad_Between, field: Shader.Uniforms(Field) -> colou
 wind_shade :: (from: Draw.Quad_Between, field: Shader.Uniforms(Field) -> colour: V4) {
     q, out, drawn := field_place(from.pixel, field.start, field.bend, field.end, field.up, field.reach, field.width_from, field.width_to, field.from, field.to)
     if Math.length(out) >= 1 then return ⟨0, 0, 0, 0⟩
-    paint, light := wind_at(q, out, drawn, field.time, field.seed, field.stir)
+    paint, light := wind_at(q, out, drawn * (1 + field.form), field.time, field.seed, field.stir)
     colour = field_colour(paint, light, field.fade, field.glow)
 }
 
@@ -563,8 +626,10 @@ draw_elements :: (canvas: *Draw.Canvas, layer: *Draw.Canvas, layout: Layout, gam
             *list: [6] Element
             n := elements_of(game.identity[from], list)
             for element, i: list[:n] {
-                f := Field⟨start: start, bend: braided(start, bend, end, i, n, cell), end: end, up: seat.toward * -1, reach: STREAM_CELLS * cell,
-                           width_from: 0.55, width_to: 0.3, time: elements.clock[from] + f32'i * 7.3, stir: 1, seed: f32'(from * 3 + i) * 1.7⟩
+                shape := STREAM_SHAPES[element]
+                f := Field⟨start: start, bend: braided(start, bend, end, i, n, cell), end: end, up: seat.toward * -1, reach: shape.reach * cell,
+                           width_from: shape.width_from, width_to: shape.width_to, time: elements.clock[from] + f32'i * 7.3, stir: 1,
+                           seed: f32'(from * 3 + i) * 1.7, form: shape.form⟩
                 draw_field(canvas, layer, element, f)
             }
         }
@@ -573,18 +638,91 @@ draw_elements :: (canvas: *Draw.Canvas, layer: *Draw.Canvas, layout: Layout, gam
     canvas.add_light(layer, BLOOM_CELLS * cell, BLOOM_STRENGTH)
 }
 
-// How far a stream reaches from its spine (cells, at its widest).
-STREAM_CELLS :: 0.9
+// How each element's stream is drawn as a drag selects with it: how far it
+// reaches from its spine (cells), its width at its start and its end (of
+// that), and its form. Blue's a thin hose's spray, fanning out; red's
+// crackling lightning; white's a beam of light; green's gusts of wind;
+// black's oil and an artifact's metal drawn out, thinning.
+Stream_Shape :: struct {
+    reach:      f32
+    width_from: f32
+    width_to:   f32
+    form:       f32
+}
+
+STREAM_SHAPES :: [Element] Stream_Shape⟨
+    SUN:    ⟨reach: 0.5, width_from: 0.8, width_to: 0.8, form: 1⟩,
+    WATER:  ⟨reach: 0.9, width_from: 0.07, width_to: 0.35, form: 1⟩,
+    OIL:    ⟨reach: 0.9, width_from: 0.55, width_to: 0.3⟩,
+    FIRE:   ⟨reach: 0.9, width_from: 1, width_to: 1, form: 1⟩,
+    WIND:   ⟨reach: 1.1, width_from: 0.5, width_to: 0.8, form: 1⟩,
+    CHROME: ⟨reach: 0.9, width_from: 0.55, width_to: 0.3⟩
+⟩
+
+// How each element's volley is thrown: as how many bolts at most (one
+// after another, more for more damage), each reaching how far (against
+// volley_cells), covering what share of the path, its tail's width and its
+// head's, how far apart they fly (cells), and how far its splash grows (its
+// reaches; a lethal one's twice). Blue surges as a deluge, one great mass;
+// red throws bolts of fire; white, bolts of energy; green, a storm (its
+// debris the motes'); black and an artifact a gob of themselves.
+Volley_Shape :: struct {
+    bolts:      i64
+    reach:      f32
+    length:     f32
+    width_from: f32
+    width_to:   f32
+    apart:      f32
+    splash:     f32
+    form:       f32 = 0     // its bolts' form (white's are short beams)
+}
+
+VOLLEY_SHAPES :: [Element] Volley_Shape⟨
+    SUN:    ⟨bolts: 5, reach: 0.45, length: 0.16, width_from: 0.25, width_to: 1, apart: 0.5, splash: 1.0, form: 1⟩,
+    WATER:  ⟨bolts: 1, reach: 2.0, length: 0.6, width_from: 0.5, width_to: 1, apart: 0, splash: 2.2⟩,
+    OIL:    ⟨bolts: 1, reach: 1, length: 0.28, width_from: 0.25, width_to: 1, apart: 0, splash: 1.3⟩,
+    FIRE:   ⟨bolts: 4, reach: 0.6, length: 0.22, width_from: 0.25, width_to: 1, apart: 0.6, splash: 1.4⟩,
+    WIND:   ⟨bolts: 1, reach: 2.2, length: 0.55, width_from: 0.6, width_to: 1, apart: 0, splash: 1.8⟩,
+    CHROME: ⟨bolts: 1, reach: 1, length: 0.28, width_from: 0.25, width_to: 1, apart: 0, splash: 1.3⟩
+⟩
 
 // How big a volley's gob is (cells): bigger for more, within reason.
 volley_cells :: (amount: i32 -> f32) #pure {
     return Math.min(0.5 + 0.1 * Math.sqrt(f32'Math.max(amount, 1)), 1.2)
 }
 
+// How many bolts an element's volley of an amount throws: one a few points,
+// at least two of a kind that throws them, at most its shape's.
+volley_bolts :: (which: Element, amount: i32 -> i64) #pure {
+    most := VOLLEY_SHAPES[which].bolts
+    if most <= 1 then return 1
+    return Math.clamp(1 + i64'(amount - 1) / 3, 2, most)
+}
+
+// How far along its path a volley's bolt j of n is at an age (0 to 1, eased;
+// below 0 not thrown yet): each leaves BOLT_APART after the last, quicker,
+// so all land as the volley does.
+BOLT_APART :: 0.06
+bolt_along :: (age: f32, j: i64, n: i64 -> f32) #pure {
+    travel := VOLLEY_TRAVEL - f32'(n - 1) * BOLT_APART
+    t := (age - VOLLEY_GATHER - f32'j * BOLT_APART) / travel
+    if t < 0 then return t
+    c := Math.min(t, 1)
+    return c * c * (3 - 2 * c)
+}
+
+// The way across a path, a unit long (to one side of start to end).
+across_path :: (start: V2, end: V2 -> V2) #pure {
+    along := end - start
+    if Math.length(along) < 0.001 then return ⟨0, 0⟩
+    return V2⟨0 - along.y, along.x⟩ / Math.length(along)
+}
+
 // A volley: gathering at its player's spot (their fields swell, drawn
-// there), then a gob of each element thrown along its path, its head
-// biggest, its tail trailing; then landing, a splash of it spreading at
-// whoever it hit and fading (bigger for a lethal one).
+// there), then thrown along its path as each element's shape has it (a
+// deluge, bolts, a storm), each head biggest, its tail trailing; then
+// landing, a splash of it spreading at whoever it hit and fading (bigger
+// for a lethal one).
 draw_volley :: (canvas: *Draw.Canvas, layer: *Draw.Canvas, layout: Layout, game: Game, elements: Elements, v: Volley) {
     if v.age < VOLLEY_GATHER then return
     cell := cell_of(layout)
@@ -593,18 +731,28 @@ draw_volley :: (canvas: *Draw.Canvas, layer: *Draw.Canvas, layout: Layout, game:
     size := volley_cells(v.amount) * cell
     time := elements.clock[v.from]
     landing: f32 = VOLLEY_GATHER + VOLLEY_TRAVEL
+    across := across_path(v.start, v.end)
     for element, i: list[:n] {
+        shape := VOLLEY_SHAPES[element]
         seed := f32'(v.from * 3 + i) * 1.7 + f32'v.id
         if v.age < landing {
-            t := (v.age - VOLLEY_GATHER) / VOLLEY_TRAVEL
-            p := t * t * (3 - 2 * t)
-            f := Field⟨start: v.start, bend: braided(v.start, v.bend, v.end, i, n, cell), end: v.end, up: layout.seats[v.from].toward * -1,
-                       reach: size, from: Math.max(p - 0.28, 0), to: p, width_from: 0.25, width_to: 1, time: time + f32'i * 7.3, stir: 1, seed: seed⟩
-            draw_field(canvas, layer, element, f)
+            bolts := volley_bolts(element, v.amount)
+            braid := braided(v.start, v.bend, v.end, i, n, cell)
+            for j: 0 < bolts {
+                p := bolt_along(v.age, j, bolts)
+                if p <= 0 or p >= 1 then continue
+                // (each bolt its own way, apart from the others')
+                side := (f32'j - f32'(bolts - 1) / 2) * shape.apart * cell
+                f := Field⟨start: v.start, bend: braid + across * (side * 2), end: v.end, up: layout.seats[v.from].toward * -1,
+                           reach: size * shape.reach, from: Math.max(p - shape.length, 0), to: p, width_from: shape.width_from, width_to: shape.width_to,
+                           time: time + f32'i * 7.3 + f32'j * 3.1, stir: 1, seed: seed + f32'j * 5.3, form: shape.form⟩
+                draw_field(canvas, layer, element, f)
+            }
         }
         else {
             l := Math.clamp((v.age - landing) / (VOLLEY_LAND + VOLLEY_LINGER), 0, 1)
-            grow: f32 = if v.lethal then 2.6 else 1.3
+            lethal: f32 = if v.lethal then 2 else 1
+            grow := shape.splash * lethal
             f := Field⟨start: v.end, bend: v.end, end: v.end, up: layout.seats[v.to].toward * -1,
                        reach: size * (1 + grow * Math.sqrt(l)), time: time + f32'i * 7.3 + l * 2, stir: 1, seed: seed, fade: (1 - l) * (1 - l)⟩
             draw_field(canvas, layer, element, f)
@@ -612,8 +760,9 @@ draw_volley :: (canvas: *Draw.Canvas, layer: *Draw.Canvas, layout: Layout, game:
     }
 }
 
-// The elements large on the background, at rest and drawn out (a sheet to
-// look at each as it's worked on).
+// The elements large on the background: at rest, each one's stream as it
+// selects, and its volley in flight (a sheet to look at each as it's worked
+// on).
 draw_element_sheet :: (canvas: *Draw.Canvas, layer: *Draw.Canvas, time: f32) {
     canvas.clear(BACKGROUND)
     layer.clear(Draw.rgb(0x000000))
@@ -623,8 +772,24 @@ draw_element_sheet :: (canvas: *Draw.Canvas, layer: *Draw.Canvas, time: f32) {
         draw_field(canvas, layer, element, ⟨start: at, bend: at, end: at, up: ⟨0, -1⟩, reach: 180, time: time + f32'i * 7.3, seed: f32'i * 1.7⟩)
         start := V2⟨x - 150, 700⟩
         end := V2⟨x + 150, 560⟩
-        draw_field(canvas, layer, element, ⟨start: start, bend: V2⟨x, 760⟩, end: end, up: ⟨0, -1⟩, reach: 90, width_from: 0.55, width_to: 0.3,
-                                            time: time + f32'i * 7.3, stir: 1, seed: f32'i * 1.7⟩)
+        stream := STREAM_SHAPES[element]
+        draw_field(canvas, layer, element, ⟨start: start, bend: V2⟨x, 760⟩, end: end, up: ⟨0, -1⟩, reach: stream.reach * 100,
+                                            width_from: stream.width_from, width_to: stream.width_to, time: time + f32'i * 7.3, stir: 1, seed: f32'i * 1.7,
+                                            form: stream.form⟩)
+        // (its volley of 9 half way, from below to above)
+        volley := VOLLEY_SHAPES[element]
+        bolts := volley_bolts(element, 9)
+        from := V2⟨x - 120, 1180⟩
+        to := V2⟨x + 120, 880⟩
+        for j: 0 < bolts {
+            p := bolt_along(VOLLEY_GATHER + VOLLEY_TRAVEL * 0.6, j, bolts)
+            if p <= 0 or p >= 1 then continue
+            side := (f32'j - f32'(bolts - 1) / 2) * volley.apart * 100
+            draw_field(canvas, layer, element, ⟨start: from, bend: (from + to) / 2 + across_path(from, to) * (side * 2), end: to, up: ⟨0, -1⟩,
+                                                reach: volley_cells(9) * 100 * volley.reach, from: Math.max(p - volley.length, 0), to: p,
+                                                width_from: volley.width_from, width_to: volley.width_to, time: time + f32'i * 7.3 + f32'j * 3.1, stir: 1,
+                                                seed: f32'i * 1.7 + f32'j * 5.3, form: volley.form⟩)
+        }
     }
     canvas.add_light(layer, 40, BLOOM_STRENGTH)
 }
