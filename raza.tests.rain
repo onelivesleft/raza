@@ -523,6 +523,23 @@ eras_get_finer :: () #test {
     }
 }
 
+// The capsule's buttons, left to right: undo, the players, a new game, the
+// system's; each found at its middle, none between them.
+capsule_buttons_in_order :: () #test {
+    layout := laid_out(4, LANDSCAPE)
+    *last: f32 = -1e30
+    for part: CAPSULE_PARTS {
+        middle := capsule_centre(layout, part)
+        assert(middle.x > last, "«part» right of the one before")
+        last = middle.x
+        if found := capsule_part_at(layout, middle) { assert(found == part, "«part»'s middle is «found»") }
+        else if absent { assert(false, "«part»'s middle is no button") }
+        assert(Math.abs(middle.x - layout.centre.x) + 0.55 * cell_of(layout) <= CAPSULE_HALF_WIDTH * cell_of(layout), "«part» inside the capsule")
+    }
+    between := (capsule_centre(layout, .PLAYERS) + capsule_centre(layout, .RESET)) / 2
+    if found := capsule_part_at(layout, between) is not absent then assert(false, "between the players and reset is «found»")
+}
+
 // A turn there and back is where it began.
 frames_turn_back :: () #test {
     for angle: [4] f32⟨0, f32'Math.PI / 2, f32'Math.PI, -f32'Math.PI / 2⟩ {

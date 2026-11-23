@@ -27,6 +27,8 @@ Raza :: program {
 #import Patterns
 #import Particles
 #import Random
+#import Icons(SETS: .MDI)
+#include "icons/icons.rain"
 
 #include "layout.rain"
 #include "game.rain"
@@ -41,10 +43,7 @@ CRIMSON_PRO :: #data "fonts/crimson_pro/CrimsonPro[wght].ttf"
 EB_GARAMOND :: #data "fonts/eb_garamond/EBGaramond[wght].ttf"
 
 TEXT_FAMILIES :: [2] string⟨"Crimson Pro", "EB Garamond"⟩
-ICON_FAMILY   :: "Mana"
-
-// Mana's ms-power, the damage icon's glyph.
-DAMAGE_GLYPH :: "\u{E921}"
+ICON_FAMILY   :: "Mana"          // Magic's own symbols (the colours'); other icons are the Icons module's
 
 // Each colour's symbol (Mana's ms-w to ms-g), in WUBRG order; its circle's
 // colour (Magic's own, as the cards' mana symbols are printed); and the
@@ -245,7 +244,6 @@ Fonts :: struct {
     small:     Draw.Font         // commander damage
     label:     Draw.Font         // the number grid's buttons
     output:    Draw.Font         // the number grid's number
-    icon:      Draw.Font         // Mana's, for the damage icon
     mana:      Draw.Font         // Mana's, for the colour toggles
 }
 
@@ -286,7 +284,6 @@ load_fonts :: (family: string, layout: Layout -> fonts: Fonts) [os_error: Draw.D
     if small := Draw.load_font(family, i32'(cell * 0.42), 600) { fonts.small = small } else if os_error { fail: os_error }
     if label := Draw.load_font(family, i32'(cell * 0.45), 500) { fonts.label = label } else if os_error { fail: os_error }
     if output := Draw.load_font(family, i32'(cell * 0.8), 500) { fonts.output = output } else if os_error { fail: os_error }
-    if icon := Draw.load_font(ICON_FAMILY, i32'(cell * 0.6)) { fonts.icon = icon } else if os_error { fail: os_error }
     if mana := Draw.load_font(ICON_FAMILY, i32'(cell * TOGGLE_RADIUS * 1.25)) { fonts.mana = mana } else if os_error { fail: os_error }
 }
 
@@ -296,7 +293,6 @@ reload_fonts :: (fonts: *Fonts, family: string, layout: Layout) [os_error: Draw.
     fonts.small.destroy()
     fonts.label.destroy()
     fonts.output.destroy()
-    fonts.icon.destroy()
     fonts.mana.destroy()
     if loaded := load_fonts(family, layout) { fonts = loaded } else if os_error { fail: os_error }
 }
@@ -404,25 +400,43 @@ picker_part_at :: (layout: Layout, picker: Picker, at: V2 -> Picker_Part) #pure 
 ////////////////////////////////
 // The capsule in the middle, and the font button in the corner
 
+// The icons that aren't Magic's own: Material Design Icons' (the Icons
+// module's), each copied into icons/ by its tool.
+UNDO_ICON   :: icon(Mdi.UNDO_VARIANT)
+RESET_ICON  :: icon(Mdi.RESTART)
+SYSTEM_ICON :: icon(Mdi.POWER)
+PERSON_ICON :: icon(Mdi.ACCOUNT)
+TICK_ICON   :: icon(Mdi.CHECK)
+CROSS_ICON  :: icon(Mdi.CLOSE)
+
+// An icon drawn size across, its middle at a point, turned (radians clockwise).
+draw_icon_at :: (canvas: *Draw.Canvas, drawn: Icons.Icon, middle: V2, size: f32, colour: Draw.RGBA, angle: f32 = 0) {
+    canvas.draw_icon(drawn, middle - V2⟨size, size⟩ / 2, size, colour, angle)
+}
+
 Capsule_Part :: enum u8 {
     UNDO
     PLAYERS
-    SETTINGS
+    RESET
+    SYSTEM
 }
 
+CAPSULE_PARTS :: [4] Capsule_Part⟨.UNDO, .PLAYERS, .RESET, .SYSTEM⟩
+
 // The capsule's buttons' middles, in a row at the screen's centre, a cell
-// apart and a cell each: undo, the players, settings.
+// apart and a cell each: undo, the players, a new game, the system's
+// (settings and quitting).
 capsule_centre :: (layout: Layout, part: Capsule_Part -> V2) #pure {
-    offset: f32 = if part is { case .UNDO: -1.2; case .PLAYERS: 0; case .SETTINGS: 1.2 }
+    offset: f32 = if part is { case .UNDO: -1.8; case .PLAYERS: -0.6; case .RESET: 0.6; case .SYSTEM: 1.8 }
     return layout.centre + V2⟨offset * cell_of(layout), 0⟩
 }
 
-CAPSULE_HALF_WIDTH :: 1.85    // in cells
+CAPSULE_HALF_WIDTH :: 2.45    // in cells
 
 // The capsule's button at a point, or absent.
 capsule_part_at :: (layout: Layout, at: V2 -> Capsule_Part) [absent] {
     cell := cell_of(layout)
-    for part: [3] Capsule_Part⟨.UNDO, .PLAYERS, .SETTINGS⟩ {
+    for part: CAPSULE_PARTS {
         centre := capsule_centre(layout, part)
         if Math.abs(at.x - centre.x) <= 0.55 * cell and Math.abs(at.y - centre.y) <= 0.6 * cell then return part
     }
@@ -676,14 +690,11 @@ draw_picker :: (canvas: *Draw.Canvas, layout: Layout, fonts: Fonts, picker: Pick
                     Draw.rgb(0x2F7A4A))
     fill_turned_box(canvas, origin, angle, ⟨CANCEL_LEFT * cell, top⟩, ⟨(-GRID_LEFT - CANCEL_LEFT) * cell, height⟩, 0.2 * cell,
                     Draw.rgb(0x8A3030))
+    // (the tick and the cross, turned to face the picker's player)
     tick := V2⟨(ACCEPT_LEFT + ACCEPT_RIGHT) / 2 * cell, top + height / 2⟩
-    s := 0.3 * cell
-    stroke := 0.12 * cell
-    canvas.draw_line(placed(origin, angle, tick + V2⟨-s, 0⟩), placed(origin, angle, tick + V2⟨-s / 3, s * 0.7⟩), stroke, INK)
-    canvas.draw_line(placed(origin, angle, tick + V2⟨-s / 3, s * 0.7⟩), placed(origin, angle, tick + V2⟨s, -s * 0.7⟩), stroke, INK)
     cross := V2⟨(CANCEL_LEFT - GRID_LEFT) / 2 * cell, top + height / 2⟩
-    canvas.draw_line(placed(origin, angle, cross + V2⟨-s, -s⟩), placed(origin, angle, cross + V2⟨s, s⟩), stroke, INK)
-    canvas.draw_line(placed(origin, angle, cross + V2⟨-s, s⟩), placed(origin, angle, cross + V2⟨s, -s⟩), stroke, INK)
+    draw_icon_at(canvas, TICK_ICON, placed(origin, angle, tick), 0.75 * cell, INK, angle)
+    draw_icon_at(canvas, CROSS_ICON, placed(origin, angle, cross), 0.75 * cell, INK, angle)
 }
 
 // A ring of people, a count of them, round a point, in a button a cell
@@ -693,10 +704,7 @@ draw_people :: (canvas: *Draw.Canvas, centre: V2, count: i64, cell: f32, colour:
     start := if count == 2 then f32'Math.PI else -f32'Math.PI / 2
     for i: 0 < count {
         a := start + f32'Math.TAU * f32'i / f32'count
-        at := centre + V2⟨Math.cos(a), Math.sin(a)⟩ * ring
-        // (a head, and shoulders: a pill wider than it's tall)
-        canvas.fill_circle(at + V2⟨0, -0.075 * cell⟩, 0.055 * cell, colour)
-        canvas.fill_rounded_rect(at + V2⟨-0.09 * cell, -0.008 * cell⟩, V2⟨0.18 * cell, 0.12 * cell⟩, 0.06 * cell, colour)
+        draw_icon_at(canvas, PERSON_ICON, centre + V2⟨Math.cos(a), Math.sin(a)⟩ * ring, 0.26 * cell, colour)
     }
 }
 
@@ -714,30 +722,13 @@ draw_capsule :: (canvas: *Draw.Canvas, layout: Layout, game: Game, screen: Scree
     else {
         draw_people(canvas, p, game.players, cell, INK)
     }
-    // Undo: an arrow round to the left.
-    u := capsule_centre(layout, .UNDO)
+    // Undo (dim with nothing to undo), a new game, and the system's button
+    // (bright while its panel's open).
     undo_ink := if screen.can_undo then INK else lighter(CAPSULE, 0.25)
-    r := 0.22 * cell
-    stroke := 0.09 * cell
-    half_pi := f32'Math.PI / 2
-    STEPS :: 12
-    for i: 0 < STEPS {
-        a0 := 2 * half_pi + f32'i / STEPS * 2.5 * half_pi
-        a1 := 2 * half_pi + f32'(i + 1) / STEPS * 2.5 * half_pi
-        canvas.draw_line(u + V2⟨Math.cos(a0), Math.sin(a0)⟩ * r, u + V2⟨Math.cos(a1), Math.sin(a1)⟩ * r, stroke, undo_ink)
-    }
-    head := u + V2⟨-r, 0⟩
-    canvas.fill_polygon(⟨head + V2⟨-0.13 * cell, -0.02 * cell⟩, head + V2⟨0.13 * cell, -0.02 * cell⟩, head + V2⟨0, 0.15 * cell⟩⟩, undo_ink)
-    // Settings: a gear.
-    g := capsule_centre(layout, .SETTINGS)
-    gear := if screen.settings_open then INK else lighter(CAPSULE, 0.75)
-    for i: 0 < 8 {
-        a := f32'i / 8 * 4 * half_pi
-        d := V2⟨Math.cos(a), Math.sin(a)⟩
-        canvas.draw_line(g + d * 0.12 * cell, g + d * 0.27 * cell, 0.1 * cell, gear)
-    }
-    canvas.fill_circle(g, 0.2 * cell, gear)
-    canvas.fill_circle(g, 0.08 * cell, CAPSULE)
+    draw_icon_at(canvas, UNDO_ICON, capsule_centre(layout, .UNDO), 0.62 * cell, undo_ink)
+    draw_icon_at(canvas, RESET_ICON, capsule_centre(layout, .RESET), 0.62 * cell, lighter(CAPSULE, 0.75))
+    system_ink := if screen.settings_open then INK else lighter(CAPSULE, 0.75)
+    draw_icon_at(canvas, SYSTEM_ICON, capsule_centre(layout, .SYSTEM), 0.62 * cell, system_ink)
 }
 
 draw_font_button :: (canvas: *Draw.Canvas, layout: Layout, fonts: Fonts) {
@@ -1175,7 +1166,14 @@ main :: (args: [] string) [failed: string] {
                     count := f32'game.players
                     screen.counts = ⟨open: true, held: true, grabbed: mouse.y, from: count, shown: count, laid: screen.counts.laid,
                                      toward: screen.counts.toward, progress: screen.counts.progress⟩
-                case .SETTINGS:
+                case .RESET:
+                    // A new game of as many players, each seat's colours kept:
+                    // every life back to the start's, no damage (undo brings
+                    // the old one back).
+                    history.add(game)
+                    game = new_game(game.players, game.identity)
+                    call_off_volleys(motes, volleys, pending)
+                case .SYSTEM:
                     screen.settings_open = true
                 }
             }
@@ -1184,8 +1182,8 @@ main :: (args: [] string) [failed: string] {
                 was := game.identity[seat]
                 game.identity[seat] = if was & bit != 0 then was & ~bit else was | bit
             }
-            else if icon := icon_at(layout, game, mouse) is not absent {
-                screen.drag = ⟨true, icon⟩
+            else if spot := icon_at(layout, game, mouse) is not absent {
+                screen.drag = ⟨true, spot⟩
             }
             else if line := line_at(layout, mouse, 0.5 * cell) is not absent {
                 screen.moving_end = line
