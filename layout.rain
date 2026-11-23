@@ -416,7 +416,7 @@ lay_out :: (size: V2, splits: Splits -> layout: Layout) #pure {
         seat.count = count + 1
         points := seat.outline[:seat.count]
         seat.middle = centroid(points)
-        seat.icon = seat.middle + (centre - seat.middle) * ICON_ALONG
+        seat.icon = clear_of_controls(size, centre, seat.middle, seat.middle + (centre - seat.middle) * ICON_ALONG)
         // Its player faces it halfway between its lines.
         facing := facing_between(centre, layout.ends[k], layout.ends[(k + 1) % n])
         seat.toward = ⟨Math.cos(facing), Math.sin(facing)⟩

@@ -530,21 +530,52 @@ eras_get_finer :: () #test {
     }
 }
 
-// The capsule's buttons, left to right: undo, the players, a new game, the
-// system's; each found at its middle, none between them.
-capsule_buttons_in_order :: () #test {
+// The controls are a plus: the players in the middle, undo on the left
+// wing, redo on the right, a new game above and the system's below; each
+// button found at its middle, inside the plus's outline, and none between
+// the middle and an arm's.
+capsule_buttons_make_a_plus :: () #test {
     layout := laid_out(4, LANDSCAPE)
-    *last: f32 = -1e30
+    cell := cell_of(layout)
+    c := layout.centre
+    outline := plus_outline(c, CAPSULE_REACH * cell, CAPSULE_HALF * cell, 0.25 * cell)
     for part: CAPSULE_PARTS {
         middle := capsule_centre(layout, part)
-        assert(middle.x > last, "«part» right of the one before")
-        last = middle.x
         if found := capsule_part_at(layout, middle) { assert(found == part, "«part»'s middle is «found»") }
         else if absent { assert(false, "«part»'s middle is no button") }
-        assert(Math.abs(middle.x - layout.centre.x) + 0.55 * cell_of(layout) <= CAPSULE_HALF_WIDTH * cell_of(layout), "«part» inside the capsule")
+        // (a button's round, its icon 0.62 cells across: points round it half a cell out)
+        for k: 0 < 8 {
+            a := f32'k / 8 * f32'Math.TAU
+            assert(inside(middle + V2⟨Math.cos(a), Math.sin(a)⟩ * (0.5 * cell), outline[:]), "«part»'s button inside the plus")
+        }
+        if part != .PLAYERS {
+            between := (capsule_centre(layout, .PLAYERS) + middle) / 2
+            if stray := capsule_part_at(layout, between) is not absent then assert(false, "between the players and «part» is «stray»")
+        }
     }
-    between := (capsule_centre(layout, .PLAYERS) + capsule_centre(layout, .RESTART)) / 2
-    if found := capsule_part_at(layout, between) is not absent then assert(false, "between the players and restart is «found»")
+    assert(capsule_centre(layout, .UNDO).x < c.x and capsule_centre(layout, .REDO).x > c.x, "undo left, redo right")
+    assert(capsule_centre(layout, .RESTART).y < c.y and capsule_centre(layout, .SYSTEM).y > c.y, "a new game above, the system's below")
+    assert(!inside(c + V2⟨1.2, 1.2⟩ * cell, outline[:]), "the plus's corners are open")
+}
+
+// Undo goes back a game and redo forward again; doing something new
+// forgets what was undone.
+undo_and_redo :: () #test {
+    *timeline: Timeline
+    *game := new_game(4)
+    timeline.remember(game)
+    game.deal(1, 0, 5)
+    timeline.remember(game)
+    game.deal(2, 0, 3)
+    assert(game.life[0] == 32)
+    assert(timeline.undo(game) and game.life[0] == 35, "one back: «game.life[0]»")
+    assert(timeline.undo(game) and game.life[0] == 40, "two back: «game.life[0]»")
+    assert(!timeline.undo(game), "nothing further back")
+    assert(timeline.redo(game) and game.life[0] == 35, "one forward: «game.life[0]»")
+    timeline.remember(game)
+    game.deal(3, 0, 1)
+    assert(!timeline.redo(game) and game.life[0] == 34, "something new forgets what was undone")
+    assert(timeline.undo(game) and game.life[0] == 35)
 }
 
 // A turn there and back is where it began.
