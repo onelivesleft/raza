@@ -1,7 +1,7 @@
 // Damage as motes: each player's miasma (where their damage is drawn from,
 // in their colours), the stream that flows from it, as they drag, to the
 // life total of whoever they're over (bent toward the finger), and the
-// volley, a mote a point of damage, that flies to whoever they hit, each
+// volley (black's connected strike is in tendrils.rain), that flies to whoever they hit, each
 // landing a splash and a point off the life shown. Each colour's motes are
 // its own: white's holy light, blue's water, black's oily, tendrilled
 // smoke, red's sparks, green's leaves on the wind, an artifact's sparks.
@@ -241,6 +241,7 @@ PATH_LIFE :: 1.6
 // The stream for a frame of a drag: motes from the dragger's miasma, more
 // for a bigger amount, set off along its path (steer_stream moves them).
 feed_stream :: (motes: *Particles.System, random: *Random.Generator, layout: Layout, game: Game, from: i64, finger: V2, amount: i32, seconds: f32) {
+    if has_colour(game.identity[from], .BLACK) then return
     cell := cell_of(layout)
     seat := layout.seats[from]
     rate := f32'STREAM_RATE + f32'STREAM_RATE_A_POINT * f32'amount
@@ -291,6 +292,8 @@ Volley :: struct {
     amount: i32
     landed: i32
     lethal: bool
+    black:  bool
+    age:    f32
 }
 
 Volleys :: struct {
@@ -311,7 +314,8 @@ fire_volley :: (motes: *Particles.System, volleys: *Volleys, random: *Random.Gen
     cell := cell_of(layout)
     id := volleys.next_id
     volleys.next_id = if volleys.next_id >= 0xFFFF then 1 else volleys.next_id + 1
-    `global volleys.list.add(⟨id: id, from: from, to: to, start: start, bend: bend, end: end, amount: amount, lethal: lethal⟩)
+    `global volleys.list.add(⟨id: id, from: from, to: to, start: start, bend: bend, end: end, amount: amount, lethal: lethal, black: has_colour(identity, .BLACK)⟩)
+    if has_colour(identity, .BLACK) then return
     interval := Math.min(1.2 / f32'Math.max(amount, 1), 0.07)
     for i: 0 < i64'amount {
         *m := mote_of(random, identity, start, ⟨0, 0⟩, layout.seats[from].toward * -1, cell, VOLLEY_MOTE | id)
@@ -344,10 +348,11 @@ strike :: (game: *Game, motes: *Particles.System, volleys: *Volleys, random: *Ra
     lethal := was < LETHAL_COMMANDER_DAMAGE and game.commander[to][from] >= LETHAL_COMMANDER_DAMAGE
     pending[to][from] += amount
     // (the path ends at their life total whatever the finger's over now)
-    start := layout.seats[from].icon
+    black := has_colour(game.identity[from], .BLACK)
+    start := if black then black_origin(layout, game, from, motes.time) else layout.seats[from].icon
     end := layout.seats[to].middle
     middle := (start + end) / 2
-    bend := middle + (finger - middle) * STREAM_BEND
+    bend := if black then black_bend(layout, start, end) else middle + (finger - middle) * STREAM_BEND
     fire_volley(motes, volleys, random, layout, game.identity[from], from, to, amount, lethal, start, bend, end)
 }
 
@@ -391,8 +396,22 @@ steer_volleys :: (motes: *Particles.System, volleys: *Volleys, random: *Random.G
         volley := volleys.list[splash_volleys[i]]
         splash(motes, random, layout, game.identity[volley.from], volley.to, at, false)
     }
-    // Settled: those with no motes left.
+    // Black lands as one strike, independent of particle lifetime or loss.
     for *volley: volleys.list {
+        if !volley.black then continue
+        volley.age += Math.max(seconds, 0.0)
+        if volley.age < BLACK_IMPACT then continue
+        if volley.landed == 0 {
+            pending[volley.to][volley.from] = Math.max(pending[volley.to][volley.from] - volley.amount, 0)
+            volley.landed = volley.amount
+            splash(motes, random, layout, Identity'(u8'1 << u8'Mana.BLACK), volley.to, volley.end, volley.lethal)
+            if volley.lethal then bursts += 1
+        }
+        if volley.age >= BLACK_IMPACT + BLACK_RESIDUE then remove volley
+    }
+    // Settled: ordinary volleys with no motes left.
+    for *volley: volleys.list {
+        if volley.black then continue
         *left := 0
         for m: motes.motes { if m.tag & VOLLEY_MOTE != 0 and m.tag & 0xFFFF == volley.id then left += 1 }
         if left > 0 then continue
@@ -503,7 +522,7 @@ Heart :: enum u8 {
 // HEART_CELLS across; several are smaller, round it, slowly turning. Each
 // faces its player (up, away from them), and moves with time always, as
 // the miasmas do.
-draw_hearts :: (canvas: *Draw.Canvas, layout: Layout, game: Game, time: f32) {
+draw_hearts :: (canvas: *Draw.Canvas, layout: Layout, game: Game, time: f32, volleys: Volleys) {
     cell := cell_of(layout)
     for seat, k: layout.seats[:layout.count] {
         if is_out(game, k) then continue
@@ -520,6 +539,9 @@ draw_hearts :: (canvas: *Draw.Canvas, layout: Layout, game: Game, time: f32) {
             n = 1
         }
         for heart, i: hearts[:n] {
+            *striking := false
+            for v: volleys.list { if v.black and v.from == k then striking = true }
+            if heart == .OIL and striking then continue
             *at := seat.icon
             *size := HEART_CELLS * cell
             if n > 1 {
@@ -538,7 +560,7 @@ draw_heart :: (canvas: *Draw.Canvas, heart: Heart, at: V2, size: f32, angle: f32
     if heart is {
     case .SUN: draw_sun(canvas, at, size, angle, time, seed)
     case .WATER: draw_water(canvas, at, size, angle, time, seed)
-    case .OIL: draw_oil(canvas, at, size, angle, time, seed)
+    case .OIL: draw_black_nest(canvas, at, size, time, seed)
     case .FIRE: draw_fire(canvas, at, size, angle, time, seed)
     case .METAL: draw_metal(canvas, at, size, angle, time, seed)
     }
@@ -648,11 +670,11 @@ draw_metal :: (canvas: *Draw.Canvas, at: V2, size: f32, angle: f32, time: f32, s
 // Black's slick of oil: a blob of near-black, its edge slowly wandering,
 // its surface flowing (Patterns' oil: lit slopes, sharp highlights, a
 // rainbow sheen where it runs thin).
-draw_oil :: (canvas: *Draw.Canvas, at: V2, size: f32, angle: f32, time: f32, seed: f32) {
+draw_oil_body :: (canvas: *Draw.Canvas, at: V2, size: f32, angle: f32, time: f32, seed: f32) {
     outline := blob_outline(at, size, time, seed, 0.08, 0.3)
     canvas.fill_polygon(outline[:], Draw.Gradient⟨from: at, to: at + V2⟨0.6 * size, 0⟩, radial: true,
         colours: ⟨Draw.rgba(0x0C0B11, 0.97), Draw.rgba(0x09080D, 0.94), Draw.rgba(0x060509, 0.88)⟩,
-        pattern: ⟨kind: .OIL, scale: 0.3 * size, strength: 0.85, seed: seed, time: time * 0.35, angle: angle⟩⟩)
+        pattern: ⟨kind: .OIL, scale: 0.3 * size, strength: 0.45, seed: seed, time: time * 0.35, angle: angle⟩⟩)
 }
 
 // A soft pool of shadow under each miasma, so its light shows on a light part.

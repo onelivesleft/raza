@@ -83,13 +83,13 @@ throws**, in place of an icon and an arrow.
   - red: sparks, small, white-hot, flying up from the fire, gone quickly;
   - green: leaves blown on the wind, tumbling, now and then an autumn one;
   - colourless: metal sparks.
-- **The stream, while dragging.** It flows from the miasma and **always ends
+- **The stream, while dragging (without black).** It flows from the miasma and **always ends
   at the life total of the player the finger is over**, wherever over them
   the finger is; the finger only bends it, slightly. Over no one, it ends
   at the finger. It thickens as the amount grows, and stays bright all the
   way to its end, where the aimed-at life total pulses softly. The amount
   stays shown by the finger, facing the dragger.
-- **The volley, on release.** One mote per point of damage, fired a little
+- **The volley, on release (without black).** One mote per point of damage, fired a little
   apart (faster for big numbers from the grid), flying along the stream's
   curve as it was when let go (with a little spread), each landing at the
   life total with a splash. Each keeps its own material (black stays dark
@@ -139,3 +139,36 @@ bend and brightness there, a volley following its curve and landing a point
 at a time, the lethal burst coming only once all have landed, a volley
 settling without its motes, undo calling volleys off, the miasmas staying
 put, the settings' buttons. REVIEW.md lists what's still to do.
+
+## Black's connected attack
+
+An identity containing black uses a connected tendril strike instead of the
+ordinary stream and point-by-point volley. Other colours retain their idle
+hearts and motes in a mixed identity.
+
+- At rest, black is a slowly writhing nest: tapered, searching tendrils around
+  a roiling, near-black oily body, with restrained highlights and a smoke veil.
+- Dragging draws one connected, writhing strand to the cursor itself. It bows
+  around the central toolbar on a side chosen from the source.
+- Release begins a 0.32-second extension: additional strands spear into the
+  target's life total. All share the same glob at their base.
+- The attached strands pulse for 0.28 seconds, then contract together over
+  0.28 seconds, accelerating the glob into the target. A short oily remnant
+  marks the impact.
+- All damage is shown at that one impact. The underlying game still changes
+  at release so undo remains immediate; pending damage hides the whole hit
+  until impact, independently of smoke-particle lifetime. Lethal damage makes
+  one burst. Undo and new game cancel the connected attack as well.
+- Damage increases strand count and glob size, with diminishing growth and
+  caps of 24 strands and 3.1 cells to bound drawing cost for very large hits.
+
+The geometry and timing are in tendrils.rain; Volley owns the attack's age and
+impact state. Black's smoke particles are secondary, not its strands or damage
+clock. Its silhouettes are procedural ribbons, not separate dots.
+
+`Raza.exe -black_snapshot:folder` writes black_0.png through black_6.png:
+idle, dragging, extension, pulse, early contraction, late contraction, impact.
+This uses the actual draw and damage paths with a deterministic 18-point hit.
+The black_* tests cover one-hit damage, cancellation, overlapping strikes,
+large frame steps and bounded visual growth. Live pacing still merits a check
+on the intended tablet.

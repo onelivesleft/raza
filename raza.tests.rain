@@ -745,3 +745,68 @@ deals_commander_damage :: () #test {
     poor.deal(0, 0, 5)
     assert(poor.life[0] == 0, "no damage to oneself")
 }
+
+// Black's tendrils and glob deliver a single hit, not a point per strand.
+black_lands_once :: () #test {
+    layout := laid_out(2, LANDSCAPE)
+    for amount: [3] i32⟨1, 18, 99⟩ {
+        #with scratch.rewind()
+        `scratch {
+            *game := new_game(2)
+            game.identity[1] = u8'1 << u8'Mana.BLACK
+            *motes: Particles.System
+            *volleys: Volleys
+            *random := Random.generator(seed: 21)
+            *pending: [MAX_PLAYERS] [MAX_PLAYERS] i32
+            strike(game, motes, volleys, random, layout, pending, 1, 0, amount, layout.seats[0].middle)
+            assert(volleys.list.count == 1 and motes.motes.count == 0)
+            *bursts: i64 = 0
+            for _: 0 < 120 {
+                bursts += steer_volleys(motes, volleys, random, layout, game, pending, 1.0 / 60)
+                shown := shown_game(game, pending).life[0]
+                assert(shown == 40 or shown == 40 - amount, "black never ticks down part of its hit: «shown»")
+            }
+            assert(pending[0][1] == 0 and volleys.list.count == 0)
+            expected := if amount >= 21 then 1 else 0
+            assert(bursts == expected)
+        }
+    }
+}
+
+// Particle loss cannot prematurely land a black attack; undo cancels it.
+black_waits_and_cancels :: () #test {
+    layout := laid_out(2, LANDSCAPE)
+    *game := new_game(2)
+    game.identity[1] = (u8'1 << u8'Mana.BLACK) | (u8'1 << u8'Mana.WHITE)
+    *motes: Particles.System
+    *volleys: Volleys
+    *random := Random.generator(seed: 22)
+    *pending: [MAX_PLAYERS] [MAX_PLAYERS] i32
+    strike(game, motes, volleys, random, layout, pending, 1, 0, 12, layout.seats[0].middle)
+    motes.motes.clear()
+    steer_volleys(motes, volleys, random, layout, game, pending, BLACK_REACH + BLACK_PULSE)
+    assert(pending[0][1] == 12 and volleys.list.count == 1, "strands plunge and pulse before the glob lands")
+    call_off_volleys(motes, volleys, pending)
+    assert(steer_volleys(motes, volleys, random, layout, game, pending, 2) == 0)
+    assert(pending[0][1] == 0 and volleys.list.count == 0 and motes.motes.count == 0)
+}
+
+// Independent attacks remain independent, including a long frame at impact.
+black_overlapping_hits :: () #test {
+    layout := laid_out(3, LANDSCAPE)
+    *game := new_game(3)
+    game.identity[1] = u8'1 << u8'Mana.BLACK
+    *motes: Particles.System
+    *volleys: Volleys
+    *random := Random.generator(seed: 23)
+    *pending: [MAX_PLAYERS] [MAX_PLAYERS] i32
+    strike(game, motes, volleys, random, layout, pending, 1, 0, 3, layout.seats[0].middle)
+    steer_volleys(motes, volleys, random, layout, game, pending, 0.5)
+    strike(game, motes, volleys, random, layout, pending, 1, 0, 7, layout.seats[0].middle)
+    steer_volleys(motes, volleys, random, layout, game, pending, 0.4)
+    assert(pending[0][1] == 7 and shown_game(game, pending).life[0] == 37)
+    steer_volleys(motes, volleys, random, layout, game, pending, 2)
+    assert(pending[0][1] == 0 and shown_game(game, pending).life[0] == 30)
+    assert(black_strands(18) > black_strands(1) and black_size(18) > black_size(1))
+    assert(black_strands(99999) <= 24 and black_size(99999) <= 3.1, "large damage has bounded rendering cost")
+}
