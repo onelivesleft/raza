@@ -1076,7 +1076,6 @@ main :: (args: [] string) [failed: string] {
                     }
                     splits[game.players] = equal_splits(game.players, size)
                     layout = lay_out(size, splits[game.players])
-                    if fonts.resize_life(TEXT_FAMILIES[family], layout) is os_error then fail: failed = "no font: «os_error»"
                 case quit:
                     // (what's changed is already stored, each frame's as it's made)
                     w.destroy()
@@ -1115,8 +1114,6 @@ main :: (args: [] string) [failed: string] {
         if screen.moving_end >= 0 {
             if aimed := share_through(layout, mouse) is not absent then splits[game.players].move_split(screen.moving_end, aimed)
             layout = lay_out(size, splits[game.players])
-            // (the life totals sized to the parts as they move)
-            if fonts.resize_life(TEXT_FAMILIES[family], layout) is os_error then fail: failed = "no font: «os_error»"
         }
         if w.mouse.buttons[.LEFT].RELEASED {
             if screen.drag.active {
@@ -1179,7 +1176,6 @@ main :: (args: [] string) [failed: string] {
         if screen.previewing {
             layout = lay_out(size, shown_splits(screen.counts, splits[:], size))
             if layout.count != game.players then shown = new_game(layout.count, game.identity)
-            if fonts.resize_life(TEXT_FAMILIES[family], layout) is os_error then fail: failed = "no font: «os_error»"
         }
 
         // What changed this frame, stored (a failure to store isn't the game's).
@@ -1195,6 +1191,11 @@ main :: (args: [] string) [failed: string] {
             if Defaults.set("artifact", look) is os_error { }
             stored_look = look
         }
+
+        // The life totals sized for the parts drawn, whatever moved them
+        // (a dragged line, lines settling on a count, a reset); the font's
+        // made again only when the size changes.
+        if fonts.resize_life(TEXT_FAMILIES[family], layout) is os_error then fail: failed = "no font: «os_error»"
 
         screen.can_undo = history.count > 0
         screen.look = look
