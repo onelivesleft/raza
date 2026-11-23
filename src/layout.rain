@@ -17,9 +17,8 @@ MAX_PLAYERS :: 6
 // lines, and the corners between them.
 MAX_OUTLINE :: 8
 
-// How far from a part's middle toward the screen's centre its damage icon
-// is, as a share of the way.
-ICON_ALONG :: 0.5
+// Fixed distance above the life counter in the player's frame, in cells.
+ATTACK_ABOVE_CELLS :: 1.8
 
 // The least share of the way round the edge a part keeps when a line's end
 // is dragged toward the next.
@@ -220,7 +219,7 @@ move_split :: (splits: *Splits, k: i64, share: f32) {
     n := splits.count
     previous := splits.at[(k + n - 1) % n]
     next := splits.at[(k + 1) % n]
-    span := wrapped_share(next - previous)
+    span := if n == 2 then f32'1 else wrapped_share(next - previous)
     along := Math.clamp(wrapped_share(share - previous), LEAST_SPLIT, span - LEAST_SPLIT)
     splits.at[k] = wrapped_share(previous + along)
 }
@@ -417,12 +416,13 @@ lay_out :: (size: V2, splits: Splits -> layout: Layout) #pure {
         seat.count = count + 1
         points := seat.outline[:seat.count]
         seat.middle = centroid(points)
-        seat.icon = clear_of_controls(size, centre, seat.middle, seat.middle + (centre - seat.middle) * ICON_ALONG)
-        seat.clear = controls_clearance(size, centre, seat.icon)
+
         // Its player faces it halfway between its lines.
         facing := facing_between(centre, layout.ends[k], layout.ends[(k + 1) % n])
         seat.toward = ⟨Math.cos(facing), Math.sin(facing)⟩
         seat.angle = text_angle(seat.toward)
+        seat.icon = clear_of_controls(size, centre, seat.middle, seat.middle - seat.toward * (ATTACK_ABOVE_CELLS * cell_of(layout)))
+        seat.clear = controls_clearance(size, centre, seat.icon)
         *room: f32 = 1e30
         *reach: f32 = 0
         for a, i: points {

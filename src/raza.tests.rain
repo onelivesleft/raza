@@ -251,6 +251,18 @@ toggles_make_a_pentagon :: () #test {
                 // (the icon in the corner, the gap clear of the sides; the
                 // pentagon as near it as fits: a step nearer doesn't)
                 assert(inside(folded, points) and clearance(folded, points) >= want - 1, "«players» on «size»: part «k»'s icon fits")
+                *screen_clearance: f32 = 1e30
+                *channel_clearance: f32 = 1e30
+                for a, edge: points {
+                    distance := distance_to_segment(folded, a, points[(edge + 1) % points.count])
+                    if edge == 0 or edge == points.count - 1 {
+                        channel_clearance = Math.min(channel_clearance, distance - BEVEL_CELLS * cell)
+                    } else {
+                        screen_clearance = Math.min(screen_clearance, distance)
+                    }
+                }
+                assert(Math.abs(screen_clearance - want) < 0.1, "all folded pickers have the same screen gap")
+                assert(Math.abs(channel_clearance - want) < 0.1, "folded picker channel and screen gaps match")
                 corner := local_of(seat.middle, seat.angle, folded)
                 hub := local_of(seat.middle, seat.angle, middle)
                 *bottom_left := V2⟨1e30, -1e30⟩
@@ -258,7 +270,7 @@ toggles_make_a_pentagon :: () #test {
                     l := local_of(seat.middle, seat.angle, p)
                     bottom_left = ⟨Math.min(bottom_left.x, l.x), Math.max(bottom_left.y, l.y)⟩
                 }
-                assert(Math.length(corner - bottom_left) <= Math.length(hub - bottom_left), "«players» on «size»: part «k»'s icon nearer its player's bottom left than the pentagon")
+                // Fixed screen/channel clearance determines the folded position; the open pentagon may sit nearer the corner.
                 if Math.length(corner - hub) > 0.1 * cell {
                     nearer := hub + Math.normalize(corner - hub) * 0.1 * cell
                     assert(!pentagon_fits(layout, seat, points, nearer.x, nearer.y), "«players» on «size»: part «k»'s pentagon could come nearer its icon")
@@ -325,7 +337,11 @@ life_drums_open_turn_and_close :: () #test {
     // (a tap closes it)
     press_drum(drum, game, 1, ⟨0, 0⟩, 1)
     _, _ := release_drum(drum, game)
-    assert(!drum.open and drum.change == -21, "a tap closes it, its change kept: «drum.change»")
+    assert(drum.open, "tapping the life again keeps editing open")
+    assert(player_controls_visibility(drum, 1) == 0)
+    assert(player_controls_visibility(drum, 0) == 1)
+    close_drum(drum, game)
+    assert(!drum.open and drum.change == -21, "closing from outside keeps the change")
     for _: 0 < 10 { step_drum(drum, game, DRUM_FLATTEN / 10) }
     assert(drum.bend == 0 and !drum_showing(drum, 1), "closed, flat")
     assert(change_showing(drum, 1) == 1, "its change shows")
@@ -773,20 +789,57 @@ capsule_buttons_make_a_pill :: () #test {
 // forgets what was undone.
 undo_and_redo :: () #test {
     *timeline: Timeline
+    *lines: Lines
     *game := new_game(4)
-    timeline.remember(game)
+    timeline.remember(game, lines)
     game.deal(1, 0, 5)
-    timeline.remember(game)
+    timeline.remember(game, lines)
     game.deal(2, 0, 3)
     assert(game.life[0] == 32)
-    assert(timeline.undo(game) and game.life[0] == 35, "one back: «game.life[0]»")
-    assert(timeline.undo(game) and game.life[0] == 40, "two back: «game.life[0]»")
-    assert(!timeline.undo(game), "nothing further back")
-    assert(timeline.redo(game) and game.life[0] == 35, "one forward: «game.life[0]»")
-    timeline.remember(game)
+    assert(timeline.undo(game, lines) and game.life[0] == 35, "one back: «game.life[0]»")
+    assert(timeline.undo(game, lines) and game.life[0] == 40, "two back: «game.life[0]»")
+    assert(!timeline.undo(game, lines), "nothing further back")
+    assert(timeline.redo(game, lines) and game.life[0] == 35, "one forward: «game.life[0]»")
+    timeline.remember(game, lines)
     game.deal(3, 0, 1)
-    assert(!timeline.redo(game) and game.life[0] == 34, "something new forgets what was undone")
-    assert(timeline.undo(game) and game.life[0] == 35)
+    assert(!timeline.redo(game, lines) and game.life[0] == 34, "something new forgets what was undone")
+    assert(timeline.undo(game, lines) and game.life[0] == 35)
+}
+
+// The lines are undone with the game: a line moved, or a reset's lines
+// forgotten, comes back.
+lines_are_undone :: () #test {
+    *timeline: Timeline
+    *lines: Lines
+    lines[4] = equal_splits(4, LANDSCAPE)
+    before := lines
+    *game := new_game(4)
+    timeline.remember(game, before)
+    lines[4].move_split(0, wrapped_share(lines[4].at[0] + 0.05))
+    assert(lines[4] != before[4])
+    assert(timeline.undo(game, lines) and lines[4] == before[4], "the line back where it was")
+    assert(timeline.redo(game, lines) and lines[4] != before[4], "and moved again")
+}
+
+// A player's colours tapped one after another are one step; another
+// player's, or anything else done between, starts another.
+colour_taps_are_one_step :: () #test {
+    *timeline: Timeline
+    *lines: Lines
+    *game := new_game(4)
+    for colour: 0 < 3 {
+        timeline.remember_colours(game, lines, 1)
+        game.identity[1] |= u8'1 << u8'colour
+    }
+    timeline.remember_colours(game, lines, 2)
+    game.identity[2] = 1
+    assert(timeline.past.count == 2, "one step each player's run: «timeline.past.count»")
+    assert(timeline.undo(game, lines) and game.identity[2] == 0 and game.identity[1] == 7, "the second player's back")
+    assert(timeline.undo(game, lines) and game.identity[1] == 0, "the first's run, all three, back")
+    timeline.remember_colours(game, lines, 1)
+    timeline.remember(game, lines)
+    timeline.remember_colours(game, lines, 1)
+    assert(timeline.past.count == 3, "something between starts another")
 }
 
 // A turn there and back is where it began.
@@ -1125,4 +1178,59 @@ gold_panel_moves_resizes_and_starts_half_height :: () #test {
     assert(panel.origin.x >= 12 and panel.origin.y >= 12)
     assert(panel.origin.x + panel.size.x <= 788)
     assert(panel.origin.y + panel.size.y <= 488)
+}
+count_table_opens_far_enough_for_the_slider :: () #test {
+    for cell: [3] f32⟨40, 90, 135⟩ {
+        assert(count_split_offset(cell, 0) == 0)
+        full := count_split_offset(cell, 1)
+        assert(full > COLUMN_HALF * cell)
+        assert(Math.abs(count_split_offset(cell, 0.5) - full * 0.5) < 0.001)
+        assert(COUNT_RING_RADIUS - COUNT_RING_WIDTH * 0.5 > BAR_WIDTH)
+    }
+}
+count_table_snaps_shut_on_release :: () #test {
+    assert(step_count_opening(0, true, COUNT_OPEN_TIME) == 1)
+    assert(step_count_opening(1, false, COUNT_CLOSE_TIME) == 0)
+    assert(step_count_opening(0.3, false, 1) == 0)
+    assert(step_count_opening(0.8, true, 1) == 1)
+    assert(Math.abs(step_count_opening(1, false, COUNT_CLOSE_TIME / 2) - 0.5) < 0.001)
+}
+count_ring_cuts_lean_top_right_and_bottom_left :: () #test {
+    assert(count_ring_cut(⟨0, -1⟩) < 0)
+    assert(count_ring_cut(⟨0, 1⟩) > 0)
+    assert(Math.abs(count_ring_cut(⟨COUNT_RING_SLOPE, -1⟩)) < 0.0001)
+    assert(Math.abs(count_ring_cut(⟨0 - COUNT_RING_SLOPE, 1⟩)) < 0.0001)
+    assert(COUNT_RING_RADIUS - COUNT_RING_WIDTH / 2 > BAR_WIDTH)
+}
+player_ui_fades_with_table_opening :: () #test {
+    assert(count_player_visibility(0) == 1)
+    assert(count_player_visibility(1) == 0)
+    assert(Math.abs(count_player_visibility(0.5) - 0.5) < 0.0001)
+    assert(count_player_visibility(0.2) > count_player_visibility(0.8))
+    assert(count_player_visibility(-1) == 1 and count_player_visibility(2) == 0)
+}
+player_ui_returns_after_table_reconnects :: () #test {
+    assert(step_count_player_ui(0, 0.5, false, 0.1) == 0)
+    assert(step_count_player_ui(0.4, 0.1, false, 0.1) == 0)
+    assert(Math.abs(step_count_player_ui(0, 0, false, COUNT_UI_RETURN_TIME / 2) - 0.5) < 0.0001)
+    assert(step_count_player_ui(0.5, 0, false, COUNT_UI_RETURN_TIME) == 1)
+    assert(step_count_player_ui(0.2, 0.1, true, 0.1) == 0.2)
+}
+dividers_stop_before_attack_buttons_touch_channels :: () #test {
+    for size: [2] V2⟨LANDSCAPE, PORTRAIT⟩ {
+        for players: 2 <= MAX_PLAYERS {
+            initial := laid_out(players, size)
+            assert(attack_buttons_clear(initial), "initial layout leaves room for attacks")
+            for edge: 0 < players {
+                for direction: [2] f32⟨-1, 1⟩ {
+                    *splits := initial.splits
+                    target := wrapped_share(splits.at[edge] + direction * 0.4)
+                    splits.move_split_with_clearance(edge, target, size)
+                    assert(attack_buttons_clear(lay_out(size, splits)), "drag cannot push a channel into an attack button")
+                    splits.move_split_with_clearance(edge, initial.splits.at[edge], size)
+                    assert(Math.abs(share_between(splits.at[edge], initial.splits.at[edge])) < 0.0001, "«players» «size» edge «edge» direction «direction»: divider can move back away from its limit")
+                }
+            }
+        }
+    }
 }

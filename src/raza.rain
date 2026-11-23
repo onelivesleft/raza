@@ -50,6 +50,7 @@ Raza :: program {
 #include "game.rain"
 #include "background-tuning.rain"
 #include "frames.rain"
+#include "count-table.rain"
 #include "materials.rain"
 #include "motes.rain"
 #include "elements.rain"
@@ -179,6 +180,44 @@ toggle_places :: (layout: Layout, seat: Seat -> places: [5] V2, middle: V2, fold
         }
         corner = far
     }
+    // Intersect fixed-distance offsets of a screen edge and a channel.
+    // All icons use the same clearance, including the channel's visible bevel.
+    // Choose the furthest-left valid intersection in the player''s frame.
+    *furthest_left: f32 = 1e30
+    for edge: 1 < points.count - 1 {
+        a := points[edge]
+        direction := points[edge + 1] - a
+        if Math.length(direction) < 0.001 then continue
+        *normal := Math.normalize(V2⟨0 - direction.y, direction.x⟩)
+        if Math.dot(normal, seat.middle - a) < 0 then normal = normal * -1.0
+        screen_offset := Math.dot(normal, a) + r + gap
+        for channel: [2] i64⟨0, points.count - 1⟩ {
+            b := points[channel]
+            along := points[(channel + 1) % points.count] - b
+            if Math.length(along) < 0.001 then continue
+            *inward := Math.normalize(V2⟨0 - along.y, along.x⟩)
+            if Math.dot(inward, seat.middle - b) < 0 then inward = inward * -1.0
+            channel_offset := Math.dot(inward, b) + r + gap + BEVEL_CELLS * cell
+            determinant := normal.x * inward.y - normal.y * inward.x
+            if Math.abs(determinant) < 0.0001 then continue
+            candidate := V2⟨screen_offset * inward.y - normal.y * channel_offset,
+                            normal.x * channel_offset - screen_offset * inward.x⟩ / determinant
+            if !inside(candidate, points) then continue
+            *fits := true
+            for start, index: points {
+                bevel := if index == 0 or index == points.count - 1 then BEVEL_CELLS * cell else 0
+                margin := r + gap + bevel
+                if distance_to_segment(candidate, start, points[(index + 1) % points.count]) < margin - 0.01 then fits = false
+            }
+            if !fits then continue
+            local := local_of(seat.middle, seat.angle, candidate)
+            // Left is measured in the player's rotated frame, not screen coordinates.
+            if local.x < furthest_left - 0.01 or (Math.abs(local.x - furthest_left) <= 0.01 and local.y > corner.y) {
+                corner = local
+                furthest_left = local.x
+            }
+        }
+    }
     folded = placed(seat.middle, seat.angle, corner)
     // The pentagon: of middles in steps about the icon, the nearest it that
     // fits, then halved toward the icon to where it only just does.
@@ -282,7 +321,8 @@ five_colours_image: Draw.Image
 
 Five_Colours_Params :: struct {
     box:  V4      // its middle, and its half side (pixels), then unused
-    turn: V4      // the cosine and sine of its turn (its player's text's), how much it shows, then unused
+    turn: V4      // cosine, sine, overall visibility, green-dot opacity
+    dots: V4      // white, blue, black and red dot opacity
 }
 
 // The five-colour icon turned about its middle as its player's text is,
@@ -293,7 +333,21 @@ five_colours_shade :: (from: Draw.Quad_Between, badge: Shader.Uniforms(Five_Colo
     local := V2⟨d.x * badge.turn.x + d.y * badge.turn.y, d.y * badge.turn.x - d.x * badge.turn.y⟩
     uv := local / Math.max(badge.box.z * 2, 1) + V2⟨0.5, 0.5⟩
     if uv.x < 0 or uv.x > 1 or uv.y < 0 or uv.y > 1 then return ⟨0, 0, 0, 0⟩
-    colour = Shader.sample_level(texture, filtering, uv, 0) * badge.turn.z
+    // Pick the nearest dot in the unrotated texture; the gaps are transparent.
+    weights := [5] f32⟨badge.dots.x, badge.dots.y, badge.dots.z, badge.dots.w, badge.turn.w⟩
+    *nearest: f32 = 1e30
+    *opacity: f32 = 1
+    for i: 0 < 5 {
+        angle := f32'i * f32'Math.TAU / 5
+        centre := V2⟨0.5, 0.55⟩ + V2⟨Math.sin(angle), 0 - Math.cos(angle)⟩ * 0.29
+        delta := uv - centre
+        distance := Math.dot(delta, delta)
+        if distance < nearest {
+            nearest = distance
+            opacity = weights[i]
+        }
+    }
+    colour = Shader.sample_level(texture, filtering, uv, 0) * (badge.turn.z * opacity)
 }
 
 Five_Colours :: shader { vertex: Draw.quad_place; fragment: five_colours_shade }
@@ -301,10 +355,16 @@ FIVE_COLOURS :: Five_Colours(Draw.SHADER_TARGET)
 
 // The five-colour icon drawn about a middle, its side side, turned by
 // angle, shown a share.
-draw_five_colours :: (canvas: *Draw.Canvas, middle: V2, side: f32, angle: f32, shows: f32) {
+draw_five_colours :: (canvas: *Draw.Canvas, middle: V2, side: f32, angle: f32, shows: f32, identity: Identity) {
     // (a square big enough for its corners however it's turned)
     reach := side * 0.75
-    params := Five_Colours_Params⟨V4⟨middle.x, middle.y, side / 2, 0⟩, V4⟨Math.cos(angle), Math.sin(angle), shows, 0⟩⟩
+    *weights: [5] f32
+    for *weight, i: weights {
+        weight = if has_colour(identity, Mana'i) then 1 else f32'1 / 3
+    }
+    params := Five_Colours_Params⟨V4⟨middle.x, middle.y, side / 2, 0⟩,
+                                  V4⟨Math.cos(angle), Math.sin(angle), shows, weights[4]⟩,
+                                  V4⟨weights[0], weights[1], weights[2], weights[3]⟩⟩
     canvas.draw_shader_image(middle - V2⟨reach, reach⟩, V2⟨reach, reach⟩ * 2, FIVE_COLOURS.code, FIVE_COLOURS.bindings.badge, params, five_colours_image,
                              FIVE_COLOURS.bindings.texture, FIVE_COLOURS.bindings.filtering)
 }
@@ -370,9 +430,57 @@ damage_icon :: (layout: Layout, k: i64, combat: bool -> V2) #pure {
     return placed(seat.icon, seat.angle, V2⟨side * DAMAGE_ICON_APART * cell_of(layout), 0⟩)
 }
 
+// The visible attack circles stay clear of the channel's rounded wall.
+ATTACK_CHANNEL_GAP :: 0.12
+attack_buttons_clear :: (layout: Layout -> bool) #pure {
+    clearance_needed := (DAMAGE_ICON_RADIUS + BEVEL_CELLS + ATTACK_CHANNEL_GAP) * cell_of(layout)
+    for seat, k: layout.seats[:layout.count] {
+        points := seat.outline[:seat.count]
+        for combat: [2] bool⟨true, false⟩ {
+            at := damage_icon(layout, k, combat)
+            if !inside(at, points) then return false
+            if distance_to_segment(at, points[0], points[1]) < clearance_needed then return false
+            if distance_to_segment(at, points[points.count - 1], points[0]) < clearance_needed then return false
+        }
+    }
+    return true
+}
+
+// Stop at the first blocked position, including when a fast drag skips over it.
+move_split_with_clearance :: (splits: *Splits, k: i64, share: f32, size: V2) {
+    original := splits
+    *wanted := original
+    wanted.move_split(k, share)
+    previous := original.at[(k + original.count - 1) % original.count]
+    start := wrapped_share(original.at[k] - previous)
+    finish := wrapped_share(wanted.at[k] - previous)
+    *safe: f32 = 0
+    for step: 1 <= 32 {
+        fraction := f32'step / 32
+        *candidate := original
+        candidate.at[k] = wrapped_share(previous + Math.mix(start, finish, fraction))
+        if attack_buttons_clear(lay_out(size, candidate)) {
+            safe = fraction
+            splits = candidate
+        } else {
+            *blocked := fraction
+            for _: 0 < 16 {
+                halfway := (safe + blocked) / 2
+                candidate.at[k] = wrapped_share(previous + Math.mix(start, finish, halfway))
+                if attack_buttons_clear(lay_out(size, candidate)) {
+                    safe = halfway
+                    splits = candidate
+                } else {
+                    blocked = halfway
+                }
+            }
+            return
+        }
+    }
+}
 // Each player's two damage icons (not a player who's out's), each on a dark
 // round chip, turned to face them; the one being dragged from lit.
-draw_damage_icons :: (canvas: *Draw.Canvas, layout: Layout, game: Game, drag: Drag) {
+draw_damage_icons :: (canvas: *Draw.Canvas, layout: Layout, game: Game, drag: Drag, drum: Life_Drum) {
     cell := cell_of(layout)
     for k: 0 < layout.count {
         if is_out(game, k) then continue
@@ -381,9 +489,10 @@ draw_damage_icons :: (canvas: *Draw.Canvas, layout: Layout, game: Game, drag: Dr
             at := damage_icon(layout, k, combat)
             dragged := drag.active and drag.from == k and drag.combat == combat
             chip := if dragged then lighter(CAPSULE, 0.3) else Draw.rgba(0x16161C, 0.62)
-            canvas.fill_circle(at, DAMAGE_ICON_RADIUS * cell, chip)
+            shows := player_controls_visibility(drum, k)
+            canvas.fill_circle(at, DAMAGE_ICON_RADIUS * cell, faded(chip, shows))
             drawn := if combat then COMBAT_ICON else SPELL_ICON
-            draw_icon_at(canvas, drawn, at, 0.5 * cell, INK, seat.angle)
+            draw_icon_at(canvas, drawn, at, 0.5 * cell, faded(INK, shows), seat.angle)
         }
     }
 }
@@ -1037,31 +1146,32 @@ draw_seat :: (canvas: *Draw.Canvas, layer: *Draw.Canvas, layout: Layout, game: G
     // around it, so the pentagon reads the same on every frame. Folding,
     // they draw in to the five-colour icon's corner and fade, and it comes
     // in the corner (opening, the other way).
+    controls_visible := player_controls_visibility(drum, k)
     places := toggles_of(layout, k)
     hub := toggle_folded(layout, k)
     opened := Math.clamp(toggles_shown, 0, 1)
     s := opened * opened * (3 - 2 * opened)
     r := TOGGLE_RADIUS * cell * (0.5 + 0.5 * s)
-    if s > 0 {
-        for place: places { canvas.fill_glow(Math.mix(hub, place, s), r * 1.8, Draw.rgba(0x000000, 0.3 * s)) }
+    alpha := s * controls_visible
+    if alpha > 0 {
+        for place: places { canvas.fill_glow(Math.mix(hub, place, s), r * 1.8, Draw.rgba(0x000000, 0.3 * alpha)) }
         for place, i: places {
-            // (the pentagon's places in Mana's order)
             colour := Mana'i
             at := Math.mix(hub, place, s)
             if has_colour(game.identity[k], colour) {
-                canvas.fill_circle(at, r, faded(MANA_CIRCLES[colour], s))
-                draw_centred(canvas, fonts.mana, at, seat.angle, MANA_GLYPHS[colour], faded(MANA_INK, s))
+                canvas.fill_circle(at, r, faded(MANA_CIRCLES[colour], alpha))
+                draw_centred(canvas, fonts.mana, at, seat.angle, MANA_GLYPHS[colour], faded(MANA_INK, alpha))
             }
             else {
-                canvas.fill_circle(at, r, Draw.rgba(0x000000, 0.34 * s))
-                draw_centred(canvas, fonts.mana, at, seat.angle, MANA_GLYPHS[colour], Draw.rgba(0xF4EFE6, 0.5 * s))
+                canvas.fill_circle(at, r, Draw.rgba(0x000000, 0.34 * alpha))
+                draw_centred(canvas, fonts.mana, at, seat.angle, MANA_GLYPHS[colour], Draw.rgba(0xF4EFE6, 0.5 * alpha))
             }
         }
     }
     if s < 1 {
         side := FIVE_COLOURS_SIDE * cell * (1 - 0.4 * s)
-        canvas.fill_glow(hub, side * 0.8, Draw.rgba(0x000000, 0.3 * (1 - s)))
-        draw_five_colours(canvas, hub, side, seat.angle, 1 - s)
+        canvas.fill_glow(hub, side * 0.8, Draw.rgba(0x000000, 0.3 * (1 - s) * controls_visible))
+        draw_five_colours(canvas, hub, side, seat.angle, (1 - s) * controls_visible, game.identity[k])
     }
     // Its life total: white with a black border and a drop shadow, cast
     // from the screen's centre (falling away from it, toward its player: down
@@ -1121,7 +1231,7 @@ LIFE_SHADOW_RIGHT :: 0.5     // how far to its reader's right it falls, against 
 // middle), changing the life by its place (the units' by one, the tens' by
 // ten) a row at a time; the others turn only as it carries into them. Let
 // go, the number at the middle is the life (undo brings each turn back). The
-// life tapped again closes it: the wheels flatten (DRUM_FLATTEN seconds),
+// a tap away from the life closes it: the wheels flatten (DRUM_FLATTEN seconds),
 // and the change stays beside it, flat, DRUM_HOLD seconds, then fades over
 // DRUM_FADE.
 
@@ -1229,7 +1339,7 @@ move_drum :: (drum: *Life_Drum, at: V2, cap: f32) {
     if drum.open and drum.moved then drum.turned = (at.y - drum.touched.y) / Math.max(DRUM_PITCH * cap, 1)
 }
 
-// The finger lifted: a tap opens the drum, or closes it; a turn of an open
+// The finger lifted: a tap enters or keeps editing; a turn of an open
 // one gives the life it made (changes: the game's life is to become it).
 release_drum :: (drum: *Life_Drum, game: Game -> life: i32, changes: bool) {
     life = 0
@@ -1237,10 +1347,7 @@ release_drum :: (drum: *Life_Drum, game: Game -> life: i32, changes: bool) {
     if !drum.pressed then return
     drum.pressed = false
     if !drum.moved {
-        if drum.open {
-            close_drum(drum, game)
-        }
-        else {
+        if !drum.open {
             drum.open = true
             drum.start = game.life[drum.player]
             drum.change = 0
@@ -1281,6 +1388,12 @@ step_drum :: (drum: *Life_Drum, game: Game, seconds: f32) {
 
 // Whether a player's life shows as a drum (open, or flattening), and how
 // much its change shows, flat beside it (0 none).
+player_controls_visibility :: (drum: Life_Drum, k: i64 -> f32) #pure {
+    if drum.player != k then return 1
+    t := Math.clamp(drum.bend, 0, 1)
+    return 1 - t * t * (3 - 2 * t)
+}
+
 drum_showing :: (drum: Life_Drum, k: i64 -> bool) #pure {
     return drum.player == k and (drum.open or drum.bend > 0)
 }
@@ -1638,8 +1751,7 @@ draw_capsule :: (canvas: *Draw.Canvas, layout: Layout, game: Game, screen: Scree
     if open > 0 then canvas.fill_rect(⟨0, 0⟩, layout.size, Draw.rgba(0x000000, 0.35 * open))
     // (and the count runner grown out of its middle while a count's picked,
     // the rest of the pill as it is)
-    grooved := Math.clamp(screen.counts_shown, 0, 1)
-    draw_recess(canvas, layout, grooved)
+    draw_recess(canvas, layout, 0)
     buttons_show := Math.clamp(1 - 2 * open, 0, 1)
     settings_show := Math.clamp(2 * open - 1, 0, 1)
     // The system's button, the power icon, stays where it is throughout:
@@ -1665,40 +1777,29 @@ faded :: (colour: Draw.RGBA, share: f32 -> Draw.RGBA) #pure {
     return ⟨colour.r, colour.g, colour.b, colour.a * share⟩
 }
 
-// One metal piece: circular when closed, extending into the sliding bar.
+// The full metal slider is always beneath the table, seen through its opening.
 // Its selected engraving stays readable throughout the opening transition.
 draw_counts :: (canvas: *Draw.Canvas, layout: Layout, screen: Screen_State, game: Game) {
     cell := cell_of(layout)
     shows := Math.clamp(1 - 2 * screen.settings_shown, 0, 1)
     if shows <= 0 then return
     opened := Math.clamp(screen.counts_shown, 0, 1)
-    t := opened * opened * (3 - 2 * opened)
     shown := if opened > 0 then screen.counts.shown else f32'game.players
-    active := i64'Math.round(shown)
-    button := capsule_centre(layout, .PLAYERS)
-    full_middle := (count_place(layout, shown, 2) + count_place(layout, shown, MAX_PLAYERS)) / 2
-    middle := Math.mix(button, full_middle, t)
-    half := V2⟨BAR_WIDTH, Math.mix(BAR_WIDTH, BAR_HALF, t)⟩ * cell
-    // A close contact shadow seats the metal in its slate runner.
-    canvas.fill_rounded_rect(middle - half + V2⟨0, 0.045 * cell⟩, half * 2, half.x, Draw.rgba(0x000000, 0.38 * shows))
+    middle := (count_place(layout, shown, 2) + count_place(layout, shown, MAX_PLAYERS)) / 2
+    half := V2⟨BAR_WIDTH, BAR_HALF⟩ * cell
+    // A close contact shadow lifts the slider above the steel and narrow guide groove.
+    canvas.fill_rounded_rect(middle - half + V2⟨0.025 * cell, 0.045 * cell⟩, half * 2, half.x, Draw.rgba(0x000000, 0.38 * shows))
     draw_metal_bar(canvas, middle, half, shows)
     for count: 2 <= MAX_PLAYERS {
         away := Math.abs(f32'count - shown)
         selected := 1 - Math.smoothstep(0, 0.65, away)
-        appeared := if count == active then 1.0 else Math.smoothstep(0.25, 0.85, opened)
-        position := Math.mix(button, count_place(layout, shown, count), t)
-        strength := (0.56 + selected * 0.4) * shows * appeared
+        position := count_place(layout, shown, count)
+        strength := (0.56 + selected * 0.4) * shows
         // A shallow engraved highlight beneath the dark cut.
         draw_people(canvas, position + V2⟨0, 0.015 * cell⟩, count, cell * (0.90 + selected * 0.10), Draw.rgba(0xFFF1D8, strength * 0.33))
         draw_people(canvas, position, count, cell * (0.90 + selected * 0.10), Draw.rgba(0x171C22, strength))
     }
-    // Small stationary pointers mark the selection without covering the bar.
-    for side: [2] f32⟨-1, 1⟩ {
-        tip := button + V2⟨side * (COLUMN_HALF + 0.02) * cell, 0⟩
-        back := tip + V2⟨side * 0.12 * cell, 0⟩
-        points := [3] V2⟨tip, back + V2⟨0, -0.075 * cell⟩, back + V2⟨0, 0.075 * cell⟩⟩
-        canvas.fill_polygon(points[:], Draw.rgba(0xDCCAA5, shows * Math.smoothstep(0.4, 1, opened)))
-    }
+
 }
 
 // The count bar's half width, in cells: a little inside the runner's.
@@ -1759,6 +1860,7 @@ Screen_State :: struct {
     settings_open: bool
     settings_shown: f32          // how far the settings have come into the pill, 0 to 1
     counts_shown:  f32           // how far it's become the count column's groove, 0 to 1
+    count_ui_visible: f32 = 1    // returns only after the table reconnects
     toggles:       Toggles       // each player's colour toggles: open or folded into the five-colour icon
     drum:          Life_Drum     // a life total touched, turned as a drum
     keep_surfaces: bool          // the parts' surfaces kept between frames (keep_surfaces'); snapshots draw each
@@ -1880,7 +1982,25 @@ draw_play :: (canvas: *Draw.Canvas, middle: V2, count: i64, size: f32, colour: D
     }
 }
 
-draw :: (canvas: *Draw.Canvas, layer: *Draw.Canvas, layout: Layout, game: Game, fonts: Fonts, screen: Screen_State, motes: Particles.System,
+draw_player_ui :: (canvas: *Draw.Canvas, layer: *Draw.Canvas, layout: Layout, game: Game, fonts: Fonts, screen: Screen_State,
+                   motes: Particles.System, elements: Elements, volleys: Volleys, targeted: i64) {
+    cell := cell_of(layout)
+    for k: 0 < layout.count {
+        draw_seat(canvas, layer, layout, game, fonts, k, k == targeted, screen.surface_time, screen.toggles.shown[k], screen.drum, true)
+    }
+    // The surfaces form the grooves; a thin light marks the one being moved.
+    for end, k: layout.ends[:layout.count] {
+        if k == screen.moving_end {
+            canvas.draw_line(layout.centre, end, Math.max(cell * 0.025, 1.5), INK)
+        }
+    }
+    // The elements (each player's, a drag's stream, volleys) and their motes.
+    draw_damage_icons(canvas, layout, game, screen.drag, screen.drum)
+    draw_elements(canvas, layer, layout, game, screen, elements, volleys)
+    motes.draw(canvas)
+}
+
+draw_table :: (canvas: *Draw.Canvas, layer: *Draw.Canvas, layout: Layout, game: Game, fonts: Fonts, screen: Screen_State, motes: Particles.System,
          elements: Elements, volleys: Volleys = ⟨⟩) {
     cell := cell_of(layout)
     *targeted: i64 = -1
@@ -1891,24 +2011,23 @@ draw :: (canvas: *Draw.Canvas, layer: *Draw.Canvas, layout: Layout, game: Game, 
     // screen; or each drawn here, on the background)
     kept := screen.keep_surfaces and keep_surfaces(layout, game, targeted, screen.surface_time)
     if kept then canvas.draw_canvas(kept_surfaces.canvas, ⟨0, 0⟩) else canvas.clear(BACKGROUND)
-    for k: 0 < layout.count {
-        draw_seat(canvas, layer, layout, game, fonts, k, k == targeted, screen.surface_time, screen.toggles.shown[k], screen.drum, kept)
+    if !kept {
+        for k: 0 < layout.count { draw_surface(canvas, layout, game, k, targeted, screen.surface_time) }
     }
-    // The surfaces form the grooves; a thin light marks the one being moved.
-    for end, k: layout.ends[:layout.count] {
-        if k == screen.moving_end {
-            canvas.draw_line(layout.centre, end, Math.max(cell * 0.025, 1.5), INK)
-        }
+    visible := Math.min(screen.count_ui_visible, count_player_visibility(screen.counts_shown))
+    if visible >= 1 {
+        draw_player_ui(canvas, layer, layout, game, fonts, screen, motes, elements, volleys, targeted)
     }
-    // The elements (each player's, a drag's stream, volleys) and their motes.
-    draw_damage_icons(canvas, layout, game, screen.drag)
-    draw_elements(canvas, layer, layout, game, screen, elements, volleys)
-    motes.draw(canvas)
+    else if visible > 0 and prepare_player_ui(canvas.size) {
+        // Blend a complete UI frame over the identical bare surfaces; clear is opaque.
+        player_ui_canvas.draw_canvas(canvas, ⟨0, 0⟩)
+        draw_player_ui(player_ui_canvas, layer, layout, game, fonts, screen, motes, elements, volleys, targeted)
+        fade := Player_Fade_Params⟨⟨layout.size.x, layout.size.y, visible, 0⟩⟩
+        canvas.draw_shader_canvas(⟨0, 0⟩, layout.size, PLAYER_FADE.code, PLAYER_FADE.bindings.fade, fade,
+                                  player_ui_canvas, PLAYER_FADE.bindings.content, PLAYER_FADE.bindings.filtering)
+    }
     draw_capsule(canvas, layout, game, screen)
-    draw_counts(canvas, layout, screen, game)
-    if screen.drag.active then draw_drag(canvas, layout, game, fonts, screen.drag, screen.mouse, ARTIFACT, motes.time)
-    if screen.picker.open then draw_picker(canvas, layout, fonts, screen.picker, game, ARTIFACT)
-    draw_fps(canvas, layout, fonts, screen.fps)
+
 }
 
 ////////////////////////////////
@@ -2096,32 +2215,72 @@ save_element_sheet :: (folder: string) [failed: string] {
 ////////////////////////////////
 // The program
 
-// The games before this one, to undo to, and those undone, to redo: doing
-// something new forgets what was undone.
+// Each count's lines (splits[n] for n players; none: equal_splits').
+Lines :: #alias [MAX_PLAYERS + 1] Splits
+
+// What undo goes back to: the game, and each count's lines.
+Moment :: struct {
+    game:  Game
+    lines: Lines
+}
+
+// The moments before this one, to undo to, and those undone, to redo: doing
+// something new forgets what was undone. A player's colours tapped one
+// after another, while their toggles stay open, are one step (colours_of:
+// whose, or -1).
 Timeline :: struct {
-    past:   [..] Game
-    future: [..] Game
+    past:       [..] Moment
+    future:     [..] Moment
+    colours_of: i64 = -1
 }
 
-// The game as it is, kept to undo to, before something's done to it.
-remember :: (timeline: *Timeline, game: Game) {
-    timeline.past.add(game)
+// The game and the lines as they are, kept to undo to, before something's
+// done to them.
+remember :: (timeline: *Timeline, game: Game, lines: Lines) {
+    timeline.past.add(⟨game, lines⟩)
     timeline.future.clear()
+    timeline.colours_of = -1
 }
 
-// The game the one before (undo) or after (redo) it, if there's one.
-undo :: (timeline: *Timeline, game: *Game -> bool) {
+// A player's colour tapped: remembered, unless it's one more of their run of
+// taps.
+remember_colours :: (timeline: *Timeline, game: Game, lines: Lines, player: i64) {
+    if timeline.colours_of == player then return
+    timeline.remember(game, lines)
+    timeline.colours_of = player
+}
+
+// The moment before this one (undo) or after it (redo), if there's one.
+undo :: (timeline: *Timeline, game: *Game, lines: *Lines -> bool) {
     if timeline.past.count == 0 then return false
-    timeline.future.add(game)
-    game = timeline.past.pop()
+    timeline.future.add(⟨game, lines⟩)
+    moment := timeline.past.pop()
+    game = moment.game
+    lines = moment.lines
+    timeline.colours_of = -1
     return true
 }
 
-redo :: (timeline: *Timeline, game: *Game -> bool) {
+redo :: (timeline: *Timeline, game: *Game, lines: *Lines -> bool) {
     if timeline.future.count == 0 then return false
-    timeline.past.add(game)
-    game = timeline.future.pop()
+    timeline.past.add(⟨game, lines⟩)
+    moment := timeline.future.pop()
+    game = moment.game
+    lines = moment.lines
+    timeline.colours_of = -1
     return true
+}
+
+// Each count's lines stored, as they are now (a count's none: forgotten).
+store_lines :: (lines: Lines) {
+    with scratch.rewind()
+    for n: 2 <= MAX_PLAYERS {
+        key := `scratch "splits.«n»"
+        if lines[n] == Splits⟨⟩ {
+            if Defaults.remove(key) is { case absent, os_error: _ }
+        }
+        else if Defaults.set(key, lines[n]) is os_error { }
+    }
 }
 
 Options :: struct {
@@ -2135,6 +2294,7 @@ Options :: struct {
 main :: (args: [] string) [failed: string] {
     // (the screen kept on while it runs: it's watched, not typed into)
     with System.keep_awake()
+    defer destroy_count_table()
     if Draw.add_font(MANA) is bad_font then fail: failed = "Mana isn't a font Draw can read"
     if Draw.add_font(CRIMSON_PRO) is bad_font then fail: failed = "Crimson Pro isn't a font Draw can read"
     *options: Options
@@ -2154,6 +2314,9 @@ main :: (args: [] string) [failed: string] {
     if loaded_controls := Draw.image_from_bytes(CONTROL_BYTES[:]) { control_image = loaded_controls }
     else if bad_image { fail: failed = "cannot load textures/control-metal-v1.png" }
     defer control_image.destroy()
+    if loaded_steel := Draw.image_from_bytes(UNDER_TABLE_BYTES[:]) { under_table_image = loaded_steel }
+    else if bad_image { fail: failed = "cannot load textures/under-table-steel-v1.png" }
+    defer under_table_image.destroy()
     if loaded_five := Draw.image_from_bytes(FIVE_COLOURS_BYTES[:]) { five_colours_image = loaded_five }
     else if bad_image { fail: failed = "cannot load textures/five-colour-dots-96.png" }
     defer five_colours_image.destroy()
@@ -2189,6 +2352,8 @@ main :: (args: [] string) [failed: string] {
     *game := Defaults.get("game", new_game(4))
     if game.players < 2 or game.players > MAX_PLAYERS then game = new_game(4)
     *timeline: Timeline
+    // (the lines as a line's drag began, to undo it to)
+    *lines_before: Lines
     if Defaults.remove("font") is { case absent, os_error: _ }
     if Defaults.remove("era") is { case absent, os_error: _ }
     *splits: [MAX_PLAYERS + 1] Splits
@@ -2268,12 +2433,23 @@ main :: (args: [] string) [failed: string] {
         // (Control+Z undoes; Control+Y, or Control+Shift+Z, redoes)
         if w.modifiers.CONTROL and (w.keys[.Z].PRESSED or w.keys[.Y].PRESSED) {
             again := w.keys[.Y].PRESSED or w.modifiers.SHIFT
-            moved := if again then timeline.redo(game) else timeline.undo(game)
-            if moved then call_off_volleys(motes, volleys, pending)
+            moved := if again then timeline.redo(game, splits) else timeline.undo(game, splits)
+            if moved {
+                call_off_volleys(motes, volleys, pending)
+                store_lines(splits)
+            }
         }
 
         if !tuning_input and w.mouse.buttons[.LEFT].PRESSED {
-            if screen.picker.open {
+            if screen.drum.open {
+                if wheel := drum_wheel_at(layout, fonts, screen.drum, mouse) is not absent {
+                    editing := layout.seats[screen.drum.player]
+                    press_drum(screen.drum, game, screen.drum.player, local_of(editing.middle, editing.angle, mouse), wheel)
+                } else {
+                    close_drum(screen.drum, game)
+                }
+            }
+            else if screen.picker.open {
                 part := picker_part_at(layout, screen.picker, mouse)
                 if part is {
                 case tens: screen.picker.tens = tens
@@ -2281,7 +2457,7 @@ main :: (args: [] string) [failed: string] {
                 case accept:
                     value := screen.picker.tens * 10 + screen.picker.units
                     if value > 0 {
-                        timeline.remember(game)
+                        timeline.remember(game, splits)
                         // (from the grid: straight at them)
                         target := layout.seats[screen.picker.to].middle
                         strike(game, motes, volleys, random, layout, pending, screen.picker.from, screen.picker.to, value, target, screen.picker.combat)
@@ -2300,6 +2476,9 @@ main :: (args: [] string) [failed: string] {
                     // whose lines don't fit is laid out as equal_splits starts it.
                     // Then each seat its starting colours, those who've left
                     // the table forgotten, and the motion its default, slow.
+                    // (Undo brings the colours, those players and the lines
+                    // back; the motion's a setting, and stays.)
+                    timeline.remember(game, splits)
                     for n: 2 <= MAX_PLAYERS {
                         splits[n] = ⟨⟩
                         if Defaults.remove(`scratch "splits.«n»") is { case absent, os_error: _ }
@@ -2321,9 +2500,15 @@ main :: (args: [] string) [failed: string] {
             else if part := capsule_part_at(layout, mouse) is not absent {
                 if part is {
                 case .UNDO:
-                    if timeline.undo(game) then call_off_volleys(motes, volleys, pending)
+                    if timeline.undo(game, splits) {
+                        call_off_volleys(motes, volleys, pending)
+                        store_lines(splits)
+                    }
                 case .REDO:
-                    if timeline.redo(game) then call_off_volleys(motes, volleys, pending)
+                    if timeline.redo(game, splits) {
+                        call_off_volleys(motes, volleys, pending)
+                        store_lines(splits)
+                    }
                 case .PLAYERS:
                     count := f32'game.players
                     screen.counts = ⟨open: true, held: true, grabbed: mouse.y, from: count, shown: count, laid: screen.counts.laid,
@@ -2332,7 +2517,7 @@ main :: (args: [] string) [failed: string] {
                     // A new game of as many players, each seat's colours kept:
                     // every life back to the start's (those off the table's
                     // too), no damage (undo brings the old one back).
-                    timeline.remember(game)
+                    timeline.remember(game, splits)
                     game = new_game(game.players, game.identity)
                     call_off_volleys(motes, volleys, pending)
                 case .SYSTEM:
@@ -2340,13 +2525,15 @@ main :: (args: [] string) [failed: string] {
                 }
             }
             else if place := drum_wheel_at(layout, fonts, screen.drum, mouse) is not absent {
-                // (an open drum's wheel: a turn of it, or a tap that closes it)
+                // (an open drum's wheel: a turn of it, or a tap that keeps editing)
                 spun := layout.seats[screen.drum.player]
                 press_drum(screen.drum, game, screen.drum.player, local_of(spun.middle, spun.angle, mouse), place)
             }
             else if seat, colour := toggle_at(layout, screen.toggles, mouse) is not absent {
                 // (one set: its pentagon folds TOGGLE_LINGER seconds from now,
-                // unless another's set before then)
+                // unless another's set before then; undone with the rest of
+                // that player's run of taps)
+                timeline.remember_colours(game, splits, seat)
                 bit := u8'1 << u8'colour
                 was := game.identity[seat]
                 game.identity[seat] = if was & bit != 0 then was & ~bit else was | bit
@@ -2368,13 +2555,14 @@ main :: (args: [] string) [failed: string] {
             }
             else if line := line_at(layout, mouse, 0.5 * cell) is not absent {
                 screen.moving_end = line
+                lines_before = splits
             }
         }
         // A dragged line follows the finger: its end goes where a line from
         // the centre through the finger meets the edge, kept between its
         // neighbours.
         if screen.moving_end >= 0 {
-            if aimed := share_through(layout, mouse) is not absent then splits[game.players].move_split(screen.moving_end, aimed)
+            if aimed := share_through(layout, mouse) is not absent then splits[game.players].move_split_with_clearance(screen.moving_end, aimed, size)
             layout = lay_out(size, splits[game.players])
         }
         // A drum's wheel turns with the finger, toward its player and away.
@@ -2383,11 +2571,11 @@ main :: (args: [] string) [failed: string] {
             screen.drum.move_drum(local_of(turning.middle, turning.angle, mouse), f32'fonts.life.cap_height)
         }
         if w.mouse.buttons[.LEFT].RELEASED and screen.drum.pressed {
-            // Let go: a tap opens or closes it; a turn's number at the
+            // Let go: a tap enters or keeps editing; a turn's number at the
             // middle is the life (undo brings the old one back).
             life, changes := screen.drum.release_drum(game)
             if changes {
-                timeline.remember(game)
+                timeline.remember(game, splits)
                 game.life[screen.drum.player] = life
             }
         }
@@ -2396,7 +2584,7 @@ main :: (args: [] string) [failed: string] {
                 if to, amount := aim(layout, game, screen.drag.from, mouse) is not missed {
                     if amount is {
                     case damage:
-                        timeline.remember(game)
+                        timeline.remember(game, splits)
                         strike(game, motes, volleys, random, layout, pending, screen.drag.from, to, damage, mouse, screen.drag.combat)
                     case asked:
                         screen.picker = ⟨true, screen.drag.from, to, DEFAULT_PICKED / 10, DEFAULT_PICKED % 10, screen.drag.combat⟩
@@ -2405,7 +2593,9 @@ main :: (args: [] string) [failed: string] {
                 screen.drag.active = false
             }
             if screen.moving_end >= 0 {
+                // (a line moved: a step to undo, the lines as they were)
                 screen.moving_end = -1
+                if splits[game.players] != lines_before[game.players] then timeline.remember(game, lines_before)
                 if Defaults.set(`scratch "splits.«game.players»", splits[game.players]) is os_error { }
             }
             if screen.counts.open and screen.counts.held {
@@ -2415,7 +2605,7 @@ main :: (args: [] string) [failed: string] {
                 screen.counts.held = false
                 count := i64'Math.round(screen.counts.shown)
                 if count != game.players {
-                    timeline.remember(game)
+                    timeline.remember(game, splits)
                     game = game_for(game, count, splits[:], size)
                     call_off_volleys(motes, volleys, pending)
                 }
@@ -2493,10 +2683,12 @@ main :: (args: [] string) [failed: string] {
         screen.settings_shown = Math.clamp(screen.settings_shown + opening * seconds / SETTINGS_TIME, 0, 1)
         // (and into the count column's groove while a finger's on the
         // column, back as it's let go)
-        grooving: f32 = if screen.counts.open then 1 else -1
-        screen.counts_shown = Math.clamp(screen.counts_shown + grooving * seconds / SETTINGS_TIME, 0, 1)
+        screen.counts_shown = step_count_opening(screen.counts_shown, screen.counts.held, seconds)
+        screen.count_ui_visible = step_count_player_ui(screen.count_ui_visible, screen.counts_shown, screen.counts.held, seconds)
         // (each player's toggles counting down to folding, and folding or opening)
         step_toggles(screen.toggles, seconds)
+        // (a player's run of colour taps ends as their toggles fold)
+        if timeline.colours_of >= 0 and !screen.toggles.open[timeline.colours_of] then timeline.colours_of = -1
         step_drum(screen.drum, game, seconds)
         // (the surfaces moved on by the frame's time at the chosen speed)
         surface_time += seconds * MOTION_RATES[speed]

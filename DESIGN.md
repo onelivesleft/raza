@@ -166,6 +166,13 @@ from the left, undo and redo, the players in the middle, a new game, and the
 system's (settings and quitting) at the right end, as a power button. The
 text is Crimson Pro.
 
+Undo goes back a step, and redo forward: damage dealt, a life drum's turn,
+a player's colours (their taps one after another, while their toggles stay
+open, one step), a line dragged, a new count, a new game and a reset (the
+colours, the players off the table and the lines it forgot). Each step keeps
+the game and every count's lines; the motion's a setting, and isn't undone.
+The steps last while Raza runs.
+
 The players' button: touched, the count runner grows out of the pill's
 middle, up and down (0.11 s), the rest of the pill and its buttons staying as
 they are: a long upright groove, fixed, as long as the count bar's whole
@@ -313,9 +320,9 @@ At rest there are no element handles: each player's damage spot is its two damag
 
 The central controls and player-count selector use textures/control-metal-v1.png, a dark brushed gunmetal material. Their existing rounded geometry and recessed lighting remain. The metal prompt is in textures/DARK-METAL-PROMPT.md; the separate transparent five-colour dot icon is documented in textures/CARD-BACK-ASSETS.md.
 
-The player-count control is a circular brushed-bronze button at rest. The same piece smoothly lengthens and shifts into the sliding count bar as the dark-metal runner opens. Engraved people rings appear along it; the selected ring remains strong through the transition, with small fixed pointers marking the selection. A close contact shadow seats the metal in the runner. Snapshots include closed and intermediate states as raza_count_morph_0.png through _2.png.
+The player-count control is a circular brushed-bronze button surrounded by a raised metal ring 0.07 cells thick, with a soft shadow cast down and right onto the table and slider by top-left light. The ring has complementary diagonal cuts: the top joins slightly right of centre, the bottom slightly left. The left table half also casts a soft down-right shadow into the gulley and onto the bar. Holding the button separates the entire table into left and right halves, including the control bar and ring. The full-length count slider sits above a thin bronze-lined guide groove in medium blue-grey cold-rolled steel (textures/under-table-steel-v1.png). The quiet steel stays bright enough to show the down-right shadow from the left table edge. The table cutout reaches under the ring, exposing this steel inside the split halves rather than the dark-metal control backing. The slider keeps its engraved people rings; there are no selection arrows. Release brings the halves and ring together over 220 ms (opening takes 120 ms). The slider stays full length beneath the table at all times, visible through the ring hole when closed; only the table masks it. Newly exposed cut edges use the same rounded cosine profile and lighting as the player channels. Snapshots include closed and intermediate states as raza_count_morph_0.png through _2.png.
 
-The count runner is a fixed recessed dark-metal channel covering the full travel of the bronze slider, including the bar length and a small inset at both ends. The metal slides inside it; the groove does not follow the metal. Count spacing is 0.95 cells. Geometry tests cover both travel extremes and the fixed groove boundaries.
+The count slider stays full length and rides above a narrow bronze-lined groove beneath the table. The groove is 0.18 cells wide, with a dark interior and bronze lining. Its rounded-end centres coincide with the slider end-cap centres at the limits of travel; the exposed steel surrounds it. Count spacing is 0.95 cells; the ring hole and table opening reveal the slider. Player UI (life totals, colour controls, damage icons and effects) fades out as the table opens, stays hidden during closing, then fades back in over 180 ms after the halves reconnect. Surfaces and the central controls stay visible. During the fade, a complete UI frame is blended over the same bare surfaces to preserve background brightness.
 
 The disk and extended count slider share a softly domed bronze finish, with warm reflections curving over the full face rather than a straight cylindrical stripe.
 

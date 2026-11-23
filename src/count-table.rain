@@ -1,0 +1,229 @@
+// The table opens over a stationary count slider. This canvas contains only
+// the table surface and its controls; the tuning panel and popups stay above it.
+count_table_canvas: Draw.Canvas
+count_table_made: bool
+
+COUNT_OPEN_TIME :: 0.12
+COUNT_CLOSE_TIME :: 0.22
+COUNT_SPLIT_HALF :: COLUMN_HALF + 0.055
+COUNT_RING_RADIUS :: 0.56
+COUNT_RING_WIDTH :: 0.07
+COUNT_RING_SLOPE : f32 : 0.22
+
+count_ring_cut :: (p: V2 -> f32) #pure {
+    return (p.x + p.y * COUNT_RING_SLOPE) / Math.sqrt(f32'1 + COUNT_RING_SLOPE * COUNT_RING_SLOPE)
+}
+
+count_split_offset :: (cell: f32, opened: f32 -> f32) #pure {
+    t := Math.clamp(opened, 0, 1)
+    return COUNT_SPLIT_HALF * cell * t * t * (3 - 2 * t)
+}
+step_count_opening :: (opened: f32, held: bool, seconds: f32 -> f32) #pure {
+    if held then return Math.min(1, opened + seconds / COUNT_OPEN_TIME)
+    return Math.max(0, opened - seconds / COUNT_CLOSE_TIME)
+}
+prepare_count_table :: (size: Wide.i32x2 -> bool) {
+    if !count_table_made {
+        if made := Draw.create_canvas(size) { count_table_canvas = made }
+        else if os_error { return false }
+        count_table_made = true
+    }
+    else if count_table_canvas.size != size {
+        if count_table_canvas.resize(size) is os_error then return false
+    }
+    return true
+}
+destroy_count_table :: () {
+    if count_table_made then count_table_canvas.destroy()
+    count_table_made = false
+    if player_ui_made then player_ui_canvas.destroy()
+    player_ui_made = false
+}
+Count_Split_Params :: struct {
+    screen: V4       // size, split x, half separation
+    button: V4       // centre, hole radius, edge bevel
+    shadow: V4       // down-right offset, softness, opacity
+}
+count_table_shade :: (from: Draw.Quad_Between, split: Shader.Uniforms(Count_Split_Params), table: Shader.Texture_2D, filtering: Shader.Sampler -> colour: V4) {
+    p := from.pixel
+    side: f32 = if p.x < split.screen.z then -1 else 1
+    edge := split.screen.z + side * split.screen.w
+    distance := if split.screen.w > 0.01 then side * (p.x - edge) else 1000000.0
+    if distance < 0 then return ⟨0, 0, 0, 0⟩
+    source := p - V2⟨side * split.screen.w, 0⟩
+    hole := if split.button.z > 0 then Math.length(source - split.button.xy) - split.button.z else 1000000.0
+    coverage := Math.clamp(Math.min(distance, hole) + 0.5, 0, 1)
+    if coverage <= 0 then return ⟨0, 0, 0, 0⟩
+    surface := Shader.sample_level(table, filtering, source / split.screen.xy, 0)
+    // The same cosine bowl and rolled wall as the channels between players.
+    depth := Math.min(distance, hole)
+    across := Math.clamp(depth / Math.max(split.button.w, 1), 0, 1)
+    wall := Math.sin(across * f32'Math.PI)
+    floor := (1 + Math.cos(across * f32'Math.PI)) * 0.5
+    outward := if hole < distance then Math.normalize(split.button.xy - source) else V2⟨0 - side, 0⟩
+    facing := Math.dot(outward, PART_LIGHT)
+    shaded := surface.xyz * (1 - floor * 0.68) * (1 + Math.min(facing, 0) * wall * 0.48)
+    rgb := Math.mix(shaded, PART_WARM, Math.max(facing, 0) * wall * 0.38)
+    return V4⟨rgb.x, rgb.y, rgb.z, surface.w⟩ * coverage
+}
+Count_Split :: shader { vertex: Draw.quad_place; fragment: count_table_shade }
+COUNT_SPLIT :: Count_Split(Draw.SHADER_TARGET)
+
+// Project the left slab's silhouette onto the mechanism below it. Drawing
+// this before the table lets the same shadow fall across the gulley and bar.
+count_gulley_shadow :: (from: Draw.Quad_Between, split: Shader.Uniforms(Count_Split_Params) -> colour: V4) {
+    p := from.pixel - split.shadow.xy
+    source := p + V2⟨split.screen.w, 0⟩
+    edge := p.x - (split.screen.z - split.screen.w)
+    hole := if split.button.z > 0 then split.button.z - Math.length(source - split.button.xy) else -1000000.0
+    distance := Math.max(edge, hole)
+    alpha := (1 - Math.smoothstep(0 - split.shadow.z, split.shadow.z, distance)) * split.shadow.w
+    return ⟨0, 0, 0, alpha⟩
+}
+Count_Gulley_Shadow :: shader { vertex: Draw.quad_place; fragment: count_gulley_shadow }
+COUNT_GULLEY_SHADOW :: Count_Gulley_Shadow(Draw.SHADER_TARGET)
+Count_Ring_Params :: struct {
+    ring: V4         // centre, radius, width
+    detail: V4       // separation, shadow offset, blur, visibility
+}
+count_ring_shade :: (from: Draw.Quad_Between, ring: Shader.Uniforms(Count_Ring_Params) -> colour: V4) {
+    *out := V4⟨0, 0, 0, 0⟩
+    // Shadows first so one half's shadow never paints over the other half.
+    for i: 0 < 2 {
+        side: f32 = if i == 0 then -1 else 1
+        p := from.pixel - ring.ring.xy - V2⟨side * ring.detail.x + ring.detail.y, ring.detail.y⟩
+        d := Math.max(Math.abs(Math.length(p) - ring.ring.z) - ring.ring.w * 0.5, 0 - side * count_ring_cut(p))
+        alpha := (1 - Math.smoothstep(0 - ring.detail.z, ring.detail.z, d)) * 0.32 * ring.detail.w
+        out = V4⟨out.x, out.y, out.z, alpha + out.w * (1 - alpha)⟩
+    }
+    for i: 0 < 2 {
+        side: f32 = if i == 0 then -1 else 1
+        p := from.pixel - ring.ring.xy - V2⟨side * ring.detail.x, 0⟩
+        radial := Math.length(p)
+        d := Math.max(Math.abs(radial - ring.ring.z) - ring.ring.w * 0.5, 0 - side * count_ring_cut(p))
+        alpha := Math.clamp(0.5 - d, 0, 1) * ring.detail.w
+        facing := Math.dot(p / Math.max(radial, 0.0001), PART_LIGHT)
+        crown := 1 - Math.clamp(Math.abs(radial - ring.ring.z) / Math.max(ring.ring.w * 0.5, 0.5), 0, 1)
+        metal := V3⟨0.48, 0.36, 0.22⟩ + V3⟨0.35, 0.32, 0.25⟩ * (0.5 + facing * 0.5) + V3⟨0.15, 0.14, 0.12⟩ * crown
+        out = V4⟨metal.x * alpha, metal.y * alpha, metal.z * alpha, alpha⟩ + out * (1 - alpha)
+    }
+    return out
+}
+Count_Ring :: shader { vertex: Draw.quad_place; fragment: count_ring_shade }
+COUNT_RING :: Count_Ring(Draw.SHADER_TARGET)
+
+draw_count_ring :: (canvas: *Draw.Canvas, layout: Layout, screen: Screen_State) {
+    cell := cell_of(layout)
+    shows := Math.clamp(1 - 2 * screen.settings_shown, 0, 1)
+    if shows <= 0 then return
+    shift := count_split_offset(cell, screen.counts_shown)
+    middle := capsule_centre(layout, .PLAYERS)
+    reach := V2⟨COUNT_RING_RADIUS * cell + shift, COUNT_RING_RADIUS * cell⟩ + V2⟨0.18, 0.18⟩ * cell
+    params := Count_Ring_Params⟨⟨middle.x, middle.y, COUNT_RING_RADIUS * cell, COUNT_RING_WIDTH * cell⟩,
+                               ⟨shift, 0.08 * cell, Math.max(0.03 * cell, 1), shows⟩⟩
+    canvas.draw_shader(middle - reach, reach * 2, COUNT_RING.code, COUNT_RING.bindings.ring, params)
+}
+
+draw :: (canvas: *Draw.Canvas, layer: *Draw.Canvas, layout: Layout, game: Game, fonts: Fonts, screen: Screen_State, motes: Particles.System,
+         elements: Elements, volleys: Volleys = ⟨⟩) {
+    cell := cell_of(layout)
+    shift := count_split_offset(cell, screen.counts_shown)
+    if prepare_count_table(canvas.size) {
+        draw_table(count_table_canvas, layer, layout, game, fonts, screen, motes, elements, volleys)
+        // The stationary mechanism is revealed by the opening, not painted on top.
+        canvas.clear(Draw.rgb(0x101318))
+        draw_count_bed(canvas, layout, shift)
+        draw_counts(canvas, layout, screen, game)
+        button := capsule_centre(layout, .PLAYERS)
+        hole_shown := Math.clamp(1 - 2 * screen.settings_shown, 0, 1)
+        params := Count_Split_Params⟨⟨layout.size.x, layout.size.y, layout.centre.x, shift⟩,
+                                     ⟨button.x, button.y, COUNT_RING_RADIUS * cell * hole_shown, BEVEL_CELLS * cell⟩,
+                                     ⟨0.22 * cell, 0.14 * cell, Math.max(0.10 * cell, 1), Math.smoothstep(0, 0.3 * cell, shift) * 0.42⟩⟩
+        canvas.draw_shader(⟨0, 0⟩, layout.size, COUNT_GULLEY_SHADOW.code, COUNT_GULLEY_SHADOW.bindings.split, params)
+        canvas.draw_shader_canvas(⟨0, 0⟩, layout.size, COUNT_SPLIT.code, COUNT_SPLIT.bindings.split, params,
+                                  count_table_canvas, COUNT_SPLIT.bindings.table, COUNT_SPLIT.bindings.filtering)
+    }
+    else {
+        draw_table(canvas, layer, layout, game, fonts, screen, motes, elements, volleys)
+        button := capsule_centre(layout, .PLAYERS)
+        shows := Math.clamp(1 - 2 * screen.settings_shown, 0, 1)
+        draw_metal_bar(canvas, button, V2⟨BAR_WIDTH, BAR_WIDTH⟩ * cell, shows)
+        draw_people(canvas, button, game.players, cell, Draw.rgba(0x171C22, shows))
+    }
+    draw_count_ring(canvas, layout, screen)
+    if screen.drag.active then draw_drag(canvas, layout, game, fonts, screen.drag, screen.mouse, ARTIFACT, motes.time)
+    if screen.picker.open then draw_picker(canvas, layout, fonts, screen.picker, game, ARTIFACT)
+    draw_fps(canvas, layout, fonts, screen.fps)
+}
+
+UNDER_TABLE_BYTES :: #data "../textures/under-table-steel-v1.png"
+under_table_image: Draw.Image
+player_ui_canvas: Draw.Canvas
+player_ui_made: bool
+
+count_player_visibility :: (opened: f32 -> f32) #pure {
+    t := Math.clamp(opened, 0, 1)
+    return 1 - t * t * (3 - 2 * t)
+}
+COUNT_UI_RETURN_TIME :: 0.18
+step_count_player_ui :: (visible: f32, opened: f32, held: bool, seconds: f32 -> f32) #pure {
+    if opened > 0 {
+        if !held then return 0
+        return Math.min(visible, count_player_visibility(opened))
+    }
+    if held then return visible
+    return Math.min(1, visible + seconds / COUNT_UI_RETURN_TIME)
+}
+prepare_player_ui :: (size: Wide.i32x2 -> bool) {
+    if !player_ui_made {
+        if made := Draw.create_canvas(size) { player_ui_canvas = made }
+        else if os_error { return false }
+        player_ui_made = true
+    }
+    else if player_ui_canvas.size != size {
+        if player_ui_canvas.resize(size) is os_error then return false
+    }
+    return true
+}
+Player_Fade_Params :: struct { screen: V4 }
+player_fade_shade :: (from: Draw.Quad_Between, fade: Shader.Uniforms(Player_Fade_Params), content: Shader.Texture_2D, filtering: Shader.Sampler -> colour: V4) {
+    return Shader.sample_level(content, filtering, from.pixel / fade.screen.xy, 0) * fade.screen.z
+}
+Player_Fade :: shader { vertex: Draw.quad_place; fragment: player_fade_shade }
+PLAYER_FADE :: Player_Fade(Draw.SHADER_TARGET)
+
+COUNT_GROOVE_RADIUS :: 0.09
+// At either travel limit, the groove and slider end-cap centres coincide.
+COUNT_GROOVE_HALF :: f32'(MAX_PLAYERS - 2) / 2 * COUNT_PITCH + BAR_HALF - BAR_WIDTH + COUNT_GROOVE_RADIUS
+Count_Bed_Params :: struct { track: V4; material: V4 }
+count_bed_shade :: (from: Draw.Quad_Between, bed: Shader.Uniforms(Count_Bed_Params), steel: Shader.Texture_2D, filtering: Shader.Sampler -> colour: V4) {
+    texel := control_material(steel, filtering, from.pixel / bed.material.x)
+    p := from.pixel - bed.track.xy
+    d := round_box_distance(p, bed.track.zw, bed.track.z)
+    // The exposed cavity remains a lit, quiet steel surface to receive shadows.
+    *rgb := texel
+    if d < 1 {
+        gx := round_box_distance(p + V2⟨0.5, 0⟩, bed.track.zw, bed.track.z) - round_box_distance(p - V2⟨0.5, 0⟩, bed.track.zw, bed.track.z)
+        gy := round_box_distance(p + V2⟨0, 0.5⟩, bed.track.zw, bed.track.z) - round_box_distance(p - V2⟨0, 0.5⟩, bed.track.zw, bed.track.z)
+        outward := Math.normalize(V2⟨gx, gy⟩ + V2⟨0.00001, 0⟩)
+        facing := Math.dot(outward, PART_LIGHT)
+        rim := Math.exp(0 - Math.pow((d + bed.material.y * 0.35) / Math.max(bed.material.y, 1), 2))
+        grain := Math.dot(texel, V3⟨0.2126, 0.7152, 0.0722⟩)
+        floor := V3⟨0.008, 0.006, 0.004⟩ * (0.9 + grain * 0.25)
+        bronze := V3⟨0.62, 0.43, 0.23⟩ + V3⟨0.28, 0.25, 0.18⟩ * Math.max(facing, 0)
+        lining := Math.mix(floor, bronze, rim)
+        rgb = Math.mix(rgb, lining, Math.clamp(0.5 - d, 0, 1))
+    }
+    return ⟨rgb.x, rgb.y, rgb.z, 1⟩
+}
+Count_Bed :: shader { vertex: Draw.quad_place; fragment: count_bed_shade }
+COUNT_BED :: Count_Bed(Draw.SHADER_TARGET)
+
+draw_count_bed :: (canvas: *Draw.Canvas, layout: Layout, shift: f32) {
+    cell := cell_of(layout)
+    middle := capsule_centre(layout, .PLAYERS)
+    reach := shift + (COUNT_RING_RADIUS + 0.2) * cell
+    params := Count_Bed_Params⟨⟨middle.x, middle.y, COUNT_GROOVE_RADIUS * cell, COUNT_GROOVE_HALF * cell⟩, ⟨cell * 6, cell * 0.018, 0, 0⟩⟩
+    canvas.draw_shader_image(⟨middle.x - reach, 0⟩, ⟨reach * 2, layout.size.y⟩, COUNT_BED.code, COUNT_BED.bindings.bed, params,
+                             under_table_image, COUNT_BED.bindings.steel, COUNT_BED.bindings.filtering)
+}
