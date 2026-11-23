@@ -17,7 +17,9 @@ settings (Frames: Original, Modern, M15; Original unless chosen).
   era: white an ivory's soft clouding, blue water drops, black marble with
   pale veins, red cracked rock, green mottling, an artifact's grey-brown
   grain, gold marble. Modern is smoother and brighter (silver artifacts);
-  M15 finer and lighter still (brushed silver).
+  M15 lighter and lower in contrast still (brushed silver). The intent is
+  for the eras to get finer too, but their feature sizes don't yet (see
+  REVIEW.md: size and contrast are separate things to tune).
 - **No colour outside the player's identity appears.** One colour: that
   colour's frame. None: an artifact's. Several: gold, shaded across the
   part toward each of the player's colours in turn (gold stays recognisably
@@ -25,9 +27,12 @@ settings (Frames: Original, Modern, M15; Original unless chosen).
 - **Fine-grained.** A card's frame texture is small against the card; a
   part is far bigger, so the features are kept small (`SURFACE_SCALE`).
   Too large reads as a close-up, not a frame.
+- **Facing its player.** Each part's surface is turned as its player's
+  text is, so its water falls toward them and brushed metal runs across
+  their view.
 - **Moving, very slowly by default.** Every surface moves in its own way:
   clouds, mottle and grain swirl in place (never slide), marble's veins
-  flow, water drops slide down over rippling water, cracked rock's shading
+  flow, water drops slide down toward the player over rippling water, cracked rock's shading
   drifts and its cracks open and close, brushed metal glides. Motion
   (settings): Off, Slow (the default: noticed only if watched), Medium,
   Fast.
@@ -53,16 +58,20 @@ throws**, in place of an icon and an arrow.
 - **The stream, while dragging.** It flows from the miasma and **always ends
   at the life total of the player the finger is over**, wherever over them
   the finger is; the finger only bends it, slightly. Over no one, it ends
-  at the finger. It thickens as the amount grows. The amount stays shown
-  by the finger, facing the dragger.
+  at the finger. It thickens as the amount grows, and stays bright all the
+  way to its end, where the aimed-at life total pulses softly. The amount
+  stays shown by the finger, facing the dragger.
 - **The volley, on release.** One mote per point of damage, fired a little
-  apart (faster for big numbers from the grid), following the stream's
-  bend to the life total, each landing with a splash.
+  apart (faster for big numbers from the grid), flying along the stream's
+  curve as it was when let go (with a little spread), each landing at the
+  life total with a splash.
 - **The life ticks down as they land.** The game itself changes at release
-  (so undo is simple); what's shown counts down a point per landing. Undo,
-  or a new game, calls volleys off.
-- **Lethal commander damage is marked:** the volley's last mote bursts much
-  bigger.
+  (so undo is simple); what's shown counts down as they land (several at
+  once, for a big volley in one frame). A volley is settled when it has no
+  motes left, so a mote that goes without landing can never leave the life
+  shown wrong. Undo, or a new game, calls volleys off.
+- **Lethal commander damage is marked:** once every point of that volley
+  has landed, it ends in a much bigger burst.
 - **Cost.** The motes are GPU-drawn soft dots, so hundreds a frame are
   cheap; because the miasmas always move, Raza redraws about 30 times a
   second when idle (more battery than a still screen, accepted).
@@ -72,6 +81,8 @@ throws**, in place of an icon and an arrow.
 `Raza.exe -snapshot:folder` draws, among others, `raza_frames_Original.png`
 (`_Modern`, `_M15`: each colour alone and all five as gold),
 `raza_3.png` (a drag's stream to a life total) and `raza_volley.png`. The
-tests check the parts that can be checked without looking: the stream's end
-and bend, a volley's landing a point at a time, the lethal mark, undo
-calling volleys off, the miasmas staying put, the settings' buttons.
+tests check the parts that can be checked without looking: the stream's end,
+bend and brightness there, a volley following its curve and landing a point
+at a time, the lethal burst coming only once all have landed, a volley
+settling without its motes, undo calling volleys off, the miasmas staying
+put, the settings' buttons. REVIEW.md lists what's still to do.

@@ -560,7 +560,7 @@ draw_seat :: (canvas: *Draw.Canvas, layout: Layout, game: Game, fonts: Fonts, k:
     // Its frame: its colours' gradient, across it as its player sees it
     // (left to right), with its era's surface over it.
     *colours: [Draw.MAX_GRADIENT_COLOURS] Draw.RGBA
-    n, pattern := part_fill(era, game.identity[k], cell, k, time, colours)
+    n, pattern := part_fill(era, game.identity[k], cell, k, time, seat.angle, colours)
     for *c: colours[:n] {
         if out then c = Math.mix(c, BACKGROUND, 0.7) else if targeted then c = lighter(c, 0.15)
     }
@@ -617,12 +617,18 @@ draw_seat :: (canvas: *Draw.Canvas, layout: Layout, game: Game, fonts: Fonts, k:
     // (its damage is drawn from its miasma, the motes drawn over the parts)
 }
 
-// A drag's amount, by the finger, facing whoever's dragging (the stream of
-// motes to the finger is the motes').
-draw_drag :: (canvas: *Draw.Canvas, layout: Layout, game: Game, fonts: Fonts, drag: Drag, mouse: V2, artifact: Draw.RGBA) {
+// A drag's amount, by the finger, facing whoever's dragging, and a slow
+// pulse of the dragger's colour at the life total it's aimed at (the
+// stream of motes to it is the motes').
+draw_drag :: (canvas: *Draw.Canvas, layout: Layout, game: Game, fonts: Fonts, drag: Drag, mouse: V2, artifact: Draw.RGBA, time: f32) {
     cell := cell_of(layout)
     seat := layout.seats[drag.from]
     if Math.length(mouse - seat.icon) < 2 then return
+    if aimed, _ := aim(layout, game, drag.from, mouse) is not missed {
+        pulse := 1 + 0.12 * Math.sin(time * 6)
+        glow := lighter(accent_of(game.identity[drag.from], artifact), 0.4)
+        canvas.fill_glow(layout.seats[aimed].middle, 1.1 * cell * pulse, ⟨glow.r, glow.g, glow.b, 0.35⟩, add: 1)
+    }
     if to, amount := aim(layout, game, drag.from, mouse) is not missed {
         bubble := placed(mouse, seat.angle, ⟨0, -1.15 * cell⟩)
         canvas.fill_circle(bubble, 0.55 * cell, INK)
@@ -897,7 +903,7 @@ draw :: (canvas: *Draw.Canvas, layout: Layout, game: Game, fonts: Fonts, screen:
     draw_capsule(canvas, layout, game, screen)
     draw_font_button(canvas, layout, fonts)
     if screen.counts.open or screen.counts.settling then draw_counts(canvas, layout, screen)
-    if screen.drag.active then draw_drag(canvas, layout, game, fonts, screen.drag, screen.mouse, artifact_of(screen.era))
+    if screen.drag.active then draw_drag(canvas, layout, game, fonts, screen.drag, screen.mouse, artifact_of(screen.era), motes.time)
     if screen.picker.open then draw_picker(canvas, layout, fonts, screen.picker, game, artifact_of(screen.era))
     if screen.settings_open then draw_settings(canvas, layout, fonts, screen.era, screen.motion)
 }
@@ -1063,6 +1069,7 @@ main :: (args: [] string) [failed: string] {
     *motes: Particles.System
     *random := Random.generator()
     *pending: [MAX_PLAYERS] [MAX_PLAYERS] i32
+    *volleys: Volleys
 
     while Window.update_windows() {
         if w.close_requested then w.destroy()
@@ -1093,7 +1100,7 @@ main :: (args: [] string) [failed: string] {
         }
         if w.keys[.Z].PRESSED and w.modifiers.CONTROL and history.count > 0 {
             game = history.pop()
-            call_off_volleys(motes, pending)
+            call_off_volleys(motes, volleys, pending)
         }
 
         if w.mouse.buttons[.LEFT].PRESSED {
@@ -1106,7 +1113,9 @@ main :: (args: [] string) [failed: string] {
                     value := screen.picker.tens * 10 + screen.picker.units
                     if value > 0 {
                         history.add(game)
-                        strike(game, motes, random, layout, pending, screen.picker.from, screen.picker.to, value)
+                        // (from the grid: straight at them)
+                        target := layout.seats[screen.picker.to].middle
+                        strike(game, motes, volleys, random, layout, pending, screen.picker.from, screen.picker.to, value, target)
                     }
                     screen.picker.open = false
                 case cancel, outside: screen.picker.open = false
@@ -1156,7 +1165,7 @@ main :: (args: [] string) [failed: string] {
                 case .UNDO:
                     if history.count > 0 {
                         game = history.pop()
-                        call_off_volleys(motes, pending)
+                        call_off_volleys(motes, volleys, pending)
                     }
                 case .PLAYERS:
                     count := f32'game.players
@@ -1191,8 +1200,7 @@ main :: (args: [] string) [failed: string] {
                     if amount is {
                     case damage:
                         history.add(game)
-                        _, bend, _ := stream_path(layout, game, screen.drag.from, mouse)
-                        strike(game, motes, random, layout, pending, screen.drag.from, to, damage, bend)
+                        strike(game, motes, volleys, random, layout, pending, screen.drag.from, to, damage, mouse)
                     case asked:
                         screen.picker = ⟨true, screen.drag.from, to, DEFAULT_PICKED / 10, DEFAULT_PICKED % 10⟩
                     }
@@ -1213,7 +1221,7 @@ main :: (args: [] string) [failed: string] {
                     if count != game.players {
                         history.add(game)
                         game = new_game(count, game.identity)
-                        call_off_volleys(motes, pending)
+                        call_off_volleys(motes, volleys, pending)
                     }
                     screen.counts.open = false
                     screen.counts.settling = true
@@ -1267,7 +1275,7 @@ main :: (args: [] string) [failed: string] {
         }
         motes.update(seconds)
         if screen.drag.active then steer_stream(motes, layout, game, screen.drag.from, mouse, seconds)
-        land_volleys(motes, random, layout, game, pending)
+        steer_volleys(motes, volleys, random, layout, game, pending, seconds)
         if !screen.previewing then shown = shown_game(game, pending)
 
         // What changed this frame, stored (a failure to store isn't the game's).

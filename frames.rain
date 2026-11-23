@@ -9,7 +9,7 @@
 Era :: enum u8 {
     ORIGINAL       // 1993 to 2003: painterly, mottled and dark
     MODERN         // 2003 to 2014: smoother, more saturated, silver artifacts
-    M15            // 2014 on: finer still, brushed metal
+    M15            // 2014 on: lighter and quieter still, brushed metal
 }
 
 ERA_NAMES :: [3] string⟨"Original", "Modern", "M15"⟩
@@ -38,7 +38,8 @@ LOOKS :: [3][7] Look⟨
     ⟨⟨Draw.rgb(0xA7AFB6), .GRAIN, 2.0, 0.22⟩, ⟨Draw.rgb(0xF0ECDF), .CLOUDS, 3.0, 0.15⟩, ⟨Draw.rgb(0x1F6CB4), .CLOUDS, 2.5, 0.3⟩,
      ⟨Draw.rgb(0x24201F), .MARBLE, 3.0, 0.3⟩, ⟨Draw.rgb(0xC64A31), .MOTTLE, 2.0, 0.3⟩, ⟨Draw.rgb(0x2D7A47), .MOTTLE, 2.0, 0.3⟩,
      ⟨Draw.rgb(0xD3AE52), .MARBLE, 3.0, 0.25⟩⟩,
-    // M15: brushed silver, the finest and lightest surfaces.
+    // M15: brushed silver, the lightest and lowest in contrast (its scales
+    // are no smaller than the others': softer, not finer, as yet).
     ⟨⟨Draw.rgb(0xA3ADB5), .BRUSHED, 1.5, 0.3⟩, ⟨Draw.rgb(0xF3EFE3), .CLOUDS, 3.5, 0.12⟩, ⟨Draw.rgb(0x1B71C1), .CLOUDS, 3.0, 0.25⟩,
      ⟨Draw.rgb(0x272320), .MOTTLE, 3.0, 0.22⟩, ⟨Draw.rgb(0xCF4B35), .CRACKS, 2.5, 0.18⟩, ⟨Draw.rgb(0x2E8050), .MOTTLE, 2.5, 0.25⟩,
      ⟨Draw.rgb(0xD9B65C), .CLOUDS, 2.5, 0.2⟩⟩
@@ -71,8 +72,9 @@ artifact_of :: (era: Era -> Draw.RGBA) #pure {
 
 // A part's fill, for its player's colours in an era: its gradient's colours
 // (into, how many) and its surface (features sized in pixels, cell's
-// share, seeded by its seat so neighbours differ, moved to time).
-part_fill :: (era: Era, identity: Identity, cell: f32, seat: i64, time: f32, into: [] *Draw.RGBA -> count: i64, pattern: Draw.Pattern) #pure {
+// share, seeded by its seat so neighbours differ, moved to time, turned to
+// face its player as their text is: its water falls toward them).
+part_fill :: (era: Era, identity: Identity, cell: f32, seat: i64, time: f32, angle: f32, into: [] *Draw.RGBA -> count: i64, pattern: Draw.Pattern) #pure {
     looks := LOOKS[i64'era]
     *colours: i64 = 0
     *only: i64 = 0
@@ -101,5 +103,5 @@ part_fill :: (era: Era, identity: Identity, cell: f32, seat: i64, time: f32, int
         into[1] = Math.mix(look.ground, BACKGROUND, 0.4)
         count = 2
     }
-    pattern = ⟨kind: look.kind, scale: look.scale * SURFACE_SCALE * cell, strength: look.strength, seed: f32'(seat + 1), time: time⟩
+    pattern = ⟨kind: look.kind, scale: look.scale * SURFACE_SCALE * cell, strength: look.strength, seed: f32'(seat + 1), time: time, angle: angle⟩
 }

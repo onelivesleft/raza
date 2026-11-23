@@ -65,19 +65,11 @@ STYLES :: [6] Mote_Style⟨
 ARTIFACT_STYLE :: 5
 
 // A mote's tag: what it is (a miasma's, the stream's, a volley's, a
-// landing's), and for a volley's, its target, its attacker, and whether
-// it's a lethal volley's last.
+// landing's), and in its low 16 bits a miasma's seat or a volley's id.
 MIASMA_MOTE  :: u32'1 << 16
 STREAM_MOTE  :: u32'2 << 16
 VOLLEY_MOTE  :: u32'4 << 16
 SPLASH_MOTE  :: u32'8 << 16
-LETHAL_MOTE  :: u32'16 << 16
-
-volley_tag :: (to: i64, from: i64, lethal: bool -> u32) #pure {
-    *tag := VOLLEY_MOTE | u32'to | (u32'from << 8)
-    if lethal then tag = tag | LETHAL_MOTE
-    return tag
-}
 
 // How many motes a second each miasma makes, and the stream (more for a
 // bigger amount); how far about its spot a miasma's are born (cells), and
@@ -179,6 +171,24 @@ curve_at :: (a: V2, b: V2, c: V2, t: f32 -> V2) #pure {
     return Math.mix(Math.mix(a, b, t), Math.mix(b, c, t), t)
 }
 
+// A mote t of the way along a path (start, bent toward bend, to end),
+// swaying to one side by its own share of sway (from its seed; none at
+// either end, so motes leave together and arrive together).
+on_path :: (start: V2, bend: V2, end: V2, t: f32, seed: f32, age: f32, sway: f32, cell: f32 -> V2) #pure {
+    on := curve_at(start, bend, end, t)
+    ahead := curve_at(start, bend, end, Math.min(t + 0.01, 1)) - curve_at(start, bend, end, Math.max(t - 0.01, 0))
+    *way := V2⟨1, 0⟩
+    if Math.length(ahead) > 0.0001 then way = Math.normalize(ahead)
+    across := V2⟨0 - way.y, way.x⟩
+    share := Math.fract(seed * 0.618) * 2 - 1
+    off := Math.sin(t * 3.14159) * (share * sway + 0.08 * Math.sin(age * 7 + seed)) * cell
+    return on + across * off
+}
+
+// How long a path mote's life is against the time it takes along its path:
+// longer, so it's still bright when it gets there (taken out then).
+PATH_LIFE :: 1.6
+
 // The stream for a frame of a drag: motes from the dragger's miasma, more
 // for a bigger amount, set off along its path (steer_stream moves them).
 feed_stream :: (motes: *Particles.System, random: *Random.Generator, layout: Layout, game: Game, from: i64, finger: V2, amount: i32, seconds: f32) {
@@ -188,7 +198,10 @@ feed_stream :: (motes: *Particles.System, random: *Random.Generator, layout: Lay
     if Math.length(finger - seat.icon) < 1 then return
     for _: 0 < births(random, rate, seconds) {
         *m := mote_of(random, game.identity[from], seat.icon, ⟨0, 0⟩, seat.toward * -1, cell, STREAM_MOTE)
-        m.life = STREAM_TRAVEL * f32'random.below(0.85, 1.15)
+        // (its time along the path, in home.x: its life is longer)
+        travel := STREAM_TRAVEL * f32'random.below(0.85, 1.15)
+        m.home = ⟨travel, 0⟩
+        m.life = travel * PATH_LIFE
         m.gravity = ⟨0, 0⟩
         m.swirl = 0
         m.drag = 0
@@ -196,113 +209,170 @@ feed_stream :: (motes: *Particles.System, random: *Random.Generator, layout: Lay
     }
 }
 
-// The stream's motes moved along its path for a frame: each t of the way
-// (its age over its life) along the curve, swaying to one side by its own
-// share (none at either end, so it leaves the miasma and comes to the
-// life total as one), its velocity what it moved (for its streak).
+// The stream's motes moved along its path for a frame, each t of the way
+// (its age over its time along it), its velocity what it moved (for its
+// streak); one that's come to the end is taken out there, still bright.
 steer_stream :: (motes: *Particles.System, layout: Layout, game: Game, from: i64, finger: V2, seconds: f32) {
     if seconds <= 0 then return
     cell := cell_of(layout)
     start, bend, end := stream_path(layout, game, from, finger)
     for *m: motes.motes {
         if m.tag & STREAM_MOTE == 0 then continue
-        t := Math.clamp(m.age / Math.max(m.life, 0.0001), 0, 1)
-        on := curve_at(start, bend, end, t)
-        ahead := curve_at(start, bend, end, Math.min(t + 0.01, 1)) - curve_at(start, bend, end, Math.max(t - 0.01, 0))
-        *way := V2⟨1, 0⟩
-        if Math.length(ahead) > 0.0001 then way = Math.normalize(ahead)
-        across := V2⟨0 - way.y, way.x⟩
-        share := Math.fract(m.seed * 0.618) * 2 - 1
-        sway := Math.sin(t * 3.14159) * (share * STREAM_SWAY + 0.08 * Math.sin(m.age * 7 + m.seed)) * cell
-        next := on + across * sway
+        t := m.age / Math.max(m.home.x, 0.0001)
+        if t >= 1 {
+            remove m
+            continue
+        }
+        next := on_path(start, bend, end, t, m.seed, m.age, STREAM_SWAY, cell)
         m.velocity = (next - m.at) / seconds
         m.at = next
     }
 }
 
-// A volley: a mote a point of damage, from the attacker's miasma to the
-// target's life, each a little after the last (quicker for more), each
-// set off toward the stream's bend, flung a little to one side or the
-// other, and pulled in. The last of a volley whose commander damage became
-// lethal is marked so.
-fire_volley :: (motes: *Particles.System, random: *Random.Generator, layout: Layout, identity: Identity, from: i64, to: i64, amount: i32, lethal: bool,
-                bend: V2) {
+// A volley in flight: who it's from and to, the path its motes take (the
+// stream's, as it was let go), how many points it is and how many have
+// landed, and whether it made its commander damage lethal.
+Volley :: struct {
+    id:     u32
+    from:   i64
+    to:     i64
+    start:  V2
+    bend:   V2
+    end:    V2
+    amount: i32
+    landed: i32
+    lethal: bool
+}
+
+Volleys :: struct {
+    list:    [..] Volley
+    next_id: u32 = 1
+}
+
+// How long a volley's mote takes along its path, and how far it strays.
+VOLLEY_TRAVEL :: 0.5
+VOLLEY_SWAY :: 0.3
+
+// A volley fired: a mote a point of damage along its path, each a little
+// after the last (quicker for more), bigger and brighter than the
+// miasma's so each can be followed. Its motes are tagged with its id.
+fire_volley :: (motes: *Particles.System, volleys: *Volleys, random: *Random.Generator, layout: Layout, identity: Identity, from: i64, to: i64,
+                amount: i32, lethal: bool, start: V2, bend: V2, end: V2) {
+    if amount <= 0 then return
     cell := cell_of(layout)
-    source := layout.seats[from].icon
-    target := layout.seats[to].middle
-    *along := Math.normalize(target - source)
-    if Math.length(bend - source) > 1 then along = Math.normalize(bend - source)
-    across := V2⟨0 - along.y, along.x⟩
+    id := volleys.next_id
+    volleys.next_id = if volleys.next_id >= 0xFFFF then 1 else volleys.next_id + 1
+    `global volleys.list.add(⟨id: id, from: from, to: to, start: start, bend: bend, end: end, amount: amount, lethal: lethal⟩)
     interval := Math.min(1.2 / f32'Math.max(amount, 1), 0.07)
     for i: 0 < i64'amount {
-        side := f32'random.below(-1.0, 1.0)
-        *m := mote_of(random, identity, source, along * 4 * cell + across * side * 4 * cell, layout.seats[from].toward * -1, cell,
-                      volley_tag(to, from, lethal and i == i64'amount - 1))
+        *m := mote_of(random, identity, start, ⟨0, 0⟩, layout.seats[from].toward * -1, cell, VOLLEY_MOTE | id)
         m.delay = f32'i * interval
-        m.home = target
-        m.pull = 40
-        m.drag = 2.5
-        m.arrive = 0.35 * cell
-        m.life = 4
-        // (bigger and brighter than the miasma's, so each can be followed)
+        m.life = VOLLEY_TRAVEL * PATH_LIFE
         m.size = m.size * 1.5 + 0.08 * cell
         m.size_end = m.size
         m.add = Math.max(m.add, 0.6)
         m.flicker = 0
         m.gravity = ⟨0, 0⟩
-        m.swirl = m.swirl * 0.3
+        m.swirl = 0
+        m.drag = 0
         motes.add(m)
     }
 }
 
 // Damage dealt as a volley: the game changed at once (so undo is as
-// before), its motes flying, the life shown counting down as they land (by
-// pending, until they have). The volley's last is marked lethal when this
-// commander damage made it so.
-strike :: (game: *Game, motes: *Particles.System, random: *Random.Generator, layout: Layout, pending: *[MAX_PLAYERS] [MAX_PLAYERS] i32,
-           from: i64, to: i64, amount: i32, bend: V2 = ⟨0, 0⟩) {
+// before), its motes flying along the stream's path from where the finger
+// let go (finger), the life shown counting down as they land (by pending,
+// until they have). It's lethal when this commander damage made it so.
+strike :: (game: *Game, motes: *Particles.System, volleys: *Volleys, random: *Random.Generator, layout: Layout,
+           pending: *[MAX_PLAYERS] [MAX_PLAYERS] i32, from: i64, to: i64, amount: i32, finger: V2) {
     if amount <= 0 or from == to then return
     was := game.commander[to][from]
     game.deal(from, to, amount)
     lethal := was < LETHAL_COMMANDER_DAMAGE and game.commander[to][from] >= LETHAL_COMMANDER_DAMAGE
     pending[to][from] += amount
-    // (no bend given: straight at them, by their middle)
-    *toward := bend
-    if toward == V2⟨0, 0⟩ then toward = (layout.seats[from].icon + layout.seats[to].middle) / 2
-    fire_volley(motes, random, layout, game.identity[from], from, to, amount, lethal, toward)
+    // (the path ends at their life total whatever the finger's over now)
+    start := layout.seats[from].icon
+    end := layout.seats[to].middle
+    middle := (start + end) / 2
+    bend := middle + (finger - middle) * STREAM_BEND
+    fire_volley(motes, volleys, random, layout, game.identity[from], from, to, amount, lethal, start, bend, end)
 }
 
-// What's landed since the last frame: each volley mote a point off the
-// life shown (pending's), with a splash; a lethal volley's last a burst.
-land_volleys :: (motes: *Particles.System, random: *Random.Generator, layout: Layout, game: Game, pending: *[MAX_PLAYERS] [MAX_PLAYERS] i32) {
+// The volleys moved on a frame: each mote along its volley's path, landing
+// when it comes to the end (a point off the life shown, and a splash); a
+// volley with no motes left is settled (any points not landed come off
+// what's pending too: a mote that went before it landed counts) and, if
+// lethal, ends in a burst. How many bursts there were.
+steer_volleys :: (motes: *Particles.System, volleys: *Volleys, random: *Random.Generator, layout: Layout, game: Game,
+                  pending: *[MAX_PLAYERS] [MAX_PLAYERS] i32, seconds: f32 -> bursts: i64) {
+    bursts = 0
     cell := cell_of(layout)
     #with scratch.rewind()
-    *landed: [..] Particles.Mote in scratch
-    for m: motes.arrived { `scratch landed.add(m) }
-    motes.arrived.clear()
-    for m: landed {
-        if m.tag & VOLLEY_MOTE == 0 then continue
-        to := i64'(m.tag & 0xFF)
-        from := i64'((m.tag >> 8) & 0xFF)
-        if pending[to][from] > 0 then pending[to][from] -= 1
-        lethal := m.tag & LETHAL_MOTE != 0
-        splash := if lethal then 90 else 14
-        reach: f32 = if lethal then 5 else 2.8
-        for _: 0 < splash {
-            angle := f32'random.below(0.0, Math.TAU)
-            speed := f32'random.below(0.3, 1.0) * reach * cell
-            *s := mote_of(random, game.identity[from], m.at, V2⟨Math.cos(angle), Math.sin(angle)⟩ * speed, layout.seats[to].toward * -1, cell, SPLASH_MOTE)
-            s.drag = 3
-            if lethal {
-                s.life = s.life * 1.2
-                s.size = s.size * 1.8
-                s.size_end = s.size_end * 1.5
-            }
-            else {
-                s.life = s.life * 0.5
-            }
-            motes.add(s)
+    // (splashes made after the loop over the motes: none added while in it)
+    *splashes: [..] V2 in scratch
+    *splash_volleys: [..] i64 in scratch
+    for *m: motes.motes {
+        if m.tag & VOLLEY_MOTE == 0 or m.delay > 0 then continue
+        id := m.tag & 0xFFFF
+        *v: i64 = -1
+        for volley, k: volleys.list { if volley.id == id then v = k }
+        if v < 0 {
+            remove m
+            continue
         }
+        volley := volleys.list[v]
+        t := m.age / VOLLEY_TRAVEL
+        if t >= 1 {
+            if pending[volley.to][volley.from] > 0 then pending[volley.to][volley.from] -= 1
+            volleys.list[v].landed += 1
+            `scratch splashes.add(volley.end)
+            `scratch splash_volleys.add(v)
+            remove m
+            continue
+        }
+        next := on_path(volley.start, volley.bend, volley.end, t, m.seed, m.age, VOLLEY_SWAY, cell)
+        if seconds > 0 then m.velocity = (next - m.at) / seconds
+        m.at = next
+    }
+    for at, i: splashes {
+        volley := volleys.list[splash_volleys[i]]
+        splash(motes, random, layout, game.identity[volley.from], volley.to, at, false)
+    }
+    // Settled: those with no motes left.
+    for *volley: volleys.list {
+        *left := 0
+        for m: motes.motes { if m.tag & VOLLEY_MOTE != 0 and m.tag & 0xFFFF == volley.id then left += 1 }
+        if left > 0 then continue
+        unlanded := volley.amount - volley.landed
+        if unlanded > 0 then pending[volley.to][volley.from] = Math.max(pending[volley.to][volley.from] - unlanded, 0)
+        if volley.lethal {
+            splash(motes, random, layout, game.identity[volley.from], volley.to, volley.end, true)
+            bursts += 1
+        }
+        remove volley
+    }
+}
+
+// A landing's splash at a place: motes of the attacker's thrown out from
+// it; a lethal volley's end a much bigger burst.
+splash :: (motes: *Particles.System, random: *Random.Generator, layout: Layout, identity: Identity, to: i64, at: V2, lethal: bool) {
+    cell := cell_of(layout)
+    count := if lethal then 90 else 14
+    reach: f32 = if lethal then 5 else 2.8
+    for _: 0 < count {
+        angle := f32'random.below(0.0, Math.TAU)
+        speed := f32'random.below(0.3, 1.0) * reach * cell
+        *s := mote_of(random, identity, at, V2⟨Math.cos(angle), Math.sin(angle)⟩ * speed, layout.seats[to].toward * -1, cell, SPLASH_MOTE)
+        s.drag = 3
+        if lethal {
+            s.life = s.life * 1.2
+            s.size = s.size * 1.8
+            s.size_end = s.size_end * 1.5
+        }
+        else {
+            s.life = s.life * 0.5
+        }
+        motes.add(s)
     }
 }
 
@@ -318,21 +388,23 @@ shown_game :: (game: Game, pending: [MAX_PLAYERS] [MAX_PLAYERS] i32 -> shown: Ga
     }
 }
 
-// Every volley's motes gone, and nothing pending (an undo, a new game).
-call_off_volleys :: (motes: *Particles.System, pending: *[MAX_PLAYERS] [MAX_PLAYERS] i32) {
+// Every volley's motes gone, every volley forgotten, and nothing pending
+// (an undo, a new game).
+call_off_volleys :: (motes: *Particles.System, volleys: *Volleys, pending: *[MAX_PLAYERS] [MAX_PLAYERS] i32) {
     for *m: motes.motes {
         if m.tag & VOLLEY_MOTE != 0 then remove m
     }
-    motes.arrived.clear()
+    volleys.list.clear()
     for *row: pending { for *p: row { p = 0 } }
 }
 
 // The motes as they'd be two seconds in (for snapshots, the same each
 // time): the miasmas, a drag's stream from from to finger (from -1: none),
-// and a volley of volley from from to to fired half a second before the end
-// (0: none).
+// and a volley of volley from from to to, let go there, a third of a second
+// before the end (0: none).
 settled_motes :: (layout: Layout, game: Game, from: i64 = -1, finger: V2 = ⟨0, 0⟩, amount: i32 = 0, to: i64 = 0, volley: i32 = 0 -> motes: Particles.System) {
     *made: Particles.System = ⟨flow_scale: MOTE_FLOW * cell_of(layout)⟩
+    *volleys: Volleys
     *random := Random.generator(seed: 1)
     *pending: [MAX_PLAYERS] [MAX_PLAYERS] i32
     for frame: 0 < 120 {
@@ -340,12 +412,12 @@ settled_motes :: (layout: Layout, game: Game, from: i64 = -1, finger: V2 = ⟨0,
         feed_miasmas(made, random, layout, game, seconds)
         if from >= 0 and volley == 0 then feed_stream(made, random, layout, game, from, finger, amount, seconds)
         if frame == 100 and volley > 0 {
-            _, bend, _ := stream_path(layout, game, from, finger)
-            fire_volley(made, random, layout, game.identity[from], from, to, volley, false, bend)
+            start, bend, end := stream_path(layout, game, from, finger)
+            fire_volley(made, volleys, random, layout, game.identity[from], from, to, volley, false, start, bend, end)
         }
         made.update(seconds)
         if from >= 0 and volley == 0 then steer_stream(made, layout, game, from, finger, seconds)
-        land_volleys(made, random, layout, game, pending)
+        steer_volleys(made, volleys, random, layout, game, pending, seconds)
     }
     motes = made
 }
