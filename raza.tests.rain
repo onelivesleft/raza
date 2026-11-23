@@ -244,6 +244,41 @@ dragged_lines_pass_under_the_finger :: () #test {
     if aimed := share_through(layout, layout.centre) is not absent then assert(false, "the centre aims nowhere, not «aimed»")
 }
 
+// The settings panel's buttons are each where they're drawn, inside the
+// panel and apart; the rest of the panel is its own, and past it is outside.
+settings_buttons_are_where_drawn :: () #test {
+    layout := laid_out(4, LANDSCAPE)
+    at :: (layout: Layout, local: V2 -> Settings_Part) { return settings_part_at(layout, layout.centre + local * cell_of(layout)) }
+    middle :: (low: V2, high: V2 -> V2) { return (low + high) / 2 }
+    for corner: [4] V2⟨QUIT_LOW, QUIT_HIGH, RESET_LOW, RESET_HIGH⟩ {
+        assert(Math.abs(corner.x) < SETTINGS_HALF.x and Math.abs(corner.y) < SETTINGS_HALF.y, "«corner» is inside the panel")
+    }
+    if at(layout, middle(RESET_LOW, RESET_HIGH)) is {
+    case reset_lines: _
+    case artifact, quit, panel, outside: assert(false, "Reset's middle resets the lines")
+    }
+    if at(layout, middle(QUIT_LOW, QUIT_HIGH)) is {
+    case quit: _
+    case artifact, reset_lines, panel, outside: assert(false, "Quit's middle quits")
+    }
+    for look: [2] Artifact_Look⟨.NEW, .OLD⟩ {
+        low, high := look_button(look)
+        assert(!in_box(low, RESET_LOW, RESET_HIGH) and !in_box(high, RESET_LOW, RESET_HIGH),"«look»'s button is apart from Reset")
+        if at(layout, middle(low, high)) is {
+        case artifact: assert(artifact == look, "«look»'s middle picks «artifact»")
+        case reset_lines, quit, panel, outside: assert(false, "«look»'s middle picks it")
+        }
+    }
+    if at(layout, V2⟨-2.8, 1.9⟩) is {
+    case panel: _
+    case artifact, reset_lines, quit, outside: assert(false, "the panel's corner is the panel's")
+    }
+    if at(layout, V2⟨0, SETTINGS_HALF.y + 0.5⟩) is {
+    case outside: _
+    case artifact, reset_lines, quit, panel: assert(false, "below the panel is outside it")
+    }
+}
+
 // A turn there and back is where it began.
 frames_turn_back :: () #test {
     for angle: [4] f32⟨0, f32'Math.PI / 2, f32'Math.PI, -f32'Math.PI / 2⟩ {

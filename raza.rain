@@ -781,39 +781,51 @@ Screen_State :: struct {
 }
 
 ////////////////////////////////
-// Settings: a panel over the middle of the screen (for now, which artifact
-// colour a colourless player is)
+// Settings: a panel over the middle of the screen: which artifact colour a
+// colourless player is, putting every count's lines back as they start, and
+// quitting.
 
-SETTINGS_HALF :: V2⟨3.4, 1.5⟩      // in cells
+SETTINGS_HALF :: V2⟨3.4, 2.1⟩      // in cells
 
 // The artifact colours' buttons, in cells from the screen's centre: each
 // from its low corner to its high.
 look_button :: (look: Artifact_Look -> low: V2, high: V2) #pure {
     left: f32 = if look == .NEW then -0.2 else 1.6
-    low = ⟨left, 0.0⟩
-    high = ⟨left + 1.6, 1.0⟩
+    low = ⟨left, -0.5⟩
+    high = ⟨left + 1.6, 0.5⟩
 }
 
 // The Quit button, in cells from the screen's centre, across from the
 // panel's title.
-QUIT_LOW  :: V2⟨1.6, -1.25⟩
-QUIT_HIGH :: V2⟨3.2, -0.45⟩
+QUIT_LOW  :: V2⟨1.6, -1.85⟩
+QUIT_HIGH :: V2⟨3.2, -1.05⟩
 QUIT_RED  :: Draw.rgb(0x8A3030)
+
+// The Reset button, under the artifact colours': every count's lines back
+// where they start (equal_splits').
+RESET_LOW  :: V2⟨-0.2, 0.8⟩
+RESET_HIGH :: V2⟨3.2, 1.8⟩
 
 Settings_Part :: union {
     artifact: Artifact_Look
+    reset_lines
     quit
     panel
     outside
 }
 
+in_box :: (p: V2, low: V2, high: V2 -> bool) #pure {
+    return p.x >= low.x and p.x <= high.x and p.y >= low.y and p.y <= high.y
+}
+
 settings_part_at :: (layout: Layout, p: V2 -> Settings_Part) #pure {
     local := (p - layout.centre) / cell_of(layout)
     if Math.abs(local.x) > SETTINGS_HALF.x or Math.abs(local.y) > SETTINGS_HALF.y then return Settings_Part.outside
-    if local.x >= QUIT_LOW.x and local.x <= QUIT_HIGH.x and local.y >= QUIT_LOW.y and local.y <= QUIT_HIGH.y then return Settings_Part.quit
+    if in_box(local, QUIT_LOW, QUIT_HIGH) then return Settings_Part.quit
+    if in_box(local, RESET_LOW, RESET_HIGH) then return Settings_Part.reset_lines
     for look: [2] Artifact_Look⟨.NEW, .OLD⟩ {
         low, high := look_button(look)
-        if local.x >= low.x and local.x <= high.x and local.y >= low.y and local.y <= high.y then return Settings_Part.artifact(look)
+        if in_box(local, low, high) then return Settings_Part.artifact(look)
     }
     return Settings_Part.panel
 }
@@ -823,10 +835,13 @@ draw_settings :: (canvas: *Draw.Canvas, layout: Layout, fonts: Fonts, look: Arti
     c := layout.centre
     canvas.fill_rect(⟨0, 0⟩, layout.size, Draw.rgba(0x000000, 0.45))
     canvas.fill_rounded_rect(c - SETTINGS_HALF * cell, SETTINGS_HALF * 2 * cell, 0.3 * cell, CAPSULE)
-    draw_centred(canvas, fonts.label, c + V2⟨-2.1, -0.85⟩ * cell, 0, "Settings", INK)
+    draw_centred(canvas, fonts.label, c + V2⟨-2.1, -1.45⟩ * cell, 0, "Settings", INK)
     canvas.fill_rounded_rect(c + QUIT_LOW * cell, (QUIT_HIGH - QUIT_LOW) * cell, 0.16 * cell, QUIT_RED)
     draw_centred(canvas, fonts.label, c + (QUIT_LOW + QUIT_HIGH) / 2 * cell, 0, "Quit", INK)
-    draw_centred(canvas, fonts.label, c + V2⟨-1.75, 0.5⟩ * cell, 0, "Artifacts", lighter(CAPSULE, 0.6))
+    draw_centred(canvas, fonts.label, c + V2⟨-1.75, 0.0⟩ * cell, 0, "Artifacts", lighter(CAPSULE, 0.6))
+    draw_centred(canvas, fonts.label, c + V2⟨-1.75, (RESET_LOW.y + RESET_HIGH.y) / 2⟩ * cell, 0, "Lines", lighter(CAPSULE, 0.6))
+    canvas.fill_rounded_rect(c + RESET_LOW * cell, (RESET_HIGH - RESET_LOW) * cell, 0.16 * cell, lighter(CAPSULE, 0.25))
+    draw_centred(canvas, fonts.label, c + (RESET_LOW + RESET_HIGH) / 2 * cell, 0, "Reset", INK)
     for choice, i: [2] Artifact_Look⟨.NEW, .OLD⟩ {
         low, high := look_button(choice)
         colour := ARTIFACT_COLOURS[i]
@@ -1052,6 +1067,16 @@ main :: (args: [] string) [failed: string] {
                 setting := settings_part_at(layout, mouse)
                 if setting is {
                 case artifact: look = artifact
+                case reset_lines:
+                    // Every count's lines forgotten, here and stored: a count
+                    // whose lines don't fit is laid out as equal_splits starts it.
+                    for n: 2 <= MAX_PLAYERS {
+                        splits[n] = ⟨⟩
+                        if Defaults.remove(`scratch "splits.«n»") is { case absent, os_error: _ }
+                    }
+                    splits[game.players] = equal_splits(game.players, size)
+                    layout = lay_out(size, splits[game.players])
+                    if fonts.resize_life(TEXT_FAMILIES[family], layout) is os_error then fail: failed = "no font: «os_error»"
                 case quit:
                     // (what's changed is already stored, each frame's as it's made)
                     w.destroy()
