@@ -74,10 +74,11 @@ STREAM_STEPS :: 16
 // to its player's right and y up, at rest; drawn out, x across the curve
 // and y back along it, so what rises trails behind), out, the way out of
 // the field from its spine as long as how far out it is (0 at the spine, 1
-// at its reach), and drawn (1 drawn out, 0 at rest). (The field's parts,
-// as a helper takes its stage's Uniforms' values.)
+// at its reach), drawn (1 drawn out, 0 at rest), and u, how far along
+// what's covered of its curve (0 at from, 1 at to; 0 at rest). (The
+// field's parts, as a helper takes its stage's Uniforms' values.)
 field_place :: (pixel: V2, start: V2, bend: V2, end: V2, up: V2, reach: f32, width_from: f32, width_to: f32, from: f32, to: f32
-                -> q: V2, out: V2, drawn: f32) {
+                -> q: V2, out: V2, drawn: f32, u: f32) {
     right := V2⟨0 - up.y, up.x⟩
     span := Math.length(end - start) + Math.length(bend - start)
     if span < 0.5 {
@@ -85,6 +86,7 @@ field_place :: (pixel: V2, start: V2, bend: V2, end: V2, up: V2, reach: f32, wid
         q = V2⟨Math.dot(d, right), Math.dot(d, up)⟩ / reach
         out = q / width_from
         drawn = 0
+        u = 0
     }
     else {
         // (the nearest point of the curve: its distance, its share of the
@@ -98,8 +100,8 @@ field_place :: (pixel: V2, start: V2, bend: V2, end: V2, up: V2, reach: f32, wid
         *walked: f32 = 0
         *a := curve_at(start, bend, end, from)
         for i: 1 <= STREAM_STEPS {
-            u := f32'i / f32'STREAM_STEPS
-            b := curve_at(start, bend, end, Math.mix(from, to, u))
+            step := f32'i / f32'STREAM_STEPS
+            b := curve_at(start, bend, end, Math.mix(from, to, step))
             ab := b - a
             long := Math.max(Math.length(ab), 0.0001)
             reach_along := Math.dot(pixel - a, ab) / (long * long)
@@ -122,6 +124,7 @@ field_place :: (pixel: V2, start: V2, bend: V2, end: V2, up: V2, reach: f32, wid
         q = V2⟨best_across, 0 - best_along⟩ / reach
         out = V2⟨best_side * best / (reach * width), 0⟩
         drawn = 1
+        u = best_u
     }
 }
 
@@ -353,6 +356,35 @@ oil_at :: (q: V2, out: V2, drawn: f32, time: f32, seed: f32, stir: f32 -> paint:
     light = V3⟨spec, spec, spec⟩ * (cover * 0.5)
 }
 
+// Black's tendril: a strand of shadow along a field's curve, thick at its
+// base and tapering to its tip (u, how far along it), writhing about its
+// spine (a wave and noise running along it: most at a free tip, groping;
+// at a tip plunged into something, pinned there as at its base), dark as
+// oil, a violet sheen at its edges and glints sliding along it, smoke about
+// it. Its form: 0 its tip free, 2 plunged, 3 plunged and pulsing (swellings
+// running along it toward its tip). Within a field of width 1: its writhing
+// and its thickness are within its reach.
+tendril_at :: (q: V2, u: f32, time: f32, seed: f32, stir: f32, form: f32 -> paint: V4, light: V3) {
+    along := 0 - q.y
+    envelope := if form > 1.5 then 0.32 * Math.sin(u * f32'Math.PI) else 0.04 + 0.4 * u
+    speed := 1 + stir
+    w := envelope * (0.6 * Math.sin(along * 2.0 + time * 1.7 * speed + seed) + 0.9 * (Patterns.noise(V2⟨along * 1.2 - time * 0.9 * speed, seed⟩) - 0.5))
+    *half := Math.mix(0.4, 0.05, Math.pow(u, 1.5))
+    if form > 2.5 then half = half * (1 + 0.6 * Math.max(Math.sin(along * 6 - time * 28), 0))
+    d := Math.abs(q.x - w) / half
+    body := Math.clamp((1 - d) * 5, 0, 1)
+    z := Math.sqrt(Math.max(1 - d * d, 0))
+    flow := Patterns.noise(V2⟨along * 4 - time * 2, (q.x - w) / half * 2 + seed⟩)
+    sheen := Math.pow(1 - z, 3) * (0.5 + 0.7 * flow)
+    glint := Math.pow(Math.clamp(z * flow, 0, 1), 10) * 0.5
+    rgb := V3⟨0.02, 0.015, 0.03⟩ + V3⟨0.34, 0.2, 0.48⟩ * sheen + V3⟨0.45, 0.45, 0.55⟩ * glint
+    // (smoke about it, dark and thin, curling)
+    smoke := Math.exp(0 - Math.max(d - 1, 0) * 0.8) * 0.5 * (0.5 + 0.5 * Patterns.noise(V2⟨along * 2 - time * 0.7, q.x * 3 + seed⟩))
+    a := body + smoke * (1 - body)
+    paint = V4⟨rgb.x * body, rgb.y * body, rgb.z * body, a⟩
+    light = V3⟨0, 0, 0⟩
+}
+
 ////////////////////////////////
 // An artifact's liquid metal
 
@@ -421,12 +453,20 @@ Water_Field :: shader { vertex: Draw.quad_place; fragment: water_shade }
 Oil_Field :: shader { vertex: Draw.quad_place; fragment: oil_shade }
 Chrome_Field :: shader { vertex: Draw.quad_place; fragment: chrome_shade }
 Wind_Field :: shader { vertex: Draw.quad_place; fragment: wind_shade }
+Tendril_Field :: shader { vertex: Draw.quad_place; fragment: tendril_shade }
+
+tendril_shade :: (from: Draw.Quad_Between, field: Shader.Uniforms(Field) -> colour: V4) {
+    q, out, _, u := field_place(from.pixel, field.start, field.bend, field.end, field.up, field.reach, field.width_from, field.width_to, field.from, field.to)
+    if Math.length(out) >= 1 then return ⟨0, 0, 0, 0⟩
+    paint, light := tendril_at(q, u, field.time, field.seed, field.stir, field.form)
+    colour = field_colour(paint, light, field.fade, field.glow)
+}
 
 // (Each stage: where the pixel is in the field, nothing past its reach,
 // then its element's colour there. drawn is 2 for a stream drawn as it
 // selects, form 1: its element's own look for that.)
 sun_shade :: (from: Draw.Quad_Between, field: Shader.Uniforms(Field) -> colour: V4) {
-    q, out, drawn := field_place(from.pixel, field.start, field.bend, field.end, field.up, field.reach, field.width_from, field.width_to, field.from, field.to)
+    q, out, drawn, _ := field_place(from.pixel, field.start, field.bend, field.end, field.up, field.reach, field.width_from, field.width_to, field.from, field.to)
     if Math.length(out) >= 1 then return ⟨0, 0, 0, 0⟩
     if field.form > 0.5 {
         beam, beam_light := beam_at(q, out, field.time, field.seed)
@@ -437,7 +477,7 @@ sun_shade :: (from: Draw.Quad_Between, field: Shader.Uniforms(Field) -> colour: 
 }
 
 fire_shade :: (from: Draw.Quad_Between, field: Shader.Uniforms(Field) -> colour: V4) {
-    q, out, drawn := field_place(from.pixel, field.start, field.bend, field.end, field.up, field.reach, field.width_from, field.width_to, field.from, field.to)
+    q, out, drawn, _ := field_place(from.pixel, field.start, field.bend, field.end, field.up, field.reach, field.width_from, field.width_to, field.from, field.to)
     if Math.length(out) >= 1 then return ⟨0, 0, 0, 0⟩
     if field.form > 0.5 {
         bolt, bolt_light := lightning_at(q, out, field.time, field.seed)
@@ -448,28 +488,28 @@ fire_shade :: (from: Draw.Quad_Between, field: Shader.Uniforms(Field) -> colour:
 }
 
 water_shade :: (from: Draw.Quad_Between, field: Shader.Uniforms(Field) -> colour: V4) {
-    q, out, drawn := field_place(from.pixel, field.start, field.bend, field.end, field.up, field.reach, field.width_from, field.width_to, field.from, field.to)
+    q, out, drawn, _ := field_place(from.pixel, field.start, field.bend, field.end, field.up, field.reach, field.width_from, field.width_to, field.from, field.to)
     if Math.length(out) >= 1 then return ⟨0, 0, 0, 0⟩
     paint, light := water_at(q, out, drawn * (1 + field.form), field.time, field.seed, field.stir)
     colour = field_colour(paint, light, field.fade, field.glow)
 }
 
 oil_shade :: (from: Draw.Quad_Between, field: Shader.Uniforms(Field) -> colour: V4) {
-    q, out, drawn := field_place(from.pixel, field.start, field.bend, field.end, field.up, field.reach, field.width_from, field.width_to, field.from, field.to)
+    q, out, drawn, _ := field_place(from.pixel, field.start, field.bend, field.end, field.up, field.reach, field.width_from, field.width_to, field.from, field.to)
     if Math.length(out) >= 1 then return ⟨0, 0, 0, 0⟩
     paint, light := oil_at(q, out, drawn, field.time, field.seed, field.stir)
     colour = field_colour(paint, light, field.fade, field.glow)
 }
 
 chrome_shade :: (from: Draw.Quad_Between, field: Shader.Uniforms(Field) -> colour: V4) {
-    q, out, drawn := field_place(from.pixel, field.start, field.bend, field.end, field.up, field.reach, field.width_from, field.width_to, field.from, field.to)
+    q, out, drawn, _ := field_place(from.pixel, field.start, field.bend, field.end, field.up, field.reach, field.width_from, field.width_to, field.from, field.to)
     if Math.length(out) >= 1 then return ⟨0, 0, 0, 0⟩
     paint, light := chrome_at(q, out, drawn, field.time, field.seed, field.stir)
     colour = field_colour(paint, light, field.fade, field.glow)
 }
 
 wind_shade :: (from: Draw.Quad_Between, field: Shader.Uniforms(Field) -> colour: V4) {
-    q, out, drawn := field_place(from.pixel, field.start, field.bend, field.end, field.up, field.reach, field.width_from, field.width_to, field.from, field.to)
+    q, out, drawn, _ := field_place(from.pixel, field.start, field.bend, field.end, field.up, field.reach, field.width_from, field.width_to, field.from, field.to)
     if Math.length(out) >= 1 then return ⟨0, 0, 0, 0⟩
     paint, light := wind_at(q, out, drawn * (1 + field.form), field.time, field.seed, field.stir)
     colour = field_colour(paint, light, field.fade, field.glow)
@@ -481,6 +521,7 @@ WATER_FIELD :: Water_Field(Draw.SHADER_TARGET)
 OIL_FIELD :: Oil_Field(Draw.SHADER_TARGET)
 CHROME_FIELD :: Chrome_Field(Draw.SHADER_TARGET)
 WIND_FIELD :: Wind_Field(Draw.SHADER_TARGET)
+TENDRIL_FIELD :: Tendril_Field(Draw.SHADER_TARGET)
 
 ////////////////////////////////
 // Drawing them
@@ -529,6 +570,100 @@ draw_field :: (canvas: *Draw.Canvas, layer: *Draw.Canvas, element: Element, f: F
     }
 }
 
+////////////////////////////////
+// Black's tendrils
+
+// A tendril along a field's curve (its form: free, plunged or pulsing).
+draw_tendril :: (canvas: *Draw.Canvas, f: Field) {
+    if f.to - f.from < 0.01 then return
+    at, size := field_box(f)
+    canvas.draw_shader(at, size, TENDRIL_FIELD.code, TENDRIL_FIELD.bindings.field, f)
+}
+
+// How many tendrils black's nest has at rest, and how far each reaches from
+// its spine (of the nest's reach).
+NEST_STRANDS :: 7
+NEST_STRAND_REACH :: 0.32
+
+// Black at rest: a nest of tendrils groping out from a roiling glob of oil,
+// in a pool of shadow, each tendril turning and curling slowly, reaching
+// further when stirred.
+draw_nest :: (canvas: *Draw.Canvas, f: Field) {
+    canvas.fill_glow(f.start, f.reach * 1.1, Draw.rgba(0x000000, 0.35))
+    for s: 0 < NEST_STRANDS {
+        phase := f32's * 2.39996 + f.seed
+        turn := phase + 0.3 * Math.sin(f.time * 0.35 + phase)
+        way := V2⟨Math.cos(turn), Math.sin(turn)⟩
+        side := V2⟨0 - way.y, way.x⟩
+        long := f.reach * (0.85 + 0.15 * Math.sin(f.time * 0.5 + phase * 1.7)) * (1 + 0.25 * f.stir)
+        tip := f.start + way * long + side * (0.2 * f.reach * Math.sin(f.time * 0.6 + phase))
+        bend := f.start + way * (0.45 * long) + side * (0.35 * long * Math.sin(f.time * 0.4 + phase * 0.7))
+        draw_tendril(canvas, ⟨start: f.start, bend: bend, end: tip, up: f.up, reach: f.reach * NEST_STRAND_REACH, time: f.time + phase,
+                              stir: f.stir, seed: phase⟩)
+    }
+    *glob := f
+    glob.reach = f.reach * 0.42
+    paint_field(canvas, .OIL, glob)
+}
+
+// How many tendrils black's strike plunges in, and how big its glob is
+// (cells): more and bigger for more damage, within reason.
+black_strands :: (amount: i32 -> i64) #pure {
+    return 3 + i64'Math.min(Math.sqrt(f32'Math.max(amount, 1)) * 2, 17.0)
+}
+
+black_glob :: (amount: i32 -> f32) #pure {
+    return 0.45 + Math.min(Math.sqrt(f32'Math.max(amount, 1)) * 0.12, 1.1)
+}
+
+// Black's strike: from its nest the strand that followed the finger and
+// others shooting out after it, each plunging into a place on whoever it
+// hit; then all pulsing; then snapping toward it, the glob of oil at their
+// base pulled along the path into it, where it hits once (all the damage)
+// and leaves a pool that fades. (Its times are steer_volleys', BLACK_'s.)
+draw_black_volley :: (canvas: *Draw.Canvas, layer: *Draw.Canvas, layout: Layout, game: Game, elements: Elements, v: Volley) {
+    age := v.age - VOLLEY_GATHER
+    if age < 0 then return
+    cell := cell_of(layout)
+    time := elements.clock[v.from]
+    up := layout.seats[v.from].toward * -1
+    glob_reach := black_glob(v.amount) * cell
+    struck: f32 = BLACK_REACH + BLACK_PULSE + BLACK_SNAP
+    if age >= struck {
+        // (the pool it leaves, fading)
+        l := Math.clamp((age - struck) / BLACK_RESIDUE, 0, 1)
+        paint_field(canvas, .OIL, ⟨start: v.end, bend: v.end, end: v.end, up: layout.seats[v.to].toward * -1, reach: glob_reach * (1 + 0.8 * Math.sqrt(l)),
+                                    time: time, stir: 1, seed: f32'v.id, fade: (1 - l) * (1 - l)⟩)
+        return
+    }
+    snap := Math.clamp((age - BLACK_REACH - BLACK_PULSE) / BLACK_SNAP, 0, 1)
+    pull := snap * snap * snap
+    base := curve_at(v.start, v.bend, v.end, pull)
+    across := across_path(v.start, v.end)
+    form: f32 = if age >= BLACK_REACH then 3 else 2
+    strands := black_strands(v.amount)
+    for s: 0 < strands {
+        phase := f32's * 2.39996 + f32'v.id
+        spot := V2⟨Math.cos(phase), Math.sin(phase)⟩ * (0.5 * cell * (0.35 + 0.65 * Math.fract(phase * 0.618)))
+        tip := v.end + spot * (1 - 0.7 * pull)
+        start := base + V2⟨Math.cos(phase * 1.3), Math.sin(phase * 1.3)⟩ * (0.3 * glob_reach)
+        // (fanned out to either side of the path, drawn in as they snap)
+        fan := (f32's - f32'(strands - 1) / 2) * 0.35 * cell * (1 - pull)
+        bend := Math.mix(Math.mix(v.bend, v.end, pull), (start + tip) / 2, 0.3) + across * fan
+        // (the first, which followed the finger, is out already; the others
+        // shoot out one after another)
+        delay := f32's / f32'strands * 0.5 * BLACK_REACH
+        *extent: f32 = 1
+        if s > 0 then extent = Math.clamp((age - delay) / (BLACK_REACH - delay), 0, 1)
+        extent = 1 - (1 - extent) * (1 - extent)
+        strand_form: f32 = if extent < 1 then 0 else form
+        draw_tendril(canvas, ⟨start: start, bend: bend, end: tip, up: up, reach: 0.5 * cell * (0.8 + 0.2 * black_glob(v.amount)), to: extent,
+                              time: time + phase, stir: 1, seed: phase, form: strand_form⟩)
+    }
+    swell := 1 + 0.15 * Math.sin(Math.clamp((age - BLACK_REACH) / BLACK_PULSE, 0, 1) * f32'Math.PI * 3)
+    paint_field(canvas, .OIL, ⟨start: base, bend: base, end: base, up: up, reach: glob_reach * swell, time: time, stir: 1, seed: f32'v.id⟩)
+}
+
 // How far one player's field reaches alone (cells), and several's, each
 // round their spot, smaller.
 ELEMENT_CELLS :: 1.5
@@ -563,7 +698,7 @@ stir_elements :: (elements: *Elements, layout: Layout, game: Game, screen: Scree
         *target: f32 = 0
         if screen.drag.active and screen.drag.from == k then target = 1
         else if k == aimed then target = 0.5
-        for v: volleys.list { if v.from == k and v.age < VOLLEY_GATHER + VOLLEY_TRAVEL then target = 1 }
+        for v: volleys.list { if v.from == k and v.age < volley_landing(v) then target = 1 }
         elements.stir[k] += (target - elements.stir[k]) * Math.min(seconds * 6, 1)
         elements.clock[k] += seconds * (1 + 1.2 * elements.stir[k])
     }
@@ -609,12 +744,23 @@ draw_elements :: (canvas: *Draw.Canvas, layer: *Draw.Canvas, layout: Layout, gam
         if is_out(game, k) then continue
         *list: [6] Element
         n := elements_of(game.identity[k], list)
-        // (a volley of theirs gathering swells them)
+        // (a volley of theirs gathering swells them; black's nest has gone to
+        // strike while its strike's under way)
         *swell: f32 = 0
+        *striking := false
         for v: volleys.list {
             if v.from == k and v.age < VOLLEY_GATHER then swell = Math.max(swell, Math.sin(v.age / VOLLEY_GATHER * f32'Math.PI))
+            if v.from == k and v.black and v.age < volley_landing(v) then striking = true
         }
-        for element, i: list[:n] { draw_field(canvas, layer, element, rest_field(layout, k, i, n, elements, swell)) }
+        for element, i: list[:n] {
+            f := rest_field(layout, k, i, n, elements, swell)
+            if element == .OIL {
+                if !striking then draw_nest(canvas, f)
+            }
+            else {
+                draw_field(canvas, layer, element, f)
+            }
+        }
     }
     // A drag's stream: each of the dragger's elements drawn out from their
     // spot to whoever they're over (bent toward the finger), braided.
@@ -626,6 +772,13 @@ draw_elements :: (canvas: *Draw.Canvas, layer: *Draw.Canvas, layout: Layout, gam
             *list: [6] Element
             n := elements_of(game.identity[from], list)
             for element, i: list[:n] {
+                if element == .OIL {
+                    // (black's: a single strand from its nest, its tip
+                    // following the finger, writhing)
+                    draw_tendril(canvas, ⟨start: start, bend: braided(start, bend, screen.mouse, i, n, cell), end: screen.mouse, up: seat.toward * -1,
+                                          reach: 0.5 * cell, time: elements.clock[from] + f32'i * 7.3, stir: 1, seed: f32'(from * 3 + i) * 1.7⟩)
+                    continue
+                }
                 shape := STREAM_SHAPES[element]
                 f := Field⟨start: start, bend: braided(start, bend, end, i, n, cell), end: end, up: seat.toward * -1, reach: shape.reach * cell,
                            width_from: shape.width_from, width_to: shape.width_to, time: elements.clock[from] + f32'i * 7.3, stir: 1,
@@ -634,7 +787,9 @@ draw_elements :: (canvas: *Draw.Canvas, layer: *Draw.Canvas, layout: Layout, gam
             }
         }
     }
-    for v: volleys.list { draw_volley(canvas, layer, layout, game, elements, v) }
+    for v: volleys.list {
+        if v.black { draw_black_volley(canvas, layer, layout, game, elements, v) } else { draw_volley(canvas, layer, layout, game, elements, v) }
+    }
     canvas.add_light(layer, BLOOM_CELLS * cell, BLOOM_STRENGTH)
 }
 
@@ -769,9 +924,26 @@ draw_element_sheet :: (canvas: *Draw.Canvas, layer: *Draw.Canvas, time: f32) {
     for element, i: [6] Element⟨.SUN, .WATER, .OIL, .FIRE, .WIND, .CHROME⟩ {
         x := 220 + 400 * f32'i
         at := V2⟨x, 260⟩
-        draw_field(canvas, layer, element, ⟨start: at, bend: at, end: at, up: ⟨0, -1⟩, reach: 180, time: time + f32'i * 7.3, seed: f32'i * 1.7⟩)
         start := V2⟨x - 150, 700⟩
         end := V2⟨x + 150, 560⟩
+        if element == .OIL {
+            // (black's nest, its strand, and its strike as its tendrils pulse)
+            draw_nest(canvas, ⟨start: at, bend: at, end: at, up: ⟨0, -1⟩, reach: 180, time: time + f32'i * 7.3, seed: f32'i * 1.7⟩)
+            draw_tendril(canvas, ⟨start: start, bend: V2⟨x, 760⟩, end: end, up: ⟨0, -1⟩, reach: 50, time: time, stir: 1, seed: 3⟩)
+            base := V2⟨x - 110, 1170⟩
+            target := V2⟨x + 110, 900⟩
+            for s: 0 < black_strands(9) {
+                phase := f32's * 2.39996
+                tip := target + V2⟨Math.cos(phase), Math.sin(phase)⟩ * (50 * (0.35 + 0.65 * Math.fract(phase * 0.618)))
+                fan := (f32's - f32'(black_strands(9) - 1) / 2) * 35
+                draw_tendril(canvas, ⟨start: base, bend: (base + tip) / 2 + across_path(base, target) * fan, end: tip, up: ⟨0, -1⟩, reach: 50,
+                                      time: time + phase, stir: 1, seed: phase, form: 3⟩)
+            }
+            // (its glob: the strands' bases in it)
+            paint_field(canvas, .OIL, ⟨start: base, bend: base, end: base, up: ⟨0, -1⟩, reach: black_glob(9) * 100, time: time, stir: 1, seed: 2⟩)
+            continue
+        }
+        draw_field(canvas, layer, element, ⟨start: at, bend: at, end: at, up: ⟨0, -1⟩, reach: 180, time: time + f32'i * 7.3, seed: f32'i * 1.7⟩)
         stream := STREAM_SHAPES[element]
         draw_field(canvas, layer, element, ⟨start: start, bend: V2⟨x, 760⟩, end: end, up: ⟨0, -1⟩, reach: stream.reach * 100,
                                             width_from: stream.width_from, width_to: stream.width_to, time: time + f32'i * 7.3, stir: 1, seed: f32'i * 1.7,

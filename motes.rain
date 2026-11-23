@@ -265,8 +265,9 @@ curve_at :: (a: V2, b: V2, c: V2, t: f32 -> V2) #pure {
 
 // A volley: who it's from and to, the path it's thrown along (the
 // stream's, as it was let go), how many points it is and how many have
-// landed, whether it made its commander damage lethal, and how long it's
-// been going.
+// landed, whether it made its commander damage lethal, whether it's black's
+// strike (its attacker's colours have black: its tendrils plunge, pulse and
+// snap, and it lands all at once), and how long it's been going.
 Volley :: struct {
     id:     u32
     from:   i64
@@ -277,6 +278,7 @@ Volley :: struct {
     amount: i32
     landed: i32
     lethal: bool
+    black:  bool
     age:    f32
 }
 
@@ -292,6 +294,30 @@ VOLLEY_GATHER :: 0.14
 VOLLEY_TRAVEL :: 0.42
 VOLLEY_LAND :: 0.36
 VOLLEY_LINGER :: 0.3
+
+// Black's strike's times, after it's gathered (seconds): its tendrils
+// plunging in, pulsing, then snapping toward their glob's hit, and the pool
+// it leaves fading.
+BLACK_REACH :: 0.32
+BLACK_PULSE :: 0.3
+BLACK_SNAP :: 0.26
+BLACK_RESIDUE :: 0.35
+
+// When a volley lands (its age): black's strike when its glob hits.
+volley_landing :: (v: Volley -> f32) #pure {
+    if v.black then return VOLLEY_GATHER + BLACK_REACH + BLACK_PULSE + BLACK_SNAP
+    return VOLLEY_GATHER + VOLLEY_TRAVEL
+}
+
+// How long a volley's landing takes, its points coming off over it (black's
+// all at once), and how long after landing it's gone.
+volley_land :: (v: Volley -> f32) #pure {
+    return if v.black then 0 else VOLLEY_LAND
+}
+
+volley_after :: (v: Volley -> f32) #pure {
+    return if v.black then BLACK_RESIDUE else VOLLEY_LAND + VOLLEY_LINGER
+}
 
 // Damage dealt as a volley: the game changed at once (so undo is as
 // before), the volley thrown along the stream's path from where the finger
@@ -311,7 +337,8 @@ strike :: (game: *Game, motes: *Particles.System, volleys: *Volleys, random: *Ra
     bend := middle + (finger - middle) * STREAM_BEND
     id := volleys.next_id
     volleys.next_id = if volleys.next_id >= 0xFFFF then 1 else volleys.next_id + 1
-    `global volleys.list.add(⟨id: id, from: from, to: to, start: start, bend: bend, end: end, amount: amount, lethal: lethal⟩)
+    `global volleys.list.add(⟨id: id, from: from, to: to, start: start, bend: bend, end: end, amount: amount, lethal: lethal,
+                             black: has_colour(game.identity[from], .BLACK)⟩)
 }
 
 // The volleys moved on a frame: each as it lands has its points come off
@@ -321,8 +348,8 @@ strike :: (game: *Game, motes: *Particles.System, volleys: *Volleys, random: *Ra
 steer_volleys :: (motes: *Particles.System, volleys: *Volleys, random: *Random.Generator, layout: Layout, game: Game,
                   pending: *[MAX_PLAYERS] [MAX_PLAYERS] i32, seconds: f32 -> bursts: i64) {
     bursts = 0
-    landing: f32 = VOLLEY_GATHER + VOLLEY_TRAVEL
     for *volley: volleys.list {
+        landing := volley_landing(volley)
         before := volley.age
         volley.age += Math.max(seconds, 0)
         if before < landing and volley.age >= landing {
@@ -330,7 +357,8 @@ steer_volleys :: (motes: *Particles.System, volleys: *Volleys, random: *Random.G
             if volley.lethal then bursts += 1
         }
         if volley.age >= landing {
-            share := Math.clamp((volley.age - landing) / VOLLEY_LAND, 0, 1)
+            land := volley_land(volley)
+            share := if land > 0 then Math.clamp((volley.age - landing) / land, 0, 1) else 1
             should := i32'Math.ceil(share * f32'volley.amount)
             newly := should - volley.landed
             if newly > 0 {
@@ -338,7 +366,7 @@ steer_volleys :: (motes: *Particles.System, volleys: *Volleys, random: *Random.G
                 volley.landed = should
             }
         }
-        if volley.age >= landing + VOLLEY_LAND + VOLLEY_LINGER then remove volley
+        if volley.age >= landing + volley_after(volley) then remove volley
     }
 }
 
@@ -353,7 +381,7 @@ VOLLEY_MOTES :: [Element] f32⟨SUN: 45, WATER: 120, OIL: 25, FIRE: 80, WIND: 17
 feed_volleys :: (motes: *Particles.System, random: *Random.Generator, layout: Layout, game: Game, volleys: Volleys, seconds: f32) {
     cell := cell_of(layout)
     for v: volleys.list {
-        if v.age < VOLLEY_GATHER or v.age >= VOLLEY_GATHER + VOLLEY_TRAVEL then continue
+        if v.black or v.age < VOLLEY_GATHER or v.age >= VOLLEY_GATHER + VOLLEY_TRAVEL then continue
         *list: [6] Element
         n := elements_of(game.identity[v.from], list)
         size := volley_cells(v.amount) * cell

@@ -1135,6 +1135,18 @@ save_snapshots :: (folder: string) [failed: string] {
                 volley_path := `scratch "«folder»/raza_volley_«a».png"
                 if canvas.save_png(volley_path) is os_error then fail: failed = "can't write «volley_path»: «os_error»"
             }
+            // Black's strike of 12 from the third (white, black and green) to
+            // the first: its strands plunging, pulsing, then snapping.
+            for age, a: [3] f32⟨0.36, 0.62, 0.92⟩ {
+                striking, volleys := settled_motes(layout, game, 2, layout.seats[0].middle, 0, 12, age)
+                *pending: [MAX_PLAYERS] [MAX_PLAYERS] i32
+                for v: volleys.list { pending[v.to][v.from] += v.amount - v.landed }
+                *dealt := game
+                dealt.deal(2, 0, 12)
+                draw(canvas, layer, layout, shown_game(dealt, pending), fonts, ⟨can_undo: true, era: era⟩, striking, elements, volleys)
+                black_path := `scratch "«folder»/raza_black_«a».png"
+                if canvas.save_png(black_path) is os_error then fail: failed = "can't write «black_path»: «os_error»"
+            }
             picker := Picker⟨true, 1, 0, DEFAULT_PICKED / 10, DEFAULT_PICKED % 10⟩
             draw(canvas, layer, layout, game, fonts, ⟨picker: picker, mouse: finger, can_undo: true, era: era⟩, still, elements)
             grid_path := `scratch "«folder»/raza_grid.png"

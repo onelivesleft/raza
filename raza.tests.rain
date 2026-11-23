@@ -451,6 +451,43 @@ bolts_land_together :: () #test {
     assert(volley_bolts(.FIRE, 12) > volley_bolts(.FIRE, 1), "more damage, more bolts")
 }
 
+// Black's strike lands once, all its damage at once as its glob hits (the
+// life shown never ticks down part of it), after its tendrils plunge, pulse
+// and snap; a lethal one bursts once. More damage, more strands and a
+// bigger glob, within reason.
+black_strikes_once :: () #test {
+    layout := laid_out(2, LANDSCAPE)
+    for amount: [3] i32⟨1, 18, 40⟩ {
+        #with scratch.rewind()
+        `scratch {
+            *game := new_game(2)
+            game.identity[1] = (u8'1 << u8'Mana.BLACK) | (u8'1 << u8'Mana.RED)
+            *motes: Particles.System
+            *volleys: Volleys
+            *random := Random.generator(seed: 21)
+            *pending: [MAX_PLAYERS] [MAX_PLAYERS] i32
+            strike(game, motes, volleys, random, layout, pending, 1, 0, amount, layout.seats[0].middle)
+            assert(volleys.list.count == 1 and volleys.list[0].black, "a black player's volley is black's strike")
+            landing := volley_landing(volleys.list[0])
+            assert(landing > VOLLEY_GATHER + BLACK_REACH + BLACK_PULSE, "it plunges and pulses before it hits")
+            *age: f32 = 0
+            *bursts: i64 = 0
+            for _: 0 < 120 {
+                bursts += steer_volleys(motes, volleys, random, layout, game, pending, 1.0 / 60)
+                age += 1.0 / 60
+                shown := shown_game(game, pending).life[0]
+                assert(shown == 40 or shown == 40 - amount, "black never ticks down part of its hit: «shown»")
+                if age < landing - 0.001 then assert(shown == 40, "nothing off before its glob hits: «shown» at «age»")
+            }
+            assert(pending[0][1] == 0 and volleys.list.count == 0, "landed and gone")
+            expected: i64 = if amount >= 21 then 1 else 0
+            assert(bursts == expected, "«bursts» bursts for «amount»")
+        }
+    }
+    assert(black_strands(18) > black_strands(1) and black_glob(18) > black_glob(1))
+    assert(black_strands(99999) <= 20 and black_glob(99999) <= 1.6, "large damage has bounded rendering cost")
+}
+
 // Each colour's element, in WUBRG order, and an artifact's (no colours)
 // liquid metal.
 elements_are_the_colours :: () #test {
