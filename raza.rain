@@ -40,6 +40,30 @@ ICON_FAMILY   :: "Mana"
 // Mana's ms-power, the damage icon's glyph.
 DAMAGE_GLYPH :: "\u{E921}"
 
+// Each colour's symbol (Mana's ms-w to ms-g), in WUBRG order; its circle's
+// colour (Magic's own, as the cards' mana symbols are printed); and the
+// colour a player's part is in that colour (the colour pie's).
+MANA_GLYPHS  :: [5] string⟨"\u{E600}", "\u{E601}", "\u{E602}", "\u{E603}", "\u{E604}"⟩
+MANA_CIRCLES :: [5] Draw.RGBA⟨Draw.rgb(0xFFFBD5), Draw.rgb(0xAAE0FA), Draw.rgb(0xCBC2BF), Draw.rgb(0xF9AA8F), Draw.rgb(0x9BD3AE)⟩
+MANA_GROUNDS :: [5] Draw.RGBA⟨Draw.rgb(0xF9FAF4), Draw.rgb(0x0E68AB), Draw.rgb(0x150B00), Draw.rgb(0xD3202A), Draw.rgb(0x00733E)⟩
+MANA_INK     :: Draw.rgb(0x111111)
+
+// The life total's ink on a light part (white's).
+DARK_INK :: Draw.rgb(0x1C1A17)
+
+// How light a colour looks, from 0 to 1.
+lightness :: (c: Draw.RGBA -> f32) #pure {
+    return 0.2126 * c.r + 0.7152 * c.g + 0.0722 * c.b
+}
+
+// A gradient's colour at its middle (its colours evenly spaced along it).
+middle_of :: (colours: [] Draw.RGBA -> Draw.RGBA) #pure {
+    s := 0.5 * f32'(colours.count - 1)
+    i := Math.min(i64'Math.floor(s), colours.count - 2)
+    if colours.count < 2 then return colours[0]
+    return Math.mix(colours[i], colours[i + 1], s - f32'i)
+}
+
 BACKGROUND :: Draw.rgb(0x131318)
 INK        :: Draw.rgb(0xF4EFE6)
 CAPSULE    :: Draw.rgb(0x26262E)
@@ -59,6 +83,135 @@ lighter :: (colour: Draw.RGBA, by: f32 -> Draw.RGBA) #pure {
 }
 
 ////////////////////////////////
+// Colour identity: five toggles at each player's bottom left
+
+TOGGLE_RADIUS :: 0.26          // in cells
+TOGGLE_STEP   :: 0.62          // from one toggle's middle to the next's
+
+// Whether toggles of radius r at the places are inside the part and clear
+// of its sides.
+toggles_fit :: (points: [] V2, places: [5] V2, r: f32 -> bool) #pure {
+    for c: places {
+        if !inside(c, points) then return false
+        for a, i: points {
+            if distance_to_segment(c, a, points[(i + 1) % points.count]) < r then return false
+        }
+    }
+    return true
+}
+
+// Where a part's colour toggles go: a row along its player's edge, from its
+// left end as they see it, moved right until the row's clear of the part's
+// sides.
+toggle_places :: (layout: Layout, seat: Seat -> places: [5] V2) #pure {
+    places = ⟨⟩
+    cell := cell_of(layout)
+    r := TOGGLE_RADIUS * cell
+    points := seat.outline[:seat.count]
+    // (the part in its player's frame: x along their text, y toward them)
+    *bottom: f32 = -1e30
+    for p: points { bottom = Math.max(bottom, local_of(seat.middle, seat.angle, p).y) }
+    *left: f32 = 1e30
+    *right: f32 = -1e30
+    for p: points {
+        l := local_of(seat.middle, seat.angle, p)
+        if l.y >= bottom - 1 {
+            left = Math.min(left, l.x)
+            right = Math.max(right, l.x)
+        }
+    }
+    // The row is a gap from the screen's edge, and its nearest toggle the
+    // same gap from the part's divider: found going along the edge in
+    // steps, then halved down to where it's exactly that far.
+    gap := TOGGLE_GAP * cell
+    y := bottom - r - gap
+    *near := left
+    *far := left
+    step := 0.05 * cell
+    loop {
+        if far > right {
+            places = toggle_row(seat, far, y, cell)
+            return
+        }
+        first := placed(seat.middle, seat.angle, ⟨far, y⟩)
+        row := toggle_row(seat, far, y, cell)
+        if inside(first, points) and clearance(first, points) >= r + gap - 0.5 and toggles_fit(points, row, r + 0.5 * gap) and
+           clear_of_font_button(layout, row, r + 0.5 * gap)
+            break
+        near = far
+        far += step
+    }
+    for _: 0 < 12 {
+        middle := (near + far) / 2
+        first := placed(seat.middle, seat.angle, ⟨middle, y⟩)
+        if inside(first, points) and clearance(first, points) >= r + gap - 0.5 then far = middle else near = middle
+    }
+    places = toggle_row(seat, far, y, cell)
+}
+
+// A row of toggles in a part's player's frame, the first at x, y.
+toggle_row :: (seat: Seat, x: f32, y: f32, cell: f32 -> row: [5] V2) #pure {
+    row = ⟨⟩
+    for i: 0 < 5 { row[i] = placed(seat.middle, seat.angle, ⟨x + f32'i * TOGGLE_STEP * cell, y⟩) }
+}
+
+// The gap from a colour toggle to the screen's edge and to its part's
+// divider, in cells.
+TOGGLE_GAP :: 0.3
+
+// The nearest a point comes to a polygon's edges.
+clearance :: (p: V2, points: [] V2 -> f32) #pure {
+    *least: f32 = 1e30
+    for a, i: points { least = Math.min(least, distance_to_segment(p, a, points[(i + 1) % points.count])) }
+    return least
+}
+
+// Whether circles of radius r at the places are clear of the font button.
+clear_of_font_button :: (layout: Layout, places: [5] V2, r: f32 -> bool) #pure {
+    at, size := font_button(layout)
+    for c: places {
+        dx := Math.max(Math.max(at.x - c.x, c.x - (at.x + size.x)), 0)
+        dy := Math.max(Math.max(at.y - c.y, c.y - (at.y + size.y)), 0)
+        if dx * dx + dy * dy < r * r then return false
+    }
+    return true
+}
+
+// The colour toggle at a point: its part, and which colour; or absent.
+toggle_at :: (layout: Layout, p: V2 -> seat: i64, colour: i64) [absent] {
+    seat = 0
+    colour = 0
+    r := TOGGLE_RADIUS * cell_of(layout)
+    for s, k: layout.seats[:layout.count] {
+        for place, i: toggle_places(layout, s) {
+            if Math.length(p - place) <= r * 1.15 {
+                seat = k
+                colour = i
+                return
+            }
+        }
+    }
+    fail: absent
+}
+
+// The colours a part is drawn in: none (its own colour), one (a light to
+// dark gradient of it), or several (each, in WUBRG order).
+part_colours :: (identity: Identity, into: [] *Draw.RGBA -> count: i64) #pure {
+    count = 0
+    for colour, i: [5] Mana⟨.WHITE, .BLUE, .BLACK, .RED, .GREEN⟩ {
+        if has_colour(identity, colour) {
+            into[count] = MANA_GROUNDS[i]
+            count += 1
+        }
+    }
+    if count == 1 {
+        into[1] = Math.mix(into[0], BACKGROUND, 0.4)
+        into[0] = lighter(into[0], 0.12)
+        count = 2
+    }
+}
+
+////////////////////////////////
 // Fonts
 
 Fonts :: struct {
@@ -68,6 +221,7 @@ Fonts :: struct {
     label:     Draw.Font         // the number grid's buttons
     output:    Draw.Font         // the number grid's number
     icon:      Draw.Font         // Mana's, for the damage icon
+    mana:      Draw.Font         // Mana's, for the colour toggles
 }
 
 // How many steps of size a cell has for the life totals: the size moves in
@@ -108,6 +262,7 @@ load_fonts :: (family: string, layout: Layout -> fonts: Fonts) [os_error: Draw.D
     if label := Draw.load_font(family, i32'(cell * 0.45), 500) { fonts.label = label } else if os_error { fail: os_error }
     if output := Draw.load_font(family, i32'(cell * 0.8), 500) { fonts.output = output } else if os_error { fail: os_error }
     if icon := Draw.load_font(ICON_FAMILY, i32'(cell * 0.6)) { fonts.icon = icon } else if os_error { fail: os_error }
+    if mana := Draw.load_font(ICON_FAMILY, i32'(cell * TOGGLE_RADIUS * 1.25)) { fonts.mana = mana } else if os_error { fail: os_error }
 }
 
 // The fonts made again, for a new layout or family.
@@ -117,6 +272,7 @@ reload_fonts :: (fonts: *Fonts, family: string, layout: Layout) [os_error: Draw.
     fonts.label.destroy()
     fonts.output.destroy()
     fonts.icon.destroy()
+    fonts.mana.destroy()
     if loaded := load_fonts(family, layout) { fonts = loaded } else if os_error { fail: os_error }
 }
 
@@ -229,67 +385,69 @@ Capsule_Part :: enum u8 {
     SETTINGS
 }
 
-// A person a player is shown as (in cells), and how far apart a row of
-// them are.
-PERSON_STEP :: 0.28
-
-// How wide a row of people is, in cells.
-people_width :: (players: i64 -> f32) #pure {
-    return f32'players * PERSON_STEP
+// The capsule's buttons' middles, in a row at the screen's centre, a cell
+// apart and a cell each: undo, the players, settings.
+capsule_centre :: (layout: Layout, part: Capsule_Part -> V2) #pure {
+    offset: f32 = if part is { case .UNDO: -1.2; case .PLAYERS: 0; case .SETTINGS: 1.2 }
+    return layout.centre + V2⟨offset * cell_of(layout), 0⟩
 }
 
-// How wide the players' button is, in cells: its people, with room round them.
-players_width :: (players: i64 -> f32) #pure {
-    return Math.max(people_width(players) + 0.4, 1)
-}
-
-// The capsule's buttons' middles, in a row at the screen's centre: undo,
-// the players (as wide as its people), settings.
-capsule_centre :: (layout: Layout, part: Capsule_Part, players: i64 -> V2) #pure {
-    cell := cell_of(layout)
-    half := players_width(players) / 2
-    offset: f32 = if part is { case .UNDO: -(half + 0.6); case .PLAYERS: 0; case .SETTINGS: half + 0.6 }
-    return layout.centre + V2⟨offset * cell, 0⟩
-}
-
-// The capsule's half width, in cells.
-capsule_half_width :: (players: i64 -> f32) #pure {
-    return players_width(players) / 2 + 1.25
-}
+CAPSULE_HALF_WIDTH :: 1.85    // in cells
 
 // The capsule's button at a point, or absent.
-capsule_part_at :: (layout: Layout, at: V2, players: i64 -> Capsule_Part) [absent] {
+capsule_part_at :: (layout: Layout, at: V2 -> Capsule_Part) [absent] {
     cell := cell_of(layout)
     for part: [3] Capsule_Part⟨.UNDO, .PLAYERS, .SETTINGS⟩ {
-        centre := capsule_centre(layout, part, players)
-        half_width := if part == .PLAYERS then players_width(players) / 2 else 0.5
-        if Math.abs(at.x - centre.x) <= half_width * cell and Math.abs(at.y - centre.y) <= 0.6 * cell then return part
+        centre := capsule_centre(layout, part)
+        if Math.abs(at.x - centre.x) <= 0.55 * cell and Math.abs(at.y - centre.y) <= 0.6 * cell then return part
     }
     fail: absent
 }
 
-// The count of players picked from: touched, the players' button shows
-// each other count above or below it (fewer above), to drag to and let go
-// on; let go on the button itself, it stays open for a second touch.
+// The count of players, picked by dragging: touched, the players' button
+// shows every count (each a ring of people) in a column through it, fewer
+// above, which moves with the finger; the count nearest the button is the
+// one that's active, and the lines move toward its as the column goes, one
+// splitting into two (or two into one). Let go, it's that count; touched
+// and let go without moving, the column stays for a drag.
 Count_Picker :: struct {
-    open: bool
-    held: bool               // the button's down since it opened
+    open:     bool
+    held:     bool           // a finger's on the column
+    grabbed:  f32            // where it went down (y)
+    from:     f32            // the count the column was at then (shown)
+    shown:    f32            // the count at the button now, between whole counts as it moves
+    settling: bool           // let go: shown moving to the whole count it's become
 }
 
-// Where a count's row is, beside the current count's (the button's).
-count_row :: (layout: Layout, players: i64, count: i64 -> V2) #pure {
-    return capsule_centre(layout, .PLAYERS, players) + V2⟨0, f32'(count - players) * 1.1 * cell_of(layout)⟩
+COUNT_PITCH :: 1.15          // between counts in the column, in cells
+
+// Where a count's ring is, with the column at a count (shown).
+count_place :: (layout: Layout, shown: f32, count: i64 -> V2) #pure {
+    return capsule_centre(layout, .PLAYERS) + V2⟨0, (f32'count - shown) * COUNT_PITCH * cell_of(layout)⟩
 }
 
-// The count whose row a point is on, other than the current, or absent.
-count_at :: (layout: Layout, players: i64, at: V2 -> i64) [absent] {
+// A count's lines: as they were left (splits[count]), or as equal_splits
+// starts them.
+splits_for :: (splits: [] Splits, count: i64, size: V2 -> Splits) #pure {
+    if splits_fit(splits[count], count) then return splits[count]
+    return equal_splits(count, size)
+}
+
+// The lines with the column at a count, between whole counts: part of the
+// way from the count below's lines to the count above's.
+splits_between :: (splits: [] Splits, shown: f32, size: V2 -> Splits) #pure {
+    low := Math.clamp(i64'Math.floor(shown), 2, MAX_PLAYERS)
+    f := shown - f32'low
+    if low >= MAX_PLAYERS or f < 0.001 then return splits_for(splits, low, size)
+    return morph_splits(splits_for(splits, low, size), splits_for(splits, low + 1, size), f)
+}
+
+// Whether a point is on the column (as wide as the button, from 2's to 6's).
+on_column :: (layout: Layout, shown: f32, p: V2 -> bool) #pure {
     cell := cell_of(layout)
-    for count: 2 <= MAX_PLAYERS {
-        if count == players then continue
-        row := count_row(layout, players, count)
-        if Math.abs(at.x - row.x) <= players_width(count) / 2 * cell and Math.abs(at.y - row.y) <= 0.55 * cell then return count
-    }
-    fail: absent
+    top := count_place(layout, shown, 2).y - 0.6 * cell
+    bottom := count_place(layout, shown, MAX_PLAYERS).y + 0.6 * cell
+    return Math.abs(p.x - layout.centre.x) <= 0.6 * cell and p.y >= top and p.y <= bottom
 }
 
 font_button :: (layout: Layout -> at: V2, size: V2) #pure {
@@ -330,8 +488,46 @@ draw_seat :: (canvas: *Draw.Canvas, layout: Layout, game: Game, fonts: Fonts, k:
     out := is_out(game, k)
     base := SEAT_COLOURS[k]
     fill := if out then Math.mix(base, BACKGROUND, 0.7) else if targeted then lighter(base, 0.15) else base
-    canvas.fill_polygon(seat.outline[:seat.count], fill)
-    ink := if out then Math.mix(INK, fill, 0.6) else INK
+    // Its colours' gradient, across it as its player sees it (left to right),
+    // or its own colour while it has none.
+    *colours: [Draw.MAX_GRADIENT_COLOURS] Draw.RGBA
+    n := part_colours(game.identity[k], colours)
+    points := seat.outline[:seat.count]
+    if n == 0 {
+        canvas.fill_polygon(points, fill)
+    }
+    else {
+        for *c: colours[:n] {
+            if out then c = Math.mix(c, BACKGROUND, 0.7) else if targeted then c = lighter(c, 0.15)
+        }
+        *left: f32 = 1e30
+        *right: f32 = -1e30
+        for p: points {
+            l := local_of(seat.middle, seat.angle, p)
+            left = Math.min(left, l.x)
+            right = Math.max(right, l.x)
+        }
+        from := placed(seat.middle, seat.angle, ⟨left, 0⟩)
+        to := placed(seat.middle, seat.angle, ⟨right, 0⟩)
+        canvas.fill_polygon(points, Draw.Gradient⟨from: from, to: to, colours: colours[:n]⟩)
+    }
+    // (dark ink where its colours are light at its middle, where its life is)
+    ground := if n == 0 then fill else middle_of(colours[:n])
+    light_ink := if lightness(ground) > 0.6 then DARK_INK else INK
+    ink := if out then Math.mix(light_ink, ground, 0.6) else light_ink
+    // Its colour toggles: a colour's symbol in its circle when it's set, faint when not.
+    for place, i: toggle_places(layout, seat) {
+        set := has_colour(game.identity[k], Mana'u8'i)
+        r := TOGGLE_RADIUS * cell
+        if set {
+            canvas.fill_circle(place, r, MANA_CIRCLES[i])
+            draw_centred(canvas, fonts.mana, place, seat.angle, MANA_GLYPHS[i], MANA_INK)
+        }
+        else {
+            canvas.fill_circle(place, r, Draw.rgba(0x000000, 0.18))
+            draw_centred(canvas, fonts.mana, place, seat.angle, MANA_GLYPHS[i], Draw.rgba(0xF4EFE6, 0.35))
+        }
+    }
     draw_centred(canvas, fonts.life, seat.middle, seat.angle, "«game.life[k]»", ink)
     // The commander damage it's taken, a chip in each commander's colour,
     // in a row below its life.
@@ -422,31 +618,36 @@ draw_picker :: (canvas: *Draw.Canvas, layout: Layout, fonts: Fonts, picker: Pick
     canvas.draw_line(placed(origin, angle, cross + V2⟨-s, s⟩), placed(origin, angle, cross + V2⟨s, -s⟩), stroke, INK)
 }
 
-// A row of people, a count of them, centred on a point.
+// A ring of people, a count of them, round a point, in a button a cell
+// across (two side by side).
 draw_people :: (canvas: *Draw.Canvas, centre: V2, count: i64, cell: f32, colour: Draw.RGBA) {
-    left := centre.x - people_width(count) / 2 * cell
+    ring := if count == 2 then 0.19 * cell else 0.3 * cell
+    start := if count == 2 then f32'Math.PI else -f32'Math.PI / 2
     for i: 0 < count {
-        x := left + (f32'i + 0.5) * PERSON_STEP * cell
+        a := start + f32'Math.TAU * f32'i / f32'count
+        at := centre + V2⟨Math.cos(a), Math.sin(a)⟩ * ring
         // (a head, and shoulders: a pill wider than it's tall)
-        canvas.fill_circle(V2⟨x, centre.y - 0.11 * cell⟩, 0.065 * cell, colour)
-        canvas.fill_rounded_rect(V2⟨x - 0.11 * cell, centre.y - 0.01 * cell⟩, V2⟨0.22 * cell, 0.15 * cell⟩, 0.075 * cell, colour)
+        canvas.fill_circle(at + V2⟨0, -0.075 * cell⟩, 0.055 * cell, colour)
+        canvas.fill_rounded_rect(at + V2⟨-0.09 * cell, -0.008 * cell⟩, V2⟨0.18 * cell, 0.12 * cell⟩, 0.06 * cell, colour)
     }
 }
 
 draw_capsule :: (canvas: *Draw.Canvas, layout: Layout, game: Game, screen: Screen_State) {
     cell := cell_of(layout)
     c := layout.centre
-    half := capsule_half_width(game.players) * cell
+    half := CAPSULE_HALF_WIDTH * cell
     canvas.fill_rounded_rect(c - V2⟨half, 0.6 * cell⟩, V2⟨2 * half, 1.2 * cell⟩, 0.6 * cell, CAPSULE)
-    // The players: a person each.
-    p := capsule_centre(layout, .PLAYERS, game.players)
-    if screen.counts.open {
-        width := players_width(game.players) * cell
-        canvas.fill_rounded_rect(p - V2⟨width / 2, 0.5 * cell⟩, V2⟨width, cell⟩, 0.5 * cell, lighter(CAPSULE, 0.12))
+    // The players: a ring of a person each (or, while a count's picked, the
+    // column's, drawn after).
+    p := capsule_centre(layout, .PLAYERS)
+    if screen.counts.open or screen.counts.settling {
+        canvas.fill_circle(p, 0.52 * cell, lighter(CAPSULE, 0.1))
     }
-    draw_people(canvas, p, game.players, cell, INK)
+    else {
+        draw_people(canvas, p, game.players, cell, INK)
+    }
     // Undo: an arrow round to the left.
-    u := capsule_centre(layout, .UNDO, game.players)
+    u := capsule_centre(layout, .UNDO)
     undo_ink := if screen.can_undo then INK else lighter(CAPSULE, 0.25)
     r := 0.22 * cell
     stroke := 0.09 * cell
@@ -460,7 +661,7 @@ draw_capsule :: (canvas: *Draw.Canvas, layout: Layout, game: Game, screen: Scree
     head := u + V2⟨-r, 0⟩
     canvas.fill_polygon(⟨head + V2⟨-0.13 * cell, -0.02 * cell⟩, head + V2⟨0.13 * cell, -0.02 * cell⟩, head + V2⟨0, 0.15 * cell⟩⟩, undo_ink)
     // Settings (to come): a gear, faded.
-    g := capsule_centre(layout, .SETTINGS, game.players)
+    g := capsule_centre(layout, .SETTINGS)
     gear := lighter(CAPSULE, 0.3)
     for i: 0 < 8 {
         a := f32'i / 8 * 4 * half_pi
@@ -477,19 +678,16 @@ draw_font_button :: (canvas: *Draw.Canvas, layout: Layout, fonts: Fonts) {
     draw_centred(canvas, fonts.label, at + size / 2, 0, "Aa", INK)
 }
 
-// The other counts of players, a row each above or below the capsule's
-// (fewer above), the one under the finger lit.
-draw_counts :: (canvas: *Draw.Canvas, layout: Layout, game: Game, screen: Screen_State) {
+// The column of counts, each a ring of people, moving through the button:
+// the one nearest it bright, the rest fading with their distance from it.
+draw_counts :: (canvas: *Draw.Canvas, layout: Layout, screen: Screen_State) {
     cell := cell_of(layout)
-    *hovered: i64 = 0
-    if at := count_at(layout, game.players, screen.mouse) is not absent then hovered = at
+    active := i64'Math.round(screen.counts.shown)
     for count: 2 <= MAX_PLAYERS {
-        if count == game.players then continue
-        row := count_row(layout, game.players, count)
-        width := players_width(count) * cell
-        fill := if count == hovered then lighter(CAPSULE, 0.3) else CAPSULE
-        canvas.fill_rounded_rect(row - V2⟨width / 2, 0.5 * cell⟩, V2⟨width, cell⟩, 0.5 * cell, fill)
-        draw_people(canvas, row, count, cell, INK)
+        away := Math.abs(f32'count - screen.counts.shown)
+        fade := Math.clamp(1 - away * 0.4, 0.2, 1)
+        colour := if count == active then INK else Draw.rgba(0xF4EFE6, fade * 0.8)
+        draw_people(canvas, count_place(layout, screen.counts.shown, count), count, cell, colour)
     }
 }
 
@@ -502,6 +700,7 @@ Screen_State :: struct {
     moving_end: i64 = -1         // the line whose end is being dragged along the edge
     mouse:      V2
     can_undo:   bool
+    previewing: bool             // the layout's lines are moving to another count's: its parts drawn plain
 }
 
 draw :: (canvas: *Draw.Canvas, layout: Layout, game: Game, fonts: Fonts, screen: Screen_State) {
@@ -511,7 +710,12 @@ draw :: (canvas: *Draw.Canvas, layout: Layout, game: Game, fonts: Fonts, screen:
     if screen.drag.active {
         if to, _ := aim(layout, game, screen.drag.from, screen.mouse) is not missed then targeted = to
     }
-    for k: 0 < layout.count { draw_seat(canvas, layout, game, fonts, k, k == targeted) }
+    if screen.previewing {
+        for seat, k: layout.seats[:layout.count] { canvas.fill_polygon(seat.outline[:seat.count], SEAT_COLOURS[k]) }
+    }
+    else {
+        for k: 0 < layout.count { draw_seat(canvas, layout, game, fonts, k, k == targeted) }
+    }
     // The lines between the parts, and a handle at each's end to move it by.
     for end, k: layout.ends[:layout.count] {
         moving := k == screen.moving_end
@@ -523,7 +727,7 @@ draw :: (canvas: *Draw.Canvas, layout: Layout, game: Game, fonts: Fonts, screen:
     }
     draw_capsule(canvas, layout, game, screen)
     draw_font_button(canvas, layout, fonts)
-    if screen.counts.open then draw_counts(canvas, layout, game, screen)
+    if screen.counts.open or screen.counts.settling then draw_counts(canvas, layout, screen)
     if screen.drag.active then draw_drag(canvas, layout, game, fonts, screen.drag, screen.mouse)
     if screen.picker.open then draw_picker(canvas, layout, fonts, screen.picker)
 }
@@ -540,6 +744,10 @@ sample_game :: (players: i64 -> game: Game) {
     game.deal(0, 1, 12)
     if players >= 3 then game.deal(1, 2, 5)
     if players >= 6 then game.deal(3, 5, 21)
+    // Colours: blue and red, green alone, white, black and green.
+    game.identity[0] = (u8'1 << u8'Mana.BLUE) | (u8'1 << u8'Mana.RED)
+    game.identity[1] = u8'1 << u8'Mana.GREEN
+    if players >= 3 then game.identity[2] = (u8'1 << u8'Mana.WHITE) | (u8'1 << u8'Mana.BLACK) | (u8'1 << u8'Mana.GREEN)
 }
 
 // Each count of players drawn as a tablet in landscape (and two in
@@ -573,8 +781,12 @@ save_snapshots :: (folder: string) [failed: string] {
             draw(canvas, layout, game, fonts, ⟨picker: picker, mouse: finger, can_undo: true⟩)
             grid_path := `scratch "«folder»/raza_grid.png"
             if canvas.save_png(grid_path) is os_error then fail: failed = "can't write «grid_path»: «os_error»"
-            // The counts open, the finger on six's row.
-            draw(canvas, layout, game, fonts, ⟨counts: ⟨true, true⟩, mouse: count_row(layout, 4, 6), can_undo: true⟩)
+            // The column dragged most of the way from four to five: the
+            // lines part of the way there.
+            shown: f32 = 4.6
+            *none: [MAX_PLAYERS + 1] Splits
+            moving := lay_out(screen_size, splits_between(none[:], shown, screen_size))
+            draw(canvas, moving, game, fonts, ⟨counts: ⟨open: true, held: true, shown: shown⟩, previewing: true, can_undo: true⟩)
             counts_path := `scratch "«folder»/raza_counts.png"
             if canvas.save_png(counts_path) is os_error then fail: failed = "can't write «counts_path»: «os_error»"
         }
@@ -679,29 +891,39 @@ main :: (args: [] string) [failed: string] {
                 case panel: _
                 }
             }
-            else if screen.counts.open {
-                // (open from a touch let go on the button: a second touch picks, or closes it)
-                if count := count_at(layout, game.players, mouse) is not absent {
-                    history.add(game)
-                    game = new_game(count)
+            else if screen.counts.open and !screen.counts.settling {
+                // (open from a touch let go without moving: the column's taken
+                // again where it's touched, or closed by a touch elsewhere)
+                if on_column(layout, screen.counts.shown, mouse) {
+                    screen.counts.held = true
+                    screen.counts.grabbed = mouse.y
+                    screen.counts.from = screen.counts.shown
                 }
-                screen.counts.open = false
+                else {
+                    screen.counts.open = false
+                }
             }
             else if in_font_button(layout, mouse) {
                 family = 1 - family
                 if fonts.reload_fonts(TEXT_FAMILIES[family], layout) is os_error then fail: failed = "no font: «os_error»"
             }
-            else if part := capsule_part_at(layout, mouse, game.players) is not absent {
+            else if part := capsule_part_at(layout, mouse) is not absent {
                 if part is {
                 case .UNDO:
                     if history.count > 0 then game = history.pop()
                 case .PLAYERS:
-                    screen.counts = ⟨open: true, held: true⟩
+                    count := f32'game.players
+                    screen.counts = ⟨open: true, held: true, grabbed: mouse.y, from: count, shown: count⟩
                 case .SETTINGS: _
                 }
             }
             else if end := end_at(layout, mouse, 0.6 * cell) is not absent {
                 screen.moving_end = end
+            }
+            else if seat, colour := toggle_at(layout, mouse) is not absent {
+                bit := u8'1 << u8'colour
+                was := game.identity[seat]
+                game.identity[seat] = if was & bit != 0 then was & ~bit else was | bit
             }
             else {
                 for k: 0 < layout.count {
@@ -737,19 +959,41 @@ main :: (args: [] string) [failed: string] {
                 if Defaults.set(`scratch "splits.«game.players»", splits[game.players]) is os_error { }
             }
             if screen.counts.open and screen.counts.held {
+                // Let go: the count at the button is the game's, the column
+                // and the lines settling on it; let go without moving, the
+                // column stays for a drag.
                 screen.counts.held = false
-                if count := count_at(layout, game.players, mouse) is not absent {
-                    history.add(game)
-                    game = new_game(count)
+                if Math.abs(mouse.y - screen.counts.grabbed) > 0.2 * cell {
+                    count := i64'Math.round(screen.counts.shown)
+                    if count != game.players {
+                        history.add(game)
+                        game = new_game(count, game.identity)
+                    }
                     screen.counts.open = false
-                }
-                else {
-                    // (let go on the button itself: it stays open for a second touch)
-                    *on_button := false
-                    if over := capsule_part_at(layout, mouse, game.players) is not absent { on_button = over == .PLAYERS }
-                    if !on_button then screen.counts.open = false
+                    screen.counts.settling = true
                 }
             }
+        }
+        // The column follows the finger: the count at the button is where
+        // it's been dragged to, between whole counts as it goes; let go, it
+        // eases to the game's.
+        if screen.counts.held {
+            moved := (mouse.y - screen.counts.grabbed) / (COUNT_PITCH * cell)
+            screen.counts.shown = Math.clamp(screen.counts.from - moved, 2, f32'MAX_PLAYERS)
+        }
+        else if screen.counts.settling {
+            target := f32'game.players
+            screen.counts.shown += (target - screen.counts.shown) * 0.3
+            if Math.abs(target - screen.counts.shown) < 0.01 {
+                screen.counts.shown = target
+                screen.counts.settling = false
+            }
+        }
+        // While it moves, the parts are laid out part of the way from one
+        // count's lines to the next's.
+        screen.previewing = screen.counts.held or screen.counts.settling
+        if screen.previewing {
+            layout = lay_out(size, splits_between(splits[:], screen.counts.shown, size))
         }
 
         // What changed this frame, stored (a failure to store isn't the game's).
@@ -766,7 +1010,7 @@ main :: (args: [] string) [failed: string] {
         draw(canvas, layout, game, fonts, screen)
         canvas.present(w.handle, vsync: true)
         scratch.reset()
-        if !screen.drag.active and screen.moving_end < 0 and !screen.counts.held {
+        if !screen.drag.active and screen.moving_end < 0 and !screen.counts.held and !screen.counts.settling {
             if _ := Window.wait_for_input(milliseconds: 1000) is timed_out { }
         }
     }

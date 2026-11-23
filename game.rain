@@ -4,16 +4,36 @@
 STARTING_LIFE :: 40
 LETHAL_COMMANDER_DAMAGE :: 21
 
+// Magic's five colours, in their order (WUBRG).
+Mana :: enum u8 {
+    WHITE
+    BLUE
+    BLACK
+    RED
+    GREEN
+}
+
+// A commander's colour identity: a bit for each colour, by Mana's value.
+Identity :: #alias u8
+
+has_colour :: (identity: Identity, colour: Mana -> bool) #pure {
+    return identity & (u8'1 << u8'colour) != 0
+}
+
 Game :: struct {
     players:   i64 = 4
     life:      [MAX_PLAYERS] i32
     // commander[to][from]: what from's commander has done to to.
     commander: [MAX_PLAYERS] [MAX_PLAYERS] i32
+    // Each player's commander's colours, as they've set them.
+    identity:  [MAX_PLAYERS] Identity
 }
 
-// A game begun: everyone at the starting life, no damage done.
-new_game :: (players: i64 -> game: Game) #pure {
-    game = ⟨players: Math.clamp(players, 2, MAX_PLAYERS)⟩
+// A game begun: everyone at the starting life, no damage done, each seat's
+// colours those it had before (the same decks, mostly, sit in the same
+// seats).
+new_game :: (players: i64, identity: [MAX_PLAYERS] Identity = ⟨⟩ -> game: Game) #pure {
+    game = ⟨players: Math.clamp(players, 2, MAX_PLAYERS), identity: identity⟩
     for *l: game.life { l = STARTING_LIFE }
 }
 

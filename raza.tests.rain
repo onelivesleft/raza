@@ -119,26 +119,73 @@ icons_are_in_their_parts :: () #test {
         for seat, k: layout.seats[:players] {
             if at := seat_at(layout, seat.icon) { assert(at == k, "«players» players: «k»'s icon is in «at»'s part") }
             else if absent { assert(false, "«players» players: «k»'s icon is off the screen") }
-            if part := capsule_part_at(layout, seat.icon, players) is not absent {
+            if part := capsule_part_at(layout, seat.icon) is not absent {
                 assert(false, "«players» players: «k»'s icon is under the capsule's «part»")
             }
         }
     }
 }
 
-// The other counts' rows are each found where they're drawn, the current
-// count has none, and they're clear of the screen's edge.
-counts_are_where_drawn :: () #test {
+// The column's rings are on the column wherever it's been dragged to, and
+// on the screen; beside it isn't.
+counts_are_on_the_column :: () #test {
     layout := laid_out(4, LANDSCAPE)
-    for count: 2 <= MAX_PLAYERS {
-        row := count_row(layout, 4, count)
-        if count == 4 {
-            if at := count_at(layout, 4, row) is not absent then assert(false, "the current count's no row, but «at»'s is there")
-            continue
+    for shown: [3] f32⟨2, 4, 5.5⟩ {
+        for count: 2 <= MAX_PLAYERS {
+            place := count_place(layout, shown, count)
+            assert(on_column(layout, shown, place), "«count»'s ring is on the column at «shown»")
+            assert(place.y > 0 and place.y < LANDSCAPE.y, "«count»'s ring is on the screen at «shown»")
         }
-        if at := count_at(layout, 4, row) { assert(at == count, "«count»'s row is «at»'s") }
-        else if absent { assert(false, "«count»'s row isn't found") }
-        assert(row.y > 0 and row.y < LANDSCAPE.y, "«count»'s row is on the screen")
+        assert(!on_column(layout, shown, layout.centre + V2⟨cell_of(layout), 0⟩), "beside it isn't")
+    }
+}
+
+// Lines morph from one count's to the next's: at the start, the first's
+// with one doubled; at the end, the next's exactly; between, each part of
+// the way, still in order round.
+lines_morph_between_counts :: () #test {
+    for players: 2 < MAX_PLAYERS {
+        a := equal_splits(players, LANDSCAPE)
+        b := equal_splits(players + 1, LANDSCAPE)
+        start := morph_splits(a, b, 0)
+        end := morph_splits(a, b, 1)
+        assert(start.count == players + 1 and end.count == players + 1)
+        for k: 0 < players + 1 {
+            assert(Math.abs(share_between(end.at[k], b.at[k])) < 0.0001, "«players» to «players + 1»: line «k» ends at the next's")
+            *found := false
+            for s: a.at[:players] { if Math.abs(share_between(start.at[k], s)) < 0.0001 then found = true }
+            assert(found, "«players» to «players + 1»: line «k» starts at one of the first's")
+        }
+        // (none crosses another on the way: each part's span stays under a whole turn)
+        middle := morph_splits(a, b, 0.5)
+        *total: f32 = 0
+        for k: 0 < players + 1 { total += wrapped_share(middle.at[(k + 1) % (players + 1)] - middle.at[k]) }
+        assert(Math.abs(total - 1) < 0.001, "«players» to «players + 1»: halfway, the lines are still in order round")
+        covers_the_screen_once(lay_out(LANDSCAPE, middle))
+    }
+}
+
+// Each part's colour toggles are inside it, and its nearest is as far from
+// the part's divider as the row is from the screen's edge (where the font
+// button hasn't pushed the row along).
+toggles_keep_their_gap :: () #test {
+    for players: 2 <= MAX_PLAYERS {
+        for size: [2] V2⟨LANDSCAPE, PORTRAIT⟩ {
+            layout := laid_out(players, size)
+            cell := cell_of(layout)
+            want := (TOGGLE_RADIUS + TOGGLE_GAP) * cell
+            at, button := font_button(layout)
+            for seat, k: layout.seats[:players] {
+                points := seat.outline[:seat.count]
+                places := toggle_places(layout, seat)
+                for p: places { assert(inside(p, points), "«players» on «size»: part «k»'s toggles are inside it") }
+                gap := clearance(places[0], points)
+                assert(gap >= want - 1, "«players» on «size»: part «k»'s nearest toggle is «gap» from its sides, under «want»")
+                if Math.length(places[0] - (at + button / 2)) > 4 * cell {
+                    assert(gap <= want + 1, "«players» on «size»: part «k»'s nearest toggle is «gap» from its divider, not «want»")
+                }
+            }
+        }
     }
 }
 
