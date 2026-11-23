@@ -402,7 +402,7 @@ picker_part_at :: (layout: Layout, picker: Picker, at: V2 -> Picker_Part) #pure 
 
 // The icons that aren't Magic's own: Material Design Icons' (the Icons
 // module's), each copied into icons/ by its tool.
-UNDO_ICON   :: icon(Mdi.UNDO_VARIANT)
+UNDO_ICON   :: icon(Mdi.UNDO)
 RESET_ICON  :: icon(Mdi.RESTART)
 SYSTEM_ICON :: icon(Mdi.MENU)
 PERSON_ICON :: icon(Mdi.ACCOUNT)
@@ -700,7 +700,7 @@ draw_picker :: (canvas: *Draw.Canvas, layout: Layout, fonts: Fonts, picker: Pick
 // A ring of people, a count of them, round a point, in a button a cell
 // across (two side by side).
 draw_people :: (canvas: *Draw.Canvas, centre: V2, count: i64, cell: f32, colour: Draw.RGBA) {
-    ring := if count == 2 then 0.19 * cell else 0.3 * cell
+    ring := if count == 2 then 0.15 * cell else 0.24 * cell
     start := if count == 2 then f32'Math.PI else -f32'Math.PI / 2
     for i: 0 < count {
         a := start + f32'Math.TAU * f32'i / f32'count
