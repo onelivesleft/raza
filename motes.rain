@@ -1,9 +1,10 @@
 // Damage as motes: each player's miasma (where their damage is drawn from,
-// in their colours), the stream that flows from it to the finger as they
-// drag, and the volley, a mote a point of damage, that flies to whoever
-// they hit, each landing a flash and a point off the life shown. Each
-// colour's motes are its own: white's light, blue's water, black's shadow,
-// red's fire, green's spores, an artifact's sparks.
+// in their colours), the stream that flows from it, as they drag, to the
+// life total of whoever they're over (bent toward the finger), and the
+// volley, a mote a point of damage, that flies to whoever they hit, each
+// landing a splash and a point off the life shown. Each colour's motes are
+// its own: white's holy light, blue's water, black's oily, tendrilled
+// smoke, red's sparks, green's leaves on the wind, an artifact's sparks.
 
 // A colour's motes: their colour over their life, how much light they add,
 // how they flicker, their size over their life and how long they live, how
