@@ -61,11 +61,26 @@ throws**, in place of an icon and an arrow.
   long its motes live; in a mix, each colour keeps an equal share, so no
   colour buries another. Motes are born evenly over the miasma, not bunched
   at its middle.
-- **Each colour its own character:**
-  - white: holy light, soft halos rising among small bright sparkles;
+- **A heart at each miasma.** Under its motes, each colour has a heart
+  about 1.6 cells across (several smaller, round the spot), drawn as a
+  surface (Draw's radial gradients and Patterns' kinds), facing its player
+  and always moving. They're after shaders the user picked, made our own:
+  - white: a large glowing sun, a starfield's clouds in its light (after
+    Star Nest), motes of light slowly orbiting it, inner ones faster;
+  - blue: a body of clear water streaming toward its player, caustics and
+    foam on its crests (after a water elemental's flowing surface);
+  - black: a slick of oil flowing, sharp highlights, a rainbow sheen where
+    it's thin (after Leon Denise's liquid toy);
+  - red: a flame, red to a white-yellow heart, its tongues climbing and its
+    edge licking, sparks flying up from it (after a fire with sparks);
+  - colourless: a blob of liquid chrome, a sky's reflection in its swells,
+    a faint bismuth tint (after flockaroo's spilled liquid);
+  - green: none yet.
+- **Each colour's motes its own character:**
+  - white: motes of light orbiting its sun, warm gold and white-hot sparkles;
   - blue: water, drops falling and streaking, eddying;
   - black: oily, cloudy smoke curling into tendrils, with an oil's sheen;
-  - red: sparks, small, white-hot, flung out and falling, gone quickly;
+  - red: sparks, small, white-hot, flying up from the fire, gone quickly;
   - green: leaves blown on the wind, tumbling, now and then an autumn one;
   - colourless: metal sparks.
 - **The stream, while dragging.** It flows from the miasma and **always ends

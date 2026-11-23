@@ -895,6 +895,7 @@ draw :: (canvas: *Draw.Canvas, layout: Layout, game: Game, fonts: Fonts, screen:
     }
     // The motes: each miasma over its pool of shadow, a drag's stream, volleys.
     draw_miasma_pools(canvas, layout, game)
+    draw_hearts(canvas, layout, game, motes.time)
     motes.draw(canvas)
     draw_capsule(canvas, layout, game, screen)
     draw_font_button(canvas, layout, fonts)
@@ -982,6 +983,18 @@ save_snapshots :: (folder: string) [failed: string] {
             settings_path := `scratch "«folder»/raza_settings.png"
             if canvas.save_png(settings_path) is os_error then fail: failed = "can't write «settings_path»: «os_error»"
         }
+    }
+    // Each heart, large, on the background, a few seconds in.
+    {
+        *canvas: Draw.Canvas
+        if c := Draw.create_canvas(⟨2400, 560⟩) { canvas = c } else if os_error { fail: failed = "no canvas: «os_error»" }
+        defer canvas.destroy()
+        canvas.clear(BACKGROUND)
+        for heart, i: [5] Heart⟨.SUN, .WATER, .OIL, .FIRE, .METAL⟩ {
+            draw_heart(canvas, heart, V2⟨240 + 480 * f32'i, 290⟩, 380, 0, 3, 1)
+        }
+        path := `scratch "«folder»/raza_hearts.png"
+        if canvas.save_png(path) is os_error then fail: failed = "can't write «path»: «os_error»"
     }
     // Each era's frames: six players, each colour alone and all five (gold).
     for era: [3] Era⟨.ORIGINAL, .MODERN, .M15⟩ {

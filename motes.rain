@@ -36,14 +36,18 @@ Mote_Style :: struct {
     alive:        f32 = 60          // how many of its motes a miasma of it alone keeps alive
     shape:        Draw.Glow_Shape = .ROUND
     glint_shape:  Draw.Glow_Shape = .ROUND
+    orbit:        f32 = 0
+    orbit_life:   f32 = 0
+    hold:         f32 = MIASMA_PULL // how hard a miasma's motes are held to its spot (a spring, a second squared)
 }
 
 // Each colour's (WUBRG), then an artifact's.
 STYLES :: [6] Mote_Style⟨
-    // White: holy light, soft halos rising slowly and swelling, among small
-    // bright sparkles.
-    ⟨colour: Draw.rgba(0xFFF0C8, 0.14), colour_end: Draw.rgba(0xFFE7A0, 0.08), add: 1, flicker: 0.25, size: 0.13, size_end: 0.24,
-     life: 1.8, rise: 0.45, swirl: 0.35, drag: 1.4, spread: 0.3, glint: Draw.rgb(0xFFFFF4), glint_chance: 0.55, glint_size: 0.35, alive: 45, glint_shape: .SPARK⟩,
+    // White: holy light, a sun (draw_suns) with motes of light slowly
+    // orbiting it, warm gold and white-hot sparkles.
+    ⟨colour: Draw.rgba(0xFFE9B0, 0.8), colour_end: Draw.rgba(0xFFD27A, 0.55), add: 1, flicker: 0.15, size: 0.035, size_end: 0.035,
+     life: 1.8, rise: 0.45, swirl: 0.35, drag: 1.4, spread: 0.3, glint: Draw.rgb(0xFFFFF4), glint_chance: 0.4, glint_size: 1.5, alive: 32,
+     glint_shape: .SPARK, orbit: 0.5, orbit_life: 8⟩,
     // Blue: water, drops falling, streaked as they fall, eddying, some catching
     // the light.
     ⟨colour: Draw.rgba(0xA8E0FF, 0.9), colour_end: Draw.rgba(0x3B8ED6, 0.85), add: 0.3, flicker: 0.05, size: 0.065, size_end: 0.05,
@@ -52,10 +56,12 @@ STYLES :: [6] Mote_Style⟨
     // drawn long along its curl), a sheen of oil's colours now and then.
     ⟨colour: Draw.rgba(0x0A090C, 0.8), colour_end: Draw.rgba(0x000000, 0.55), size: 0.10, size_end: 0.26,
      life: 2.4, rise: 0.15, swirl: 2.6, drag: 0.7, spread: 0.35, streak: 0.35, glint: Draw.rgba(0x2E4A5A, 0.7), glint_chance: 0.2, glint_size: 0.7, glint_add: 0.5, alive: 30, shape: .WISP⟩,
-    // Red: sparks, small and white-hot, flung out fast, streaking, falling,
-    // gone quickly.
+    // Red: sparks, small and white-hot, flying up from its fire (away from
+    // its player), streaking, wavering on the heat, gone quickly, barely
+    // held, so they fly off.
     ⟨colour: Draw.rgb(0xFFF2C0), colour_end: Draw.rgb(0xFF6A20), add: 1, flicker: 0.4, size: 0.035, size_end: 0.015,
-     life: 0.5, rise: -1.3, swirl: 0.15, drag: 1.2, spread: 2.6, streak: 0.04, glint: Draw.rgb(0xFFFFFF), glint_chance: 0.25, alive: 90, shape: .SPARK, glint_shape: .SPARK⟩,
+     life: 0.8, rise: 1.8, swirl: 0.6, drag: 0.9, spread: 0.9, streak: 0.04, glint: Draw.rgb(0xFFFFFF), glint_chance: 0.25, alive: 70,
+     shape: .SPARK, glint_shape: .SPARK, hold: 0.3⟩,
     // Green: leaves blown on the wind, tumbling, now and then an autumn one.
     ⟨colour: Draw.rgba(0x8CCB5E, 0.95), colour_end: Draw.rgba(0x4E8A34, 0.9), add: 0.1, size: 0.055, size_end: 0.055,
      life: 2.2, rise: -0.2, wind: 1.4, swirl: 1.0, drag: 1.2, spread: 0.5, elongation: 2.4, spin: 4,
@@ -81,6 +87,13 @@ STREAM_RATE :: 45
 STREAM_RATE_A_POINT :: 5
 MIASMA_REACH :: 0.6
 MIASMA_PULL :: 2.5
+
+// An orbiting style's motes: born between ORBIT_LEAST and ORBIT_MOST cells
+// out (about the edge of its sun's glow), going round at its orbit's speed
+// ORBIT_RADIUS out.
+ORBIT_LEAST :: 0.45
+ORBIT_MOST :: 0.95
+ORBIT_RADIUS :: 0.7
 
 // Every mote's size, against its style's.
 MOTE_SCALE :: 1.8
@@ -145,14 +158,32 @@ feed_miasmas :: (motes: *Particles.System, random: *Random.Generator, layout: La
         n := styles_of(game.identity[k], styles)
         for which: styles[:n] {
             style := STYLES[which]
-            rate := style.alive / f32'n / Math.max(style.life, 0.01)
+            // (its motes' life here: an orbiting one's its orbit's)
+            lives := if style.orbit > 0 then style.orbit_life else style.life
+            rate := style.alive / f32'n / Math.max(lives, 0.01)
             for _: 0 < births(random, rate, seconds) {
                 angle := f32'random.below(0.0, Math.TAU)
-                out := Math.sqrt(f32'random.below(0.0, 1.0)) * MIASMA_REACH * cell
-                at := seat.icon + V2⟨Math.cos(angle), Math.sin(angle)⟩ * out
+                least: f32 = if style.orbit > 0 then ORBIT_LEAST / ORBIT_MOST else 0
+                reach: f32 = if style.orbit > 0 then ORBIT_MOST else MIASMA_REACH
+                out := Math.sqrt(f32'random.below(f64'(least * least), 1.0)) * reach * cell
+                way := V2⟨Math.cos(angle), Math.sin(angle)⟩
+                at := seat.icon + way * out
                 *m := mote_of_style(random, which, at, ⟨0, 0⟩, seat.toward * -1, cell, MIASMA_MOTE | u32'k | (u32'which << 8))
                 m.home = seat.icon
-                m.pull = MIASMA_PULL
+                m.pull = style.hold
+                if style.orbit > 0 {
+                    // Round its spot, clockwise, on a spring as strong as its
+                    // speed round (so a circle, a little out of round by
+                    // what's left of its own start), nothing else moving it.
+                    ratio := ORBIT_RADIUS * cell / out
+                    speed := style.orbit * ratio * Math.sqrt(ratio)
+                    m.velocity = V2⟨0 - way.y, way.x⟩ * speed * out + m.velocity * 0.12
+                    m.pull = speed * speed
+                    m.gravity = ⟨0, 0⟩
+                    m.drag = 0
+                    m.swirl = 0
+                    m.life = style.orbit_life * f32'random.below(0.7, 1.3)
+                }
                 motes.add(m)
             }
         }
@@ -420,25 +451,28 @@ call_off_volleys :: (motes: *Particles.System, volleys: *Volleys, pending: *[MAX
     for *row: pending { for *p: row { p = 0 } }
 }
 
-// The motes as they'd be two seconds in (for snapshots, the same each
-// time): the miasmas, a drag's stream from from to finger (from -1: none),
-// and a volley of volley from from to to, let go there, a third of a second
-// before the end (0: none).
+// The motes as they'd be ten seconds in (for snapshots, the same each time:
+// long enough for the longest-lived miasma, white's orbits, to fill): the
+// miasmas, a drag's stream from from to finger over the last two seconds
+// (from -1: none), and a volley of volley from from to to, let go there, a
+// third of a second before the end (0: none).
+SETTLE_FRAMES :: 600
 settled_motes :: (layout: Layout, game: Game, from: i64 = -1, finger: V2 = ⟨0, 0⟩, amount: i32 = 0, to: i64 = 0, volley: i32 = 0 -> motes: Particles.System) {
     *made: Particles.System = ⟨flow_scale: MOTE_FLOW * cell_of(layout)⟩
     *volleys: Volleys
     *random := Random.generator(seed: 1)
     *pending: [MAX_PLAYERS] [MAX_PLAYERS] i32
-    for frame: 0 < 120 {
+    for frame: 0 < SETTLE_FRAMES {
         seconds: f32 = 1.0 / 60
+        streaming := from >= 0 and volley == 0 and frame >= SETTLE_FRAMES - 120
         feed_miasmas(made, random, layout, game, seconds)
-        if from >= 0 and volley == 0 then feed_stream(made, random, layout, game, from, finger, amount, seconds)
-        if frame == 100 and volley > 0 {
+        if streaming then feed_stream(made, random, layout, game, from, finger, amount, seconds)
+        if frame == SETTLE_FRAMES - 20 and volley > 0 {
             start, bend, end := stream_path(layout, game, from, finger)
             fire_volley(made, volleys, random, layout, game.identity[from], from, to, volley, false, start, bend, end)
         }
         made.update(seconds)
-        if from >= 0 and volley == 0 then steer_stream(made, layout, game, from, finger, seconds)
+        if streaming then steer_stream(made, layout, game, from, finger, seconds)
         steer_volleys(made, volleys, random, layout, game, pending, seconds)
     }
     motes = made
@@ -446,6 +480,180 @@ settled_motes :: (layout: Layout, game: Game, from: i64 = -1, finger: V2 = ⟨0,
 
 // The flow field's eddies, in cells.
 MOTE_FLOW :: 1.5
+
+// How many points a heart's outline has (a GPU's shader takes 64 at most),
+// and how big one alone is, in cells.
+HEART_POINTS :: 48
+HEART_CELLS :: 1.6
+
+// What's at the heart of a colour's miasma.
+Heart :: enum u8 {
+    SUN       // white's
+    WATER     // blue's
+    OIL       // black's
+    FIRE      // red's
+    METAL     // an artifact's (no colours)
+}
+
+// The heart each of a player's colours has at their miasma, under its motes:
+// white's sun (its motes orbiting it), blue's water (its drops falling from
+// it), black's slick of oil (its smoke curling over it), red's fire (its
+// sparks flying up from it), an artifact's liquid metal (its sparks flung
+// from it); green has none. One alone is at the player's damage spot,
+// HEART_CELLS across; several are smaller, round it, slowly turning. Each
+// faces its player (up, away from them), and moves with time always, as
+// the miasmas do.
+draw_hearts :: (canvas: *Draw.Canvas, layout: Layout, game: Game, time: f32) {
+    cell := cell_of(layout)
+    for seat, k: layout.seats[:layout.count] {
+        if is_out(game, k) then continue
+        *hearts: [4] Heart
+        *n: i64 = 0
+        for colour, i: [4] Mana⟨.WHITE, .BLUE, .BLACK, .RED⟩ {
+            if has_colour(game.identity[k], colour) {
+                hearts[n] = Heart'u8'i
+                n += 1
+            }
+        }
+        if game.identity[k] == 0 {
+            hearts[0] = .METAL
+            n = 1
+        }
+        for heart, i: hearts[:n] {
+            *at := seat.icon
+            *size := HEART_CELLS * cell
+            if n > 1 {
+                turn := f32'i / f32'n * f32'Math.TAU + time * 0.05
+                at = seat.icon + V2⟨Math.cos(turn), Math.sin(turn)⟩ * (0.5 * cell)
+                size = 0.62 * HEART_CELLS * cell
+            }
+            seed := f32'(k * 3 + i)
+            draw_heart(canvas, heart, at, size, seat.angle, time, seed)
+        }
+    }
+}
+
+// One heart, size across at a point, facing a way (its player's text's turn).
+draw_heart :: (canvas: *Draw.Canvas, heart: Heart, at: V2, size: f32, angle: f32, time: f32, seed: f32) {
+    if heart is {
+    case .SUN: draw_sun(canvas, at, size, angle, time, seed)
+    case .WATER: draw_water(canvas, at, size, angle, time, seed)
+    case .OIL: draw_oil(canvas, at, size, angle, time, seed)
+    case .FIRE: draw_fire(canvas, at, size, angle, time, seed)
+    case .METAL: draw_metal(canvas, at, size, angle, time, seed)
+    }
+}
+
+// A circle's outline about a point.
+ring_about :: (at: V2, radius: f32 -> [HEART_POINTS] V2) #pure {
+    *ring: [HEART_POINTS] V2
+    for i: 0 < HEART_POINTS {
+        a := f32'i / f32'HEART_POINTS * f32'Math.TAU
+        ring[i] = at + V2⟨Math.cos(a), Math.sin(a)⟩ * radius
+    }
+    return ring
+}
+
+// White's sun: a disc white-hot in its middle, gold, then amber fading to
+// nothing at its edge, its light a starfield's depths (Patterns' stars:
+// clusters and clouds drifting through it), breathing slowly, a bloom of
+// its light about it and a hot point at its heart.
+draw_sun :: (canvas: *Draw.Canvas, at: V2, size: f32, angle: f32, time: f32, seed: f32) {
+    r := 0.6 * size * (1 + 0.04 * Math.sin(time * 0.8 + seed))
+    ring := ring_about(at, r)
+    canvas.fill_light(at, 0.1 * size, 1.1 * size, Draw.rgba(0xFFB860, 0.3), 1)
+    // (the starfield's stars a pixel or two, its clouds about the disc's
+    // size; its dark fading the light, as space between)
+    canvas.fill_polygon(ring[:], Draw.Gradient⟨from: at, to: at + V2⟨r, 0⟩, radial: true,
+        colours: ⟨Draw.rgba(0xFFF4D8, 1), Draw.rgba(0xFFD890, 0.95), Draw.rgba(0xF4A850, 0.8), Draw.rgba(0xD87830, 0.45), Draw.rgba(0xB05020, 0)⟩,
+        pattern: ⟨kind: .STARS, scale: 0.006 * size, strength: 0.9, seed: seed, time: time * 1.5, angle: angle, fades: true⟩⟩)
+    canvas.fill_glow(at, 0.16 * size, Draw.rgba(0xFFFFF6, 0.8), 1)
+}
+
+// Red's fire: three flames one inside another (red, orange, white-yellow at
+// its heart), each a teardrop rising up its player's frame (toward the
+// screen's centre), its tip swaying, its light tongues of fire climbing
+// (Patterns' flames), and a glow of its light about it.
+draw_fire :: (canvas: *Draw.Canvas, at: V2, size: f32, angle: f32, time: f32, seed: f32) {
+    canvas.fill_light(at, 0.12 * size, 1.0 * size, Draw.rgba(0xFF7A30, 0.28), 1)
+    sway := 0.1 * Math.sin(time * 3.1 + seed) + 0.04 * Math.sin(time * 7.3 + seed * 2.3)
+    // (its dark fades it to clear, so its tongues break its edges, not black:
+    // the outer flame broken most, the heart nearly whole)
+    *pattern := Draw.Pattern⟨kind: .FLAMES, scale: 0.13 * size, seed: seed, time: time * 2.6, angle: angle, fades: true⟩
+    strengths := [3] f32⟨0.95, 0.55, 0.25⟩
+    layers := [3] f32⟨1, 0.66, 0.36⟩
+    colours := [3] [3] Draw.RGBA⟨
+        ⟨Draw.rgba(0xFF6A1C, 0.85), Draw.rgba(0xE0381A, 0.6), Draw.rgba(0x901010, 0)⟩,
+        ⟨Draw.rgba(0xFFB838, 0.9), Draw.rgba(0xFF7A22, 0.7), Draw.rgba(0xE04010, 0)⟩,
+        ⟨Draw.rgba(0xFFF6D0, 0.9), Draw.rgba(0xFFD860, 0.75), Draw.rgba(0xFFA030, 0)⟩
+    ⟩
+    for layer, l: layers {
+        // (tall and narrow; each inner one lower, so the heat's at the root)
+        h := 0.62 * size * layer
+        w := 0.34 * size * (0.5 + 0.5 * layer)
+        // (its bulb toward its player, so it rises from the spot)
+        base := V2⟨0, 0.2 * size + 0.62 * size * (1 - layer) * 0.6⟩
+        *outline: [HEART_POINTS] V2
+        for i: 0 < HEART_POINTS {
+            t := f32'i / f32'HEART_POINTS * f32'Math.TAU
+            y := 0 - h * Math.cos(t)
+            up := (h - y) / (2 * h)
+            // (its edge wavering with noise that climbs, more toward its tip)
+            side: f32 = if t < f32'Math.PI then 1 else -1
+            waver := Patterns.layered(V2⟨side * 2.3 + seed, y / size * 4 + time * 2.4⟩, 3) - 0.5
+            x := w * Math.sin(t) * Math.sin(t / 2) * (1 + waver * (0.3 + 0.9 * up)) + sway * size * up * up
+            outline[i] = placed(at, angle, base + V2⟨x, y⟩)
+        }
+        heart := placed(at, angle, base + V2⟨0, 0.45 * h⟩)
+        pattern.strength = strengths[l]
+        canvas.fill_polygon(outline[:], Draw.Gradient⟨from: heart, to: heart + V2⟨1.45 * h, 0⟩, radial: true, colours: colours[l][:], pattern: pattern⟩)
+    }
+}
+
+// A blob's outline about a point, half size across, its edge wandering (as
+// quickly as speed) in and out by up to wobble of its radius.
+blob_outline :: (at: V2, size: f32, time: f32, seed: f32, speed: f32, wobble: f32 -> [HEART_POINTS] V2) #pure {
+    *outline: [HEART_POINTS] V2
+    for i: 0 < HEART_POINTS {
+        a := f32'i / f32'HEART_POINTS * f32'Math.TAU
+        way := V2⟨Math.cos(a), Math.sin(a)⟩
+        wander := Patterns.layered(way * 1.3 + V2⟨time * speed + seed * 3.1, seed * 1.7⟩, 3)
+        outline[i] = at + way * (0.5 * size * (1 + 2 * wobble * (wander - 0.5)))
+    }
+    return outline
+}
+
+// Blue's water: a body of it, clear cyan at its heart to deep blue, a pale
+// rim where it meets the air, its edge rippling, its surface streaming
+// toward its player (Patterns' water: ripples sliding over themselves,
+// caustics, foam on the crests), a soft blue light about it.
+draw_water :: (canvas: *Draw.Canvas, at: V2, size: f32, angle: f32, time: f32, seed: f32) {
+    canvas.fill_glow(at, 0.75 * size, Draw.rgba(0x3AA6E0, 0.22), 1)
+    outline := blob_outline(at, size, time, seed, 0.25, 0.2)
+    canvas.fill_polygon(outline[:], Draw.Gradient⟨from: at, to: at + V2⟨0.56 * size, 0⟩, radial: true,
+        colours: ⟨Draw.rgba(0x9FE6FF, 0.78), Draw.rgba(0x3AA6E0, 0.85), Draw.rgba(0x1A6CB8, 0.9), Draw.rgba(0xBFF0FF, 0.95)⟩,
+        pattern: ⟨kind: .WATER, scale: 0.22 * size, strength: 0.6, seed: seed, time: time * 1.2, angle: angle⟩⟩)
+}
+
+// An artifact's liquid metal: a blob of silver, its edge slow and heavy,
+// its surface swirling (Patterns' chrome: a sky's reflection and its
+// horizon in each swell, a faint bismuth tint).
+draw_metal :: (canvas: *Draw.Canvas, at: V2, size: f32, angle: f32, time: f32, seed: f32) {
+    outline := blob_outline(at, size, time, seed, 0.06, 0.15)
+    canvas.fill_polygon(outline[:], Draw.Gradient⟨from: at, to: at + V2⟨0.55 * size, 0⟩, radial: true,
+        colours: ⟨Draw.rgba(0xE8ECF0, 0.98), Draw.rgba(0xB8C0C8, 0.98), Draw.rgba(0x8A929A, 0.98)⟩,
+        pattern: ⟨kind: .CHROME, scale: 0.3 * size, strength: 0.9, seed: seed, time: time * 0.5, angle: angle⟩⟩)
+}
+
+// Black's slick of oil: a blob of near-black, its edge slowly wandering,
+// its surface flowing (Patterns' oil: lit slopes, sharp highlights, a
+// rainbow sheen where it runs thin).
+draw_oil :: (canvas: *Draw.Canvas, at: V2, size: f32, angle: f32, time: f32, seed: f32) {
+    outline := blob_outline(at, size, time, seed, 0.08, 0.3)
+    canvas.fill_polygon(outline[:], Draw.Gradient⟨from: at, to: at + V2⟨0.6 * size, 0⟩, radial: true,
+        colours: ⟨Draw.rgba(0x0C0B11, 0.97), Draw.rgba(0x09080D, 0.94), Draw.rgba(0x060509, 0.88)⟩,
+        pattern: ⟨kind: .OIL, scale: 0.3 * size, strength: 0.85, seed: seed, time: time * 0.35, angle: angle⟩⟩)
+}
 
 // A soft pool of shadow under each miasma, so its light shows on a light part.
 // (A black player's is a pale haze instead, so their oily smoke shows on it.)
