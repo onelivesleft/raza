@@ -44,6 +44,7 @@ Seat :: struct {
     count:   i64                 // how many of outline's points it has
     middle:  V2                  // its life total's centre: the outline's centroid
     icon:    V2                  // its damage icon's centre, toward the screen's centre
+    clear:   f32                 // how far its damage icon is from the controls' plus (what its fields may reach)
     toward:  V2                  // from the screen's centre toward its player: halfway between its lines
     angle:   f32                 // its text's turn (Draw's), the right way up for its player
     room:    f32                 // from middle to the nearest edge of its outline
@@ -417,6 +418,7 @@ lay_out :: (size: V2, splits: Splits -> layout: Layout) #pure {
         points := seat.outline[:seat.count]
         seat.middle = centroid(points)
         seat.icon = clear_of_controls(size, centre, seat.middle, seat.middle + (centre - seat.middle) * ICON_ALONG)
+        seat.clear = controls_clearance(size, centre, seat.icon)
         // Its player faces it halfway between its lines.
         facing := facing_between(centre, layout.ends[k], layout.ends[(k + 1) % n])
         seat.toward = ⟨Math.cos(facing), Math.sin(facing)⟩

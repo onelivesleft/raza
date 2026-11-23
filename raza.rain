@@ -496,6 +496,15 @@ clear_of_controls :: (size: V2, centre: V2, middle: V2, spot: V2 -> V2) #pure {
     return at
 }
 
+// How far a point is from the controls' plus (0 on it), on a screen of a size.
+controls_clearance :: (size: V2, centre: V2, p: V2 -> f32) #pure {
+    cell := Math.min(size.x, size.y) * CELL_SHARE
+    d := Math.abs(p - centre) / cell
+    wide := Math.length(Math.max(d - V2⟨CAPSULE_REACH, CAPSULE_HALF⟩, 0))
+    tall := Math.length(Math.max(d - V2⟨CAPSULE_HALF, CAPSULE_REACH⟩, 0))
+    return Math.min(wide, tall) * cell
+}
+
 capsule_centre :: (layout: Layout, part: Capsule_Part -> V2) #pure {
     offset: V2 = if part is {
         case .UNDO: ⟨0 - CAPSULE_ARM, 0⟩
@@ -568,6 +577,7 @@ Count_Picker :: struct {
     from:     f32            // the count the column was at then (shown)
     shown:    f32            // the count at the button now, between whole counts as it moves
     settling: bool           // let go: shown moving to the whole count it's become
+    idle:     f32            // seconds it's been open and untouched (it closes after COUNT_IDLE)
     // The lines, as they're shown: a count's (laid), or moving from it to
     // the next count up or down (toward), progress of the way.
     laid:     i64
@@ -652,6 +662,7 @@ move_lines :: (counts: *Count_Picker, target: i64, seconds: f32) {
 }
 
 COUNT_PITCH :: 1.15          // between counts in the column, in cells
+COUNT_IDLE :: 4.0            // seconds the column stays open untouched
 
 // Where a count's ring is, with the column at a count (shown).
 count_place :: (layout: Layout, shown: f32, count: i64 -> V2) #pure {
@@ -753,27 +764,88 @@ draw_seat :: (canvas: *Draw.Canvas, layout: Layout, game: Game, fonts: Fonts, k:
         }
     }
     draw_centred(canvas, fonts.life, seat.middle, seat.angle, "«game.life[k]»", ink)
-    // The commander damage it's taken, a chip in each commander's colour,
-    // in a row below its life.
+    // The commander damage it's taken, a chip in each commander's colour, in
+    // a row below its life (or where chip_places finds room).
     *shown: i64 = 0
     for d: game.commander[k][:game.players] { if d > 0 then shown += 1 }
-    row := f32'fonts.life.cap_height / 2 + 0.75 * cell
+    life_width := f32'fonts.life.text_width("«game.life[k]»")
+    chips := chip_places(layout, k, life_width, f32'fonts.life.cap_height, shown)
     *place: i64 = 0
     for d, from: game.commander[k][:game.players] {
         if d <= 0 then continue
-        x := (f32'place - f32'(shown - 1) / 2) * 0.95 * cell
-        middle := placed(seat.middle, seat.angle, ⟨x, row⟩)
+        middle := chips[Math.min(place, 4)]
         // (in the colour of the commander that did it: a lethal one ringed
         // in the life total's ink)
         lethal := d >= LETHAL_COMMANDER_DAMAGE
         source := accent_of(game.identity[from], artifact)
         ring := if lethal then ink else Math.mix(source, BACKGROUND, 0.35)
-        canvas.fill_circle(middle, 0.4 * cell, ring)
-        canvas.fill_circle(middle, 0.4 * cell - 3, source)
+        canvas.fill_circle(middle, CHIP_RADIUS * cell, ring)
+        canvas.fill_circle(middle, CHIP_RADIUS * cell - 3, source)
         draw_centred(canvas, fonts.small, middle, seat.angle, "«d»", ink_on(source))
         place += 1
     }
-    // (its damage is drawn from its miasma, the motes drawn over the parts)
+}
+
+// How big a commander damage chip is (cells), and how far apart they are.
+CHIP_RADIUS :: 0.4
+CHIP_PITCH :: 0.95
+
+// Where a part's commander damage chips go (count of them, five at most):
+// a row below its life total, in its player's frame; or, where that won't
+// be inside the part and clear of its colour toggles, each chip in turn at
+// the free place nearest that row's middle, of rows below and above the
+// life and columns beside it, half a chip's pitch apart.
+chip_places :: (layout: Layout, k: i64, life_width: f32, life_height: f32, count: i64 -> places: [5] V2) {
+    cell := cell_of(layout)
+    seat := layout.seats[k]
+    toggles := toggles_of(layout, k)
+    points := seat.outline[:seat.count]
+    r := CHIP_RADIUS * cell
+    pitch := CHIP_PITCH * cell
+    below := life_height / 2 + 0.75 * cell
+    beside := life_width / 2 + 0.65 * cell
+    // (the centred row below, if it fits)
+    *row: [5] V2
+    *fits := true
+    for i: 0 < 5 {
+        along := (f32'Math.min(i, Math.max(count - 1, 0)) - f32'Math.max(count - 1, 0) / 2) * pitch
+        row[i] = placed(seat.middle, seat.angle, ⟨along, below⟩)
+        if i < count and !chip_fits(row[i], points, toggles, r, cell) then fits = false
+    }
+    places = row
+    if fits then return
+    // (else each the nearest free place to it)
+    #with scratch.rewind()
+    *spots: [..] V2 in scratch
+    for y: [5] f32⟨below, below + pitch, below + 2 * pitch, 0 - below, 0 - below - pitch⟩ {
+        for j: -8 <= 8 { `scratch spots.add(V2⟨f32'j * 0.5 * pitch, y⟩) }
+    }
+    for x: [4] f32⟨beside, beside + pitch, 0 - beside, 0 - beside - pitch⟩ {
+        for j: -4 <= 4 { `scratch spots.add(V2⟨x, f32'j * 0.5 * pitch⟩) }
+    }
+    for i: 0 < count {
+        *best: f32 = 1e30
+        for local: spots {
+            if Math.abs(local.x) < life_width / 2 + r and Math.abs(local.y) < life_height / 2 + r then continue
+            score := Math.length(local - V2⟨0, below⟩)
+            if score >= best then continue
+            at := placed(seat.middle, seat.angle, local)
+            if !chip_fits(at, points, toggles, r, cell) then continue
+            *taken := false
+            for other: places[:i] { if Math.length(at - other) < 2 * r + 0.08 * cell then taken = true }
+            if taken then continue
+            best = score
+            places[i] = at
+        }
+    }
+}
+
+// Whether a chip of radius r at a place is inside its part, clear of its
+// sides, and clear of its colour toggles.
+chip_fits :: (at: V2, points: [] V2, toggles: [5] V2, r: f32, cell: f32 -> bool) #pure {
+    if !inside(at, points) or clearance(at, points) < 0.8 * r then return false
+    for t: toggles { if Math.length(at - t) < r + TOGGLE_RADIUS * cell + 0.08 * cell then return false }
+    return true
 }
 
 // A drag's amount, by the finger, facing whoever's dragging, and a slow
@@ -868,6 +940,8 @@ draw_capsule :: (canvas: *Draw.Canvas, layout: Layout, game: Game, screen: Scree
     draw_icon_at(canvas, UNDO_ICON, capsule_centre(layout, .UNDO), 0.62 * cell, undo_ink)
     redo_ink := if screen.can_redo then INK else lighter(CAPSULE, 0.25)
     draw_icon_at(canvas, REDO_ICON, capsule_centre(layout, .REDO), 0.62 * cell, redo_ink)
+    // (the column of counts, while it shows, is over the upright arm in their place)
+    if screen.counts.open or screen.counts.settling then return
     draw_icon_at(canvas, RESTART_ICON, capsule_centre(layout, .RESTART), 0.62 * cell, lighter(CAPSULE, 0.75))
     system_ink := if screen.settings_open then INK else lighter(CAPSULE, 0.75)
     draw_icon_at(canvas, SYSTEM_ICON, capsule_centre(layout, .SYSTEM), 0.62 * cell, system_ink)
@@ -884,6 +958,12 @@ draw_font_button :: (canvas: *Draw.Canvas, layout: Layout, fonts: Fonts) {
 draw_counts :: (canvas: *Draw.Canvas, layout: Layout, screen: Screen_State) {
     cell := cell_of(layout)
     active := i64'Math.round(screen.counts.shown)
+    // (on a column of the capsule's own, from 2's ring to 6's, so it reads as
+    // one thing over the plus, not as rings left on its buttons)
+    top := count_place(layout, screen.counts.shown, 2) - V2⟨0.6 * cell, 0.6 * cell⟩
+    bottom := count_place(layout, screen.counts.shown, MAX_PLAYERS) + V2⟨0.6 * cell, 0.6 * cell⟩
+    canvas.fill_rounded_rect(top, bottom - top, 0.6 * cell, CAPSULE)
+    canvas.fill_circle(capsule_centre(layout, .PLAYERS), 0.52 * cell, lighter(CAPSULE, 0.1))
     for count: 2 <= MAX_PLAYERS {
         away := Math.abs(f32'count - screen.counts.shown)
         fade := Math.clamp(1 - away * 0.4, 0.2, 1)
@@ -1519,6 +1599,17 @@ main :: (args: [] string) [failed: string] {
             screen.fps = f32'(f64'fps_frames / (now - fps_since))
             fps_frames = 0
             fps_since = now
+        }
+        // (the column, left open by a touch and untouched since, closes)
+        if screen.counts.open and !screen.counts.held {
+            screen.counts.idle += seconds
+            if screen.counts.idle >= COUNT_IDLE {
+                screen.counts.open = false
+                screen.counts.settling = true
+            }
+        }
+        else {
+            screen.counts.idle = 0
         }
         target := if screen.counts.open then i64'Math.round(screen.counts.shown) else game.players
         screen.counts.move_lines(target, seconds)

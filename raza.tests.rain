@@ -488,6 +488,46 @@ black_strikes_once :: () #test {
     assert(black_strands(99999) <= 20 and black_glob(99999) <= 1.6, "large damage has bounded rendering cost")
 }
 
+// A part's commander damage chips, as many as it can have, are inside it
+// and clear of its colour toggles, for every count of players, either way up.
+chips_keep_off_the_toggles :: () #test {
+    for screen: [2] V2⟨LANDSCAPE, ⟨LANDSCAPE.y, LANDSCAPE.x⟩⟩ {
+        for players: 2 <= MAX_PLAYERS {
+            layout := lay_out(screen, equal_splits(players, screen))
+            cell := cell_of(layout)
+            for k: 0 < players {
+                count := players - 1
+                chips := chip_places(layout, k, 2.0 * cell, 1.6 * cell, count)
+                for chip: chips[:count] {
+                    for t: toggles_of(layout, k) {
+                        assert(Math.length(chip - t) >= (CHIP_RADIUS + TOGGLE_RADIUS) * cell, "«players» players, part «k»: a chip at «chip» on a toggle at «t»")
+                    }
+                }
+            }
+        }
+    }
+}
+
+// Every player's fields at rest are clear of the controls' plus, each
+// smaller where its part's damage spot is near it, for every count of
+// players, either way up.
+fields_clear_the_controls :: () #test {
+    for screen: [2] V2⟨LANDSCAPE, ⟨LANDSCAPE.y, LANDSCAPE.x⟩⟩ {
+        for players: 2 <= MAX_PLAYERS {
+            layout := lay_out(screen, equal_splits(players, screen))
+            for k: 0 < players {
+                for n: 1 <= 3 {
+                    for i: 0 < n {
+                        at, reach := field_spot(layout, k, i, n, 0)
+                        clear := controls_clearance(layout.size, layout.centre, at)
+                        assert(clear >= reach * 0.9, "«players» players, part «k», field «i» of «n»: reaching «reach» but «clear» from the controls")
+                    }
+                }
+            }
+        }
+    }
+}
+
 // Each colour's element, in WUBRG order, and an artifact's (no colours)
 // liquid metal.
 elements_are_the_colours :: () #test {

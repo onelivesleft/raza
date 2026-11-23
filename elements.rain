@@ -595,7 +595,8 @@ draw_nest :: (canvas: *Draw.Canvas, f: Field) {
         turn := phase + 0.3 * Math.sin(f.time * 0.35 + phase)
         way := V2⟨Math.cos(turn), Math.sin(turn)⟩
         side := V2⟨0 - way.y, way.x⟩
-        long := f.reach * (0.85 + 0.15 * Math.sin(f.time * 0.5 + phase * 1.7)) * (1 + 0.25 * f.stir)
+        // (each, writhing, within the nest's reach)
+        long := f.reach * (0.72 + 0.1 * Math.sin(f.time * 0.5 + phase * 1.7)) * (1 + 0.12 * f.stir)
         tip := f.start + way * long + side * (0.2 * f.reach * Math.sin(f.time * 0.6 + phase))
         bend := f.start + way * (0.45 * long) + side * (0.35 * long * Math.sin(f.time * 0.4 + phase * 0.7))
         draw_tendril(canvas, ⟨start: f.start, bend: bend, end: tip, up: f.up, reach: f.reach * NEST_STRAND_REACH, time: f.time + phase,
@@ -704,16 +705,21 @@ stir_elements :: (elements: *Elements, layout: Layout, game: Game, screen: Scree
     }
 }
 
-// Where one of a player's fields is at rest (the i'th of n), and how far it reaches.
+// Where one of a player's fields is at rest (the i'th of n), and how far it
+// reaches: smaller where its part's damage spot is near the controls, so
+// the whole of it stays clear of them (several round the spot reach about
+// FIELDS_CELLS together).
+FIELDS_CELLS :: 1.6
 field_spot :: (layout: Layout, k: i64, i: i64, n: i64, time: f32 -> at: V2, reach: f32) #pure {
     cell := cell_of(layout)
     seat := layout.seats[k]
+    fit := Math.clamp((seat.clear - 0.15 * cell) / (FIELDS_CELLS * cell), 0.45, 1)
     at = seat.icon
-    reach = ELEMENT_CELLS * cell
+    reach = ELEMENT_CELLS * cell * fit
     if n > 1 {
         turn := f32'i / f32'n * f32'Math.TAU + time * 0.03
-        at = seat.icon + V2⟨Math.cos(turn), Math.sin(turn)⟩ * (ELEMENT_ROUND * cell)
-        reach = ELEMENT_SHARE * ELEMENT_CELLS * cell
+        at = seat.icon + V2⟨Math.cos(turn), Math.sin(turn)⟩ * (ELEMENT_ROUND * cell * fit)
+        reach = ELEMENT_SHARE * ELEMENT_CELLS * cell * fit
     }
 }
 
