@@ -703,23 +703,13 @@ draw_seat :: (canvas: *Draw.Canvas, layout: Layout, game: Game, fonts: Fonts, k:
     // (left to right), with its era's surface over it.
     *colours: [Draw.MAX_GRADIENT_COLOURS] Draw.RGBA
     n, pattern := part_fill(era, game.identity[k], cell, k, time, seat.angle, colours)
-    for *c: colours[:n] {
-        if out then c = Math.mix(c, BACKGROUND, 0.7) else if targeted then c = lighter(c, 0.15)
-    }
-    *left: f32 = 1e30
-    *right: f32 = -1e30
-    for p: points {
-        l := local_of(seat.middle, seat.angle, p)
-        left = Math.min(left, l.x)
-        right = Math.max(right, l.x)
-    }
-    start := placed(seat.middle, seat.angle, ⟨left, 0⟩)
-    finish := placed(seat.middle, seat.angle, ⟨right, 0⟩)
-    canvas.fill_polygon(points, Draw.Gradient⟨from: start, to: finish, colours: colours[:n], pattern: pattern⟩)
+    draw_part(canvas, layout, k, colours[:n], pattern, out, targeted)
     // (a part too thin for its displays, as it opens or closes, is its colour alone)
     if seat.room < 0.6 * cell then return
     // (dark ink where its colours are light at its middle, where its life is)
-    ground := middle_of(colours[:n])
+    // (out, its colours as dimmed as the shader dims them)
+    middle_ground := middle_of(colours[:n])
+    ground := if out then Math.mix(middle_ground, BACKGROUND, 0.7) else middle_ground
     ink := if out then Math.mix(ink_on(ground), ground, 0.6) else ink_on(ground)
     accent := accent_of(game.identity[k], artifact)
     // Its colour toggles: a colour's symbol in its circle when it's set, a

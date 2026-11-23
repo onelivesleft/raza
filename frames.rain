@@ -88,6 +88,147 @@ artifact_of :: (era: Era -> Draw.RGBA) #pure {
     return LOOKS[era].artifact.ground
 }
 
+////////////////////////////////
+// A part's surface, drawn by a shader of its own
+
+// What the part's shader is given: its outline (each point's xy), its
+// colours across it (left to right as its player sees it), its life's
+// middle and the screen's centre, the way toward its player, how far it
+// reaches that way from the centre and the calm area's radius, its turn and
+// its left and right (in its player's frame from its middle) and how many
+// points; its surface (kind, features' scale in pixels, contrast, seed;
+// time, broad, grain, how many colours); and whether it's out or targeted,
+// its bevel's width (pixels) and how wide its noise's octaves go.
+Part_Params :: struct {
+    points: [MAX_OUTLINE] V4
+    stops:  [5] V4
+    middle: V4
+    toward: V4
+    frame:  V4
+    look:   V4
+    more:   V4
+    state:  V4
+}
+
+// The light the parts are lit by: from the screen's top left (a frame's
+// bevel lit on its edges facing it), warm, and their shade cool.
+PART_LIGHT :: V2⟨-0.55, -0.83⟩
+PART_WARM :: V3⟨1.0, 0.92, 0.76⟩
+PART_COOL :: V3⟨0.5, 0.55, 0.74⟩
+
+// A part's colour at a pixel: its colours across it; its surface lightening
+// it toward a warm light and darkening it toward a cool shade (not white
+// and black: a hue-shifted light and shade, as a painted frame has), quiet
+// in a calm pool of light behind its life total; darker toward its
+// player's edge (a vignette, so the middle comes forward); and a bevel along
+// its edges, lit where an edge faces the light and shaded where it faces
+// away. Out, it's dimmed; aimed at, it lifts.
+part_shade :: (from: Draw.Quad_Between, part: Shader.Uniforms(Part_Params) -> colour: V4) {
+    p := from.pixel
+    n := i32'(part.frame.w + 0.5)
+    // (inside by the even-odd rule, and how far from its nearest edge, and
+    // that edge's way inward)
+    *crossings: i32 = 0
+    *closest: f32 = 1000000
+    *inward := V2⟨0, 0⟩
+    for i: 0 < n {
+        j := if i + 1 < n then i + 1 else 0
+        a := part.points[i].xy
+        b := part.points[j].xy
+        if (a.y > p.y) != (b.y > p.y) {
+            x := a.x + (p.y - a.y) / (b.y - a.y) * (b.x - a.x)
+            if p.x < x then crossings += 1
+        }
+        ab := b - a
+        t := Math.clamp(Math.dot(p - a, ab) / Math.max(Math.dot(ab, ab), 0.000001), 0, 1)
+        d := Math.length(p - a - ab * t)
+        if d < closest {
+            closest = d
+            *normal := Math.normalize(V2⟨0 - ab.y, ab.x⟩)
+            if Math.dot(normal, part.middle.xy - a) < 0 then normal = normal * -1.0
+            inward = normal
+        }
+    }
+    signed := if crossings % 2 == 1 then 0 - closest else closest
+    coverage := Math.clamp(0.5 - signed, 0, 1)
+    if coverage <= 0 then return ⟨0, 0, 0, 0⟩
+    // (its colours across it)
+    angle := part.frame.x
+    d := p - part.middle.xy
+    local_x := d.x * Math.cos(angle) + d.y * Math.sin(angle)
+    u := Math.clamp((local_x - part.frame.y) / Math.max(part.frame.z - part.frame.y, 1), 0, 1)
+    stops := i32'(part.more.w + 0.5)
+    *base := part.stops[0].xyz
+    if stops > 1 {
+        s := u * f32'(stops - 1)
+        k := Math.min(i32'Math.floor(s), stops - 2)
+        base = Math.mix(part.stops[k].xyz, part.stops[k + 1].xyz, s - f32'k)
+    }
+    light := Math.mix(base, PART_WARM, 0.55)
+    shade := base * PART_COOL
+    // (its surface, quiet behind its life)
+    calm := 1 - Math.smoothstep(0.45, 1.0, Math.length(d) / part.toward.w)
+    v := Patterns.at(Patterns.Kind'i32'(part.look.x + 0.5), p, part.look.y, part.look.w, part.more.x, angle, part.more.y, part.more.z)
+    t := Math.clamp((v - 0.5) * 2, -1, 1) * part.look.z * (1 - 0.7 * calm)
+    *rgb := if t > 0 then Math.mix(base, light, t) else Math.mix(base, shade, 0 - t)
+    rgb = Math.mix(rgb, light, 0.1 * calm)
+    // (darker toward its player's edge)
+    depth := Math.clamp(Math.dot(p - part.middle.zw, part.toward.xy) / Math.max(part.toward.z, 1), 0, 1)
+    rgb = Math.mix(rgb, shade * 0.8, Math.smoothstep(0.55, 1.0, depth) * 0.32)
+    // (its bevel)
+    bevel := part.state.z
+    if closest < bevel {
+        k := 1 - closest / bevel
+        facing := Math.dot(inward, PART_LIGHT * -1.0)
+        lit := if facing > 0 then Math.mix(rgb, V3⟨1, 0.97, 0.9⟩, 0.45) else rgb * 0.45
+        rgb = Math.mix(rgb, lit, k * k * Math.abs(facing) * 0.7)
+    }
+    // (out, dimmed; aimed at, lifted)
+    rgb = Math.mix(rgb, V3⟨0.075, 0.075, 0.094⟩, part.state.x * 0.7)
+    rgb = Math.mix(rgb, V3⟨1, 1, 1⟩, part.state.y * 0.12)
+    colour = V4⟨rgb.x * coverage, rgb.y * coverage, rgb.z * coverage, coverage⟩
+}
+
+Part_Surface :: shader { vertex: Draw.quad_place; fragment: part_shade }
+PART_SURFACE :: Part_Surface(Draw.SHADER_TARGET)
+
+// How wide a part's bevel is, and its calm area's radius, in cells.
+BEVEL_CELLS :: 0.09
+CALM_CELLS :: 2.6
+
+// A part drawn by its shader: its colours across it and its era's surface
+// (part_fill's), out or aimed at.
+draw_part :: (canvas: *Draw.Canvas, layout: Layout, k: i64, colours: [] Draw.RGBA, pattern: Draw.Pattern, out: bool, targeted: bool) {
+    seat := layout.seats[k]
+    cell := cell_of(layout)
+    points := seat.outline[:seat.count]
+    *params: Part_Params
+    *low := points[0]
+    *high := points[0]
+    for q, i: points {
+        params.points[i] = V4⟨q.x, q.y, 0, 0⟩
+        low = Math.min(low, q)
+        high = Math.max(high, q)
+    }
+    *left: f32 = 1e30
+    *right: f32 = -1e30
+    for q: points {
+        l := local_of(seat.middle, seat.angle, q)
+        left = Math.min(left, l.x)
+        right = Math.max(right, l.x)
+    }
+    for c, i: colours[:Math.min(colours.count, 5)] { params.stops[i] = V4⟨c.r, c.g, c.b, 1⟩ }
+    params.middle = V4⟨seat.middle.x, seat.middle.y, layout.centre.x, layout.centre.y⟩
+    params.toward = V4⟨seat.toward.x, seat.toward.y, Math.max(seat.reach, 1), CALM_CELLS * cell⟩
+    params.frame = V4⟨seat.angle, left, right, f32'seat.count⟩
+    params.look = V4⟨f32'i32'pattern.kind, pattern.scale, pattern.strength, pattern.seed⟩
+    params.more = V4⟨pattern.time, pattern.broad, pattern.grain, f32'Math.min(colours.count, 5)⟩
+    dimmed: f32 = if out then 1 else 0
+    lifted: f32 = if targeted then 1 else 0
+    params.state = V4⟨dimmed, lifted, BEVEL_CELLS * cell, cell⟩
+    canvas.draw_shader(low, high - low, PART_SURFACE.code, PART_SURFACE.bindings.part, params)
+}
+
 // A part's fill, for its player's colours in an era: its gradient's colours
 // (into, how many) and its surface (features sized in pixels, cell's
 // share, seeded by its seat so neighbours differ, moved to time, turned to
@@ -116,11 +257,17 @@ part_fill :: (era: Era, identity: Identity, cell: f32, seat: i64, time: f32, ang
     }
     else {
         if colours == 1 then look = looks.colours[only]
-        // (one colour: a light to dark gradient of it)
-        into[0] = lighter(look.ground, 0.12)
-        into[1] = Math.mix(look.ground, BACKGROUND, 0.4)
-        count = 2
+        // (one colour: its ground, lit and shaded by its surface)
+        into[0] = look.ground
+        count = 1
     }
-    pattern = ⟨kind: look.kind, scale: look.scale * SURFACE_SCALE * cell, strength: look.strength, seed: f32'(seat + 1), time: time, angle: angle,
-               broad: ERA_FEELS[era].broad, grain: ERA_FEELS[era].grain⟩
+    // (every part's features one size in an era, and quieter than the
+    // looks' own contrast: the surface stays behind what's on it)
+    pattern = ⟨kind: look.kind, scale: ERA_SCALES[era] * SURFACE_SCALE * cell, strength: look.strength * SURFACE_QUIET, seed: f32'(seat + 1), time: time,
+               angle: angle, broad: ERA_FEELS[era].broad, grain: ERA_FEELS[era].grain⟩
 }
+
+// Each era's features' size (against SURFACE_SCALE), one for all its
+// parts, and how much of a look's contrast a part's surface keeps.
+ERA_SCALES :: [Era] f32⟨1.5, 1.15, 0.9⟩
+SURFACE_QUIET :: 0.6
