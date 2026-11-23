@@ -44,6 +44,10 @@ LOOKS :: [3][7] Look⟨
      ⟨Draw.rgb(0xD9B65C), .CLOUDS, 2.5, 0.2⟩⟩
 ⟩
 
+// How big the surfaces' features are against the looks' own scales (a
+// card's frame is fine-grained for its size, and a part is far bigger).
+SURFACE_SCALE :: 0.35
+
 // How far gold leans toward each of a part's colours.
 GOLD_TINT :: 0.25
 
@@ -84,5 +88,5 @@ part_fill :: (era: Era, identity: Identity, cell: f32, seat: i64, into: [] *Draw
         into[1] = Math.mix(look.ground, BACKGROUND, 0.4)
         count = 2
     }
-    pattern = ⟨kind: look.kind, scale: look.scale * cell, strength: look.strength, seed: f32'(seat + 1)⟩
+    pattern = ⟨kind: look.kind, scale: look.scale * SURFACE_SCALE * cell, strength: look.strength, seed: f32'(seat + 1)⟩
 }
