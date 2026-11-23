@@ -72,17 +72,17 @@ ARTIFACT :: LOOKS.artifact.ground
 // time, broad, grain, how many colours); and whether it's out or targeted,
 // its bevel's width (pixels) and how wide its noise's octaves go.
 Part_Params :: struct {
-    points: [MAX_OUTLINE] V4
+    points: [MAX_OUTLINE] V4     // position, cumulative perimeter, edge length
     stops:  [5] V4
     middle: V4
     toward: V4
     frame:  V4
     look:   V4
     more:   V4
-    lamps: [5] V4               // world-space centre, radius, unused
     lamp_colours: [5] V4
     hybrid_looks: [2] V4         // tile, pattern kind, strength, surface
-    material: V4                 // atlas tile, feature scale, reserved
+    material: V4                 // atlas tile, feature scale, perimeter, reserved
+    gold: Gold_Tuning
     state:  V4
 }
 
@@ -170,70 +170,71 @@ part_shade :: (from: Draw.Quad_Between, part: Shader.Uniforms(Part_Params), atla
     // (darker toward its player's edge)
     depth := Math.clamp(Math.dot(p - part.middle.zw, part.toward.xy) / Math.max(part.toward.z, 1), 0, 1)
     rgb = Math.mix(rgb, shade * 0.8, Math.smoothstep(0.55, 1.0, depth) * 0.32)
-    // Polished gold is mostly a reflection, not diffuse yellow paint.
-    // Fixed shallow undulations and the material's height gradient bend
-    // a reflected studio environment; Motion moves the lights, not the metal.
-    *gold_reflection := V3⟨0, 0, 1⟩
+    // Shallow fixed undulations reflect moving studio lights in polished gold.
+    *gold_polish: f32 = 0
     if tile == 6 and stops != 2 {
-        at := V2⟨local_x, local_y⟩ / Math.max(part.look.y * 18, 1) + V2⟨part.look.w * 0.17, part.look.w * 0.31⟩
+        at := V2⟨local_x, local_y⟩ / Math.max(part.look.y * part.gold.texture_scale, 1) + V2⟨part.look.w * 0.17, part.look.w * 0.31⟩
         texel := material_at(atlas, filtering, tile, at)
         luma := Math.dot(texel, V3⟨0.2126, 0.7152, 0.0722⟩)
-        q := V2⟨local_x, local_y⟩ / Math.max(part.state.w * 4, 1)
-        height_x := Math.dot(material_at(atlas, filtering, tile, at + V2⟨0.008, 0⟩), V3⟨0.2126, 0.7152, 0.0722⟩)
-        height_y := Math.dot(material_at(atlas, filtering, tile, at + V2⟨0, 0.008⟩), V3⟨0.2126, 0.7152, 0.0722⟩)
-        slope := V2⟨Math.sin(q.x * 2.1 + q.y * 0.7) * 0.09 + q.x * 0.12,
-                    Math.sin(q.y * 1.7 - q.x * 0.6) * 0.07 + q.y * 0.12⟩ + V2⟨height_x - luma, height_y - luma⟩ * 0.12
+        q := V2⟨local_x, local_y⟩ / Math.max(part.state.w * part.gold.surface_scale, 1)
+        height_x := Math.dot(material_at(atlas, filtering, tile, at + V2⟨part.gold.texture_step, 0⟩), V3⟨0.2126, 0.7152, 0.0722⟩)
+        height_y := Math.dot(material_at(atlas, filtering, tile, at + V2⟨0, part.gold.texture_step⟩), V3⟨0.2126, 0.7152, 0.0722⟩)
+        slope := V2⟨Math.sin(q.x * part.gold.freq_x + q.y * part.gold.cross_x) * part.gold.wave_x + q.x * part.gold.slope_x,
+                    Math.sin(q.y * part.gold.freq_y + q.x * part.gold.cross_y) * part.gold.wave_y + q.y * part.gold.slope_y⟩ + V2⟨height_x - luma, height_y - luma⟩ * part.gold.texture_slope
         normal := Math.normalize(V3⟨slope.x, slope.y, 1⟩)
         reflected := normal.xy * (2 * normal.z)
-        gold_reflection = V3⟨reflected.x * Math.cos(angle) - reflected.y * Math.sin(angle),
-                             reflected.x * Math.sin(angle) + reflected.y * Math.cos(angle), 2 * normal.z * normal.z - 1⟩
-        env := reflected - V2⟨0.0528, 0.0288⟩ * part.more.x
-        // Small softboxes repeat often, with crisp cores and softer spill.
-        key_offset := Math.fract((env - V2⟨-0.19, -0.13⟩) / 0.72 + V2⟨0.5, 0.5⟩) * 0.72 - V2⟨0.36, 0.36⟩
-        box := Math.abs(key_offset / V2⟨0.038, 0.095⟩)
-        key := 1 - Math.smoothstep(0.65, 1.25, Math.max(box.x, box.y))
-        spill := Math.exp(0 - Math.dot(box, box) * 0.38)
-        rim_offset := Math.fract((env - V2⟨0.32, 0.19⟩) / 0.72 + V2⟨0.5, 0.5⟩) * 0.72 - V2⟨0.36, 0.36⟩
-        rim := rim_offset / V2⟨0.025, 0.06⟩
-        glint := Math.exp(0 - Math.dot(rim, rim) * 2.5)
-        room := Math.smoothstep(-0.3, 0.45, reflected.y) * 0.32
-        reflected_gold := V3⟨0.36, 0.21, 0.045⟩ + V3⟨0.65, 0.43, 0.12⟩ * room + V3⟨0.57, 0.38, 0.12⟩ * spill + V3⟨0.92, 0.79, 0.44⟩ * key + V3⟨1, 0.94, 0.72⟩ * glint;
-        rgb = Math.mix(rgb * 0.7, reflected_gold, 0.88)
+        env := reflected - V2⟨part.gold.speed_x, part.gold.speed_y⟩ * part.more.x
+        key_offset := Math.fract((env - V2⟨part.gold.key_x, part.gold.key_y⟩) / part.gold.repeat + V2⟨0.5, 0.5⟩) * part.gold.repeat - V2⟨part.gold.repeat * 0.5, part.gold.repeat * 0.5⟩
+        box := Math.abs(key_offset / V2⟨part.gold.key_width, part.gold.key_height⟩)
+        key := 1 - Math.smoothstep(part.gold.key_soft_start, part.gold.key_soft_end, Math.max(box.x, box.y))
+        spill := Math.exp(0 - Math.dot(box, box) * part.gold.spill_width)
+        rim_offset := Math.fract((env - V2⟨part.gold.rim_x, part.gold.rim_y⟩) / part.gold.repeat + V2⟨0.5, 0.5⟩) * part.gold.repeat - V2⟨part.gold.repeat * 0.5, part.gold.repeat * 0.5⟩
+        rim := rim_offset / V2⟨part.gold.rim_width, part.gold.rim_height⟩
+        glint := Math.exp(0 - Math.dot(rim, rim) * part.gold.rim_tightness)
+        // Tight ivory cores sit over the existing reflections without lowering the base.
+        core := Math.exp(0 - Math.dot(box, box) * part.gold.core_tightness)
+        gold_polish = Math.clamp(core * part.gold.core_strength + glint * part.gold.rim_strength, 0, part.gold.polish_limit)
+        highlights := V3⟨part.gold.spill_r, part.gold.spill_g, part.gold.spill_b⟩ * spill + V3⟨part.gold.key_r, part.gold.key_g, part.gold.key_b⟩ * key + V3⟨part.gold.glint_r, part.gold.glint_g, part.gold.glint_b⟩ * glint
+        // Broad warm environment fill lifts the metal between the sharp reflections.
+        ambient := V3⟨part.gold.ambient_r, part.gold.ambient_g, part.gold.ambient_b⟩ * part.gold.ambient_strength * (1 - part.gold.ambient_shape + normal.z * part.gold.ambient_shape)
+        rgb = ambient + highlights
     }
-    // Coloured light falls across the existing material; its sources are
-    // placed in the player's frame on the CPU, including the panel rotation.
+    // Each colour owns an equal arc length of the polygon's perimeter.
+    // Split at corners, so every strip follows the real boundary.
     if stops > 2 {
         *radiance := V3⟨0, 0, 0⟩
         *energy: f32 = 0
-        *specular := V3⟨0, 0, 0⟩
-        *specular_weight: f32 = 0
+        strip_length := part.material.z / f32'stops
+        reach := Math.max(part.state.w * part.gold.strip_reach, 1)
         for i: 0 < stops {
-            away := (p - part.lamps[i].xy) / Math.max(part.lamps[i].z, 1)
-            falloff := Math.exp(0 - Math.dot(away, away) * 1.6)
+            start := f32'i * strip_length
+            finish := start + strip_length
+            *distance: f32 = 1000000
+            for edge: 0 < n {
+                next := if edge + 1 < n then edge + 1 else 0
+                info := part.points[edge]
+                lo := Math.max(start, info.z)
+                hi := Math.min(finish, info.z + info.w)
+                if hi > lo {
+                    direction := (part.points[next].xy - info.xy) / Math.max(info.w, 0.0001)
+                    a := info.xy + direction * (lo - info.z)
+                    length := hi - lo
+                    along := Math.clamp(Math.dot(p - a, direction), 0, length)
+                    distance = Math.min(distance, Math.length(p - a - direction * along))
+                }
+            }
+            falloff := Math.exp(0 - Math.pow(distance / reach, part.gold.strip_falloff))
             radiance = radiance + part.lamp_colours[i].xyz * falloff
             energy += falloff
-            // Reflect the actual coloured source, including dark reflections
-            // for black, using the same normal as the moving studio lights.
-            toward_lamp := part.lamps[i].xy - p
-            light_direction := Math.normalize(V3⟨toward_lamp.x, toward_lamp.y, part.lamps[i].z * 1.5⟩)
-            delta := gold_reflection.xy - light_direction.xy
-            along := delta.x * Math.cos(angle) + delta.y * Math.sin(angle)
-            across := delta.y * Math.cos(angle) - delta.x * Math.sin(angle)
-            breakup := Patterns.layered(V2⟨local_x, local_y⟩ / Math.max(part.state.w, 1) + V2⟨f32'i * 4, part.more.x * 0.15⟩, 3)
-            shine := Math.exp(0 - along * along * 18 - across * across * 48) * falloff * (0.35 + breakup * 0.75)
-            specular = specular + part.lamp_colours[i].xyz * shine
-            specular_weight += shine
         }
         tint := radiance / Math.max(energy, 0.0001)
         brightness := Math.dot(rgb, V3⟨0.2126, 0.7152, 0.0722⟩)
-        lit := rgb * 0.35 + tint * (0.55 + brightness * 0.45)
-        // A bright perimeter wash dies away before reaching the life total.
-        edge_reach := Math.max(part.state.w * 1.3, 1)
-        edge_light := Math.exp(0 - closest * closest / (edge_reach * edge_reach))
-        rgb = Math.mix(rgb, lit, Math.min(energy * 1.45, 0.96) * (0.035 + edge_light * 0.965))
-        reflection_colour := specular / Math.max(specular_weight, 0.0001)
-        rgb = Math.mix(rgb, reflection_colour * 1.08 + rgb * 0.12, Math.min(specular_weight * 1.15, 0.78))
+        tint_luma := Math.dot(tint, V3⟨0.2126, 0.7152, 0.0722⟩)
+        lit := tint * (brightness / Math.max(tint_luma, part.gold.strip_dark_floor))
+        rgb = Math.mix(rgb, lit, Math.min(energy * part.gold.strip_strength, part.gold.strip_limit))
     }
+    // Keep the sharpest reflections luminous even under coloured strip lighting.
+    rgb = Math.mix(rgb, Math.max(rgb, V3⟨part.gold.polish_r, part.gold.polish_g, part.gold.polish_b⟩), gold_polish)
     // A smooth recessed channel: dark floor, curved walls, soft rolled lip.
     // Each panel shades its half, so adjacent regions share one groove.
     bevel := part.state.z
@@ -261,8 +262,8 @@ open_water_at :: (at: V2, base: V3, scale: f32, seed: f32, time: f32 -> V3) {
     coarse := Patterns.layered(q * 0.13 + V2⟨seed, 0⟩, 4)
     cloud := Patterns.layered(q * 0.24 + V2⟨time * 0.08, seed - time * 0.045⟩, 4)
     warp := Patterns.layered(q * 0.7 + V2⟨0 - time * 0.18, time * 0.11⟩, 3)
-    ripple := Patterns.layered(V2⟨q.x * 1.8 + q.y * 0.3, q.y * 5 + warp * 1.7⟩ + V2⟨time * 0.13, time * 0.24⟩, 3)
-    crossing := Patterns.noise(V2⟨q.x * 4.7 - q.y * 0.4, q.y * 7⟩ + V2⟨0 - time * 0.23, time * 0.16⟩)
+    ripple := Patterns.layered(V2⟨q.x * 2.85 + q.y * 0.15, q.y * 3.16 + warp * 1.7⟩ + V2⟨time * 0.13, time * 0.24⟩, 3)
+    crossing := Patterns.noise(V2⟨q.x * 5.5 - q.y * 0.2, q.y * 6⟩ + V2⟨0 - time * 0.23, time * 0.16⟩)
     broken := Math.smoothstep(0.4, 0.7, crossing)
     crest := (1 - Math.smoothstep(0.008, 0.032, Math.abs(ripple - 0.54))) * broken
     glint := Math.smoothstep(0.63, 0.8, ripple) * Math.smoothstep(0.62, 0.85, crossing)
@@ -270,7 +271,15 @@ open_water_at :: (at: V2, base: V3, scale: f32, seed: f32, time: f32 -> V3) {
     deep := Math.mix(base * V3⟨0.55, 0.8, 0.9⟩, V3⟨0.055, 0.35, 0.41⟩, coarse * 0.65)
     sky := V3⟨0.3, 0.51, 0.62⟩
     water := Math.mix(deep, sky, sun * 0.28) * (0.91 + ripple * 0.18)
-    return water + V3⟨0.48, 0.66, 0.69⟩ * crest * (0.025 + sun * 0.07) + V3⟨0.95, 0.95, 0.83⟩ * glint * (0.12 + sun * 0.4)
+    // Broad drifting clouds reflected in the surface, gently broken by its ripples.
+    cloud_at := q * 0.32 + V2⟨time * 0.035 + seed * 3.1, seed - time * 0.018⟩ +
+        V2⟨ripple - 0.5, crossing - 0.5⟩ * 0.075
+    cloud_body := Patterns.layered(cloud_at, 4)
+    cloud_cover := Math.smoothstep(0.46, 0.65, cloud_body)
+    cloud_top := Math.smoothstep(0.52, 0.72, cloud_body)
+    cloud_colour := Math.mix(V3⟨0.36, 0.49, 0.57⟩, V3⟨0.81, 0.87, 0.88⟩, cloud_top)
+    reflected := Math.mix(water, cloud_colour, cloud_cover * 0.55)
+    return reflected + V3⟨0.48, 0.66, 0.69⟩ * crest * (0.025 + sun * 0.07) + V3⟨0.95, 0.95, 0.83⟩ * glint * (0.12 + sun * 0.4)
 }
 
 Part_Surface :: shader { vertex: Draw.quad_place; fragment: part_shade }
@@ -286,27 +295,28 @@ draw_part :: (canvas: *Draw.Canvas, layout: Layout, k: i64, colours: [] Draw.RGB
     cell := cell_of(layout)
     points := seat.outline[:seat.count]
     *params: Part_Params
+    params.gold = gold_tuning
     *low := points[0]
     *high := points[0]
+    *perimeter: f32 = 0
     for q, i: points {
-        params.points[i] = V4⟨q.x, q.y, 0, 0⟩
+        next := if i + 1 < points.count then i + 1 else 0
+        length := Math.length(points[next] - q)
+        params.points[i] = V4⟨q.x, q.y, perimeter, length⟩
+        perimeter += length
         low = Math.min(low, q)
         high = Math.max(high, q)
     }
     *left: f32 = 1e30
     *right: f32 = -1e30
-    *top: f32 = 1e30
-    *bottom: f32 = -1e30
     for q: points {
         l := local_of(seat.middle, seat.angle, q)
         left = Math.min(left, l.x)
         right = Math.max(right, l.x)
-        top = Math.min(top, l.y)
-        bottom = Math.max(bottom, l.y)
     }
     for c, i: colours[:Math.min(colours.count, 5)] { params.stops[i] = V4⟨c.r, c.g, c.b, 1⟩ }
     // (two colours: each half's own look; three or more: gold, lit by a
-    // lamp of each colour, which the shader reads only then)
+    // perimeter strip of each colour, which the shader reads only then)
     if colours.count > 1 {
         *lamp: i64 = 0
         for mana: [5] Mana⟨.WHITE, .BLUE, .BLACK, .RED, .GREEN⟩ {
@@ -320,14 +330,7 @@ draw_part :: (canvas: *Draw.Canvas, layout: Layout, k: i64, colours: [] Draw.RGB
                 lamp += 1
                 continue
             }
-            direction := identity_light_direction(colours.count, lamp)
-            extent_x := if direction.x < 0 then 0 - left else right
-            extent_y := if direction.y < 0 then 0 - top else bottom
-            offset := V2⟨direction.x * extent_x, direction.y * extent_y⟩
-            centre := placed(seat.middle, seat.angle, offset)
-            radius := Math.max(Math.length(offset) * 0.95, cell * 2)
-            params.lamps[lamp] = V4⟨centre.x, centre.y, radius, 0⟩
-            tint := MANA_GROUNDS[mana]
+            tint := gold_hue(mana)
             params.lamp_colours[lamp] = V4⟨tint.r, tint.g, tint.b, 1⟩
             lamp += 1
         }
@@ -341,8 +344,80 @@ draw_part :: (canvas: *Draw.Canvas, layout: Layout, k: i64, colours: [] Draw.RGB
     lifted: f32 = if targeted then 1 else 0
     params.state = V4⟨dimmed, lifted, BEVEL_CELLS * cell, cell⟩
     tile := material_tile(identity)
-    params.material = V4⟨f32'tile, 0, 0, 0⟩
+    params.material = V4⟨f32'tile, 0, perimeter, 0⟩
     canvas.draw_shader_image(low, high - low, PART_SURFACE.code, PART_SURFACE.bindings.part, params, material_image, PART_SURFACE.bindings.atlas, PART_SURFACE.bindings.filtering)
+}
+
+////////////////////////////////
+// The parts' surfaces kept: a part's shader is the costliest thing drawn
+// (its materials, over a quarter of the screen or more), and its surface
+// moves slowly, so the surfaces are kept in a canvas of their own, a part's
+// drawn again each frame in turn, those whose surface has moved since they
+// were (none while the surfaces are still); and all of them when anything
+// else they show changes (the screen's size, the lines, a part's colours,
+// who's out or aimed at).
+
+Surface_Key :: struct {
+    size:     V2
+    splits:   Splits
+    count:    i64
+    identity: [MAX_PLAYERS] Identity
+    out:      [MAX_PLAYERS] bool
+    tuning_revision: i64
+    targeted: i64
+}
+
+Kept_Surfaces :: struct {
+    canvas:   Draw.Canvas
+    made:     bool
+    key:      Surface_Key
+    drawn_at: [MAX_PLAYERS] f32        // the surfaces' time each part was drawn at
+    next:     i64                      // the part to look at first next
+}
+
+kept_surfaces: Kept_Surfaces
+
+// The parts' surfaces brought up to date in their canvas: whether they're
+// there to draw (false: no canvas could be made, so each part's drawn as it
+// is).
+keep_surfaces :: (layout: Layout, game: Game, targeted: i64, time: f32 -> bool) {
+    size := Wide.i32x2⟨i32'Math.round(layout.size.x), i32'Math.round(layout.size.y)⟩
+    if !kept_surfaces.made or kept_surfaces.canvas.size != size {
+        if kept_surfaces.made then kept_surfaces.canvas.destroy()
+        kept_surfaces.made = false
+        if made := Draw.create_canvas(size) { kept_surfaces.canvas = made } else if os_error { return false }
+        kept_surfaces.made = true
+        kept_surfaces.key = ⟨count: -1⟩
+    }
+    *key := Surface_Key⟨size: layout.size, splits: layout.splits, count: layout.count, identity: game.identity, targeted: targeted, tuning_revision: gold_tuning_revision⟩
+    for k: 0 < layout.count { key.out[k] = is_out(game, k) }
+    if key != kept_surfaces.key {
+        kept_surfaces.canvas.clear(BACKGROUND)
+        for k: 0 < layout.count {
+            draw_surface(kept_surfaces.canvas, layout, game, k, targeted, time)
+            kept_surfaces.drawn_at[k] = time
+        }
+        kept_surfaces.key = key
+        return true
+    }
+    for _: 0 < layout.count {
+        k := kept_surfaces.next % layout.count
+        kept_surfaces.next += 1
+        if kept_surfaces.drawn_at[k] != time {
+            draw_surface(kept_surfaces.canvas, layout, game, k, targeted, time)
+            kept_surfaces.drawn_at[k] = time
+            break
+        }
+    }
+    return true
+}
+
+// A part's surface, its colours' and its surface's at a time, out or aimed
+// at as it is.
+draw_surface :: (canvas: *Draw.Canvas, layout: Layout, game: Game, k: i64, targeted: i64, time: f32) {
+    *colours: [Draw.MAX_GRADIENT_COLOURS] Draw.RGBA
+    n, pattern, surface := part_fill(game.identity[k], cell_of(layout), k, time, layout.seats[k].angle, colours)
+    draw_part(canvas, layout, k, colours[:n], pattern, surface, game.identity[k], is_out(game, k), k == targeted)
 }
 
 // What a part's surface is: its look's pattern, open water seen from above
@@ -403,47 +478,6 @@ part_fill :: (identity: Identity, cell: f32, seat: i64, time: f32, angle: f32, i
 SURFACE_FEATURES :: 1.5
 SURFACE_QUIET :: 0.6
 
-// Where a gold part's lamp of each of its colours (3 to 5 of them) shines
-// from: the index'th in WUBRG order. Light colours come directly from
-// MANA_GROUNDS, shared with the toggles. Local x is right, y down, as the
-// player reads the section.
-identity_light_direction :: (count: i64, index: i64 -> V2) #pure {
-    if count == 3 {
-        directions := [3] V2⟨⟨-0.8660254, -0.5⟩, ⟨0.8660254, -0.5⟩, ⟨0, 1⟩⟩
-        return directions[index]
-    }
-    if count == 4 {
-        corners := [4] V2⟨⟨-1, -1⟩, ⟨1, -1⟩, ⟨1, 1⟩, ⟨-1, 1⟩⟩
-        return corners[index]
-    }
-    // Magic's five dots: white at top, then blue, black, red, green clockwise.
-    angle := 0 - f32'Math.PI / 2 + f32'index * f32'Math.TAU / 5
-    return ⟨Math.cos(angle), Math.sin(angle)⟩
-}
-
-identity_lights_follow_the_section :: () #test {
-    assert(identity_light_direction(3, 2) == V2⟨0, 1⟩)
-    for i: 0 < 3 {
-        a := identity_light_direction(3, i)
-        b := identity_light_direction(3, (i + 1) % 3)
-        assert(Math.abs(Math.dot(a, b) + 0.5) < 0.0001)
-    }
-    for i: 0 < 4 {
-        corner := identity_light_direction(4, i)
-        assert(Math.abs(corner.x) == 1 and Math.abs(corner.y) == 1)
-    }
-    assert(Math.length(identity_light_direction(5, 0) - V2⟨0, -1⟩) < 0.0001)
-    for count: 3 <= 5 {
-        for i: 0 < count {
-            local := identity_light_direction(count, i) * 100
-            for turn: [4] f32⟨0, 1.5707963, 3.1415927, 4.712389⟩ {
-                world := placed(⟨400, 300⟩, turn, local)
-                assert(Math.length(local_of(⟨400, 300⟩, turn, world) - local) < 0.001)
-            }
-        }
-    }
-}
-
 // Two stationary mineral fields exchange weight over time. Their zero
 // contours can split and join; local deposition controls width and fading.
 // No UV translation or distortion: the network changes its connectivity.
@@ -478,7 +512,7 @@ living_artifact :: (q: V2, texture: V3, time: f32, seed: f32 -> V3) {
     shine := Math.exp(0 - (reflection - 0.42) * (reflection - 0.42) * 850)
     broad := Math.exp(0 - (reflection - 0.54) * (reflection - 0.54) * 35)
     // (the artifact's ground, 0x9A8A76: ARTIFACT)
-    metal := V3⟨0.604, 0.541, 0.463⟩ * (0.34 - detail * 0.15 + grain * 0.05 - broad * 0.06 - shine * 0.045)
+    metal := V3⟨0.68, 0.40, 0.19⟩ * (0.34 - detail * 0.15 + grain * 0.05 - broad * 0.06 - shine * 0.045)
     growth := Patterns.layered(q * 0.6 + V2⟨time * 0.16, seed - time * 0.11⟩, 4)
     weather := Patterns.layered(q * 2.8 + V2⟨seed, 0⟩, 5) * 0.55 + grain * 0.25 + growth * 0.35
     rust := Math.smoothstep(0.46, 0.7, weather)
@@ -543,10 +577,10 @@ shade_panel_material :: (p: V2, local_x: f32, local_y: f32, base: V3, look: V4, 
     else if surface > 1.5 { authored = Math.mix(base * (0.55 + luma), texel, 0.65) }
     else if surface > 0.5 { authored = Math.mix(base, texel, 0.8) }
     weight: f32 = if surface > 0.5 then 0.78 else 0.62
-    if tile != 1 then rgb = Math.mix(rgb, authored, weight * (0.65 + more.y * 0.5))
+    if tile != 1 and tile != 3 then rgb = Math.mix(rgb, authored, weight * (0.65 + more.y * 0.5))
     // Slow canopy/cloud shadow gives depth without sliding solid materials.
     illumination := Patterns.layered(at * 1.6 + V2⟨more.x * 0.04, 0⟩, 3)
-    if tile != 1 then rgb = rgb * (0.92 + 0.16 * illumination)
+    if tile != 1 and tile != 3 then rgb = rgb * (0.92 + 0.16 * illumination)
     // Contrast only: preserve the original moving pattern and illumination.
     if tile == 2 then rgb = Math.max((rgb - V3⟨0.16, 0.16, 0.16⟩) * 1.35 + V3⟨0.16, 0.16, 0.16⟩, V3⟨0.006, 0.006, 0.006⟩)
     // These materials evolve in place rather than sliding a photograph.

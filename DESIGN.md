@@ -41,8 +41,7 @@ stays behind what's on it.
   - white: pale marble whose fine veins evolve in place over time;
   - black: deep obsidian with contrasting brighter veins;
   - red: cracked stone;
-  - gold: polished metal with small recurring studio reflections and
-    reflections of its identity-coloured light sources.
+  - gold: polished metal with moving studio reflections, with identity-coloured perimeter strip lighting.
 - **Facing its player.** Each surface is turned as its player's text is.
 - **Moving, slowly by default.** Motion (settings): paused, Slow (the
   default, and what Reset sets back), Medium or Fast.
@@ -53,6 +52,41 @@ stays behind what's on it.
 - **Readable.** The colour toggles sit on soft shadows; commander damage
   chips sit in a row below the life total, or where they fit clear of the
   toggles and inside the part.
+- **The colour toggles** are a pentagon at each player's near left, as a
+  card's back has Magic's five colours: white at its top as they see it,
+  then blue, black, red and green clockwise. Folded, they're the five-colour
+  icon (the card back's five dots, textures/five-colour-dots-96.png, as
+  wide as a toggle, turned to face them) right in the player's bottom left
+  corner, as near it as fits; open, the pentagon is as near the icon as it
+  fits, so it moves out as little as it can. After a reset (every seat its
+  starting colours) they're open, and stay so until the player sets one;
+  then they fold 2 s after the last one set (each set starts it again),
+  drawing in to the icon as it comes, 0.2 s. The icon touched opens them for
+  3 s, each one set then giving 2 s from then; the pentagon's middle
+  touched folds them at once. A restart or a new count keeps the colours,
+  and leaves the toggles as they were; when Raza starts, carrying
+  on a game, they're folded.
+- **The life drum.** A life total tapped opens into wheels, a digit each,
+  as an odometer's: each a cylinder with its digits round it, one more each
+  row up and one less down, and beside them (to the player's right) a wheel
+  of the change since it opened, 0 at the middle, +1 up, -1 down. A wheel
+  dragged turns with the finger (down brings the bigger digits to the
+  middle), the life changing by its place, the units' by one and the tens'
+  by ten, a row at a time; the others turn only as it carries into them,
+  and the change's wheel counts in its place. Each squashes and darkens
+  toward its edges as a cylinder turns away, with a gleam above the middle.
+  Let go, the number at the middle is the life (undo brings each turn
+  back). Tapped again it closes: the wheels flatten (0.15 s), and the
+  change stays flat beside the life 1 s, then fades over 1.5 s. A press
+  that moves less than 0.15 of the life's capitals is a tap. Drawn by drawing the rows flat into the light
+  layer (a canvas is opaque, so their fill, border and shadow go in its
+  red, green and blue) and wrapping that round the cylinder in the Drum
+  shader, by Draw's draw_shader_canvas.
+- **Every player is kept until a restart or reset.** A smaller count
+  takes players off the table (GOING's slots, the last to go the first
+  back), each kept as they were: life, colours, the damage each commander
+  has done and taken. Back up, they return so. A restart starts all six
+  again; a reset forgets those off the table.
 
 ## The elements: each colour's damage
 
@@ -127,35 +161,34 @@ bigger burst. A spell's attack looks the same as combat damage's.
 
 ## The controls
 
-The plus in the middle: the players in its middle (touched, the plus
-morphs into the count runner, 0.11 s: a long upright groove, fixed, as long
-as the count bar's whole travel; in it, one rounded steel bar (its own
-shader: a round section reflecting the light from the top left, brushed
-along its length) with each count's ring of people engraved on it, which
-slides with the finger, small pointers either side of the runner marking
+The pill in the middle, across the screen, its buttons 1.2 cells apart:
+from the left, undo and redo, the players in the middle, a new game, and the
+system's (settings and quitting) at the right end, as a power button. The
+text is Crimson Pro.
+
+The players' button: touched, the count runner grows out of the pill's
+middle, up and down (0.11 s), the rest of the pill and its buttons staying as
+they are: a long upright groove, fixed, as long as the count bar's whole
+travel, joined to the pill with rounded corners. In it, the count bar, which
+the players' button stretches into, each count's ring of people engraved on
+it, slides with the finger, small pointers either side of the runner marking
 the count at the button; let go, that count's the game's, the same if it
-didn't move, and the runner morphs back), undo and redo on its wings, a new
-game above, the system's (settings and quitting) below, as a power button.
-The text is Crimson Pro.
+didn't move, and the runner goes back into the pill.
 
-The plus is cut into the parts' surface as the channels between them are: a
-recess with a solid floor of its own colour (the controls' dark grey, not
-see-through), its walls the channels' cosine bowl going down from the
-surface to it, each shaded where it faces away from the light at the top
-left and warmly lit where it faces it. Drawn by a shader of its own
-(`recess_shade`) from its shape's distance, it morphs as the settings open.
+The pill is cut into the parts' surface as the channels between them are: a
+recess with a solid floor of its own (not see-through), its walls the
+channels' cosine bowl going down from the surface to it, each shaded where
+it faces away from the light at the top left and warmly lit where it faces
+it. Drawn by a shader of its own (`recess_shade`) from its shape's distance.
 
-The power button opens the settings in the plus itself: the plus morphs into
-a rounded square (0.11 s), each arm widening so its inside corners are pushed
-out to the square's, the screen behind darkened. The
-plus's buttons fade out over the first half, and the settings' fade in over
-the second, each at a place of a three by three grid (the plus's own
-places): Reset top left; the motion top right, one button showing what it
-is (pause, or play's triangles: ▶ slow, ▶▶ medium, ▶▶▶ fast), each tap the
+The power button puts the settings in the pill itself, the screen behind
+darkened: the pill's buttons fade out over the first half (0.11 s in all),
+and the settings' fade in over the second, at the pill's places: Reset at
+the far left; the motion in the middle, one button showing what it is
+(pause, or play's triangles: ▶ slow, ▶▶ medium, ▶▶▶ fast), each tap the
 next, round from pause to fast and back; and Quit, the power icon on red,
-where the power button was. A tap anywhere
-else, a blank place in the square or outside it, or Escape, closes it, the
-square morphing back.
+at the right end, where the power button is. A tap anywhere else, in the
+pill or outside it, or Escape, puts the pill's buttons back.
 
 ## Ideas kept for later
 
@@ -197,8 +230,28 @@ pulsing, snapping), the grid, the counts, and the settings
 (`raza_settings_0.png` part of the way open, `_1` open). The tests check
 what can be checked without looking: the stream's end and bend, volleys
 landing a point at a time and bolts together, black's strike landing once,
-motes born in their fields, fields clear of the controls, chips off the
-toggles, the plus opening into a square, the settings' buttons. REVIEW.md lists what's still to do.
+chips off the toggles, the toggles' pentagon and its folding, the pill's
+buttons, the count runner, the settings' buttons, players kept across
+counts, the life drum's opening, turning, closing and its wheels' carrying.
+`raza_folded_0.png` and `_1` show the toggles folded and half way;
+`raza_drum_0.png` to `_3` a life drum open, its units' wheel turned back
+through a carry, then its tens' turned, then closing, and closed with its
+change beside it.
+
+## Speed
+
+The parts' surfaces are the costliest thing drawn (one shader with every
+material), and they move slowly, so they're kept in a canvas of their own:
+each frame one part's is drawn again, in turn, if it's moved since it was
+(none while Motion's off), and all of them when anything else they show
+changes (the size, the lines, a part's colours, who's out or aimed at).
+The light layer and its bloom are drawn only while something's lit (a
+drag, a volley). Draw_Vulkan keeps the driver's compiled pipelines in
+%LOCALAPPDATA%\Raza\vulkan_pipelines.bin: the part shader's took Intel's
+driver about 6 s to compile at every start, and now only at a build's first
+(its cache is the exe's own). `Raza.exe -quit_after:8` prints the frames'
+work; measured at 2160×1440 on Intel's GPU: 58 fps (the 60 cap), each
+frame's work 14 ms, the first frame 0.5 s.
 
 ## Material assets and animation
 
@@ -211,7 +264,8 @@ No reference game's art is included in the application.
 - Black: restored to the original pattern and material blend, with its
   original animated illumination. A final 1.35 contrast adjustment deepens shadows without replacing its motion.
 - Green: the original forest texture plus three fixed offset copies. Local opacity masks evolve independently and favour bright leaf detail, suggesting leaves appearing and fading. The base floor remains opaque, with moving canopy illumination; there are no separate plant sprites.
-- Artifact: original warm grey-brown (0x9A8A76). Corrosion remains granular;
+- Red: original procedural crack shading, without the later atlas overlay or added cloud illumination.
+- Artifact: bronze metal patches under animated rust. Corrosion remains granular;
   the former pale patches and broad highlights are dark shading instead.
 - Water: calm blue-green depth, fine broken directional ripples and sparse
   sun glints, made by several evolving noise fields, now viewed at twice the previous scale. Avoid large luminous
@@ -226,14 +280,12 @@ turbulence and used greenbird10's supplied underwater example as a visual
 reference (labelled CC BY-NC-SA 3.0); the current open_water_at uses noise
 fields instead of either example's wave formulation.
 
-Multicolour gold lights (three colours or more; two are a hybrid, below) use
-the MANA_GROUNDS colours shared with the toggles. In the section's local
-orientation: three form a triangle with the last at the bottom; four occupy corners clockwise from
-top left; five follow WUBRG clockwise from white at the top. Their edge washes
-fade into the gold interior. Coloured reflections are diffuse, elongated and
-irregular rather than round spots; black makes a dark reflection. Small studio
-reflections drift continuously in one direction at 80% of their earlier peak
-speed. Motion controls all material animation; Off freezes it.
+Multicolour gold (three colours or more; two remain hybrid) uses polished gold with shallow undulations
+and moving studio reflections.
+The actual polygon perimeter is divided into equal arc lengths in WUBRG order,
+starting at its first vertex. Each colour lights its entire strip, including
+around corners, with soft inward falloff. Light retains the material shading;
+black darkens its strip. The interior remains gold. Motion controls the reflected lights; Off freezes them.
 
 Grooves are confined to shared player boundaries. Each half is 0.075 cells
 wide, with a smooth cosine bowl profile, no channel around the screen edge,
@@ -259,4 +311,34 @@ show all ten pairs alongside gold.
 
 At rest there are no element handles: each player's damage spot is its two damage icons (combat and spell). Targeting trails are narrower, less widely braided, and emit eight motes per second across their colours. Motes are smaller and bloom is weaker and tighter. Blue uses smooth volume shading without a flat water bitmap overlay; artifact reflections are warm and softened. Blue and green attacks have smaller, shorter bodies. Black retains its strand, plunge, pulse and single-hit strike sequence. Damage timing and hit testing are unchanged.
 
-The central controls and player-count selector use textures/control-slate-v1.png, a dark matte slate material. Their existing rounded geometry and recessed lighting remain. The slate prompt is in textures/SLATE-PROMPT.md; the separate transparent five-colour dot icon is documented in textures/CARD-BACK-ASSETS.md.
+The central controls and player-count selector use textures/control-metal-v1.png, a dark brushed gunmetal material. Their existing rounded geometry and recessed lighting remain. The metal prompt is in textures/DARK-METAL-PROMPT.md; the separate transparent five-colour dot icon is documented in textures/CARD-BACK-ASSETS.md.
+
+The player-count control is a circular brushed-bronze button at rest. The same piece smoothly lengthens and shifts into the sliding count bar as the dark-metal runner opens. Engraved people rings appear along it; the selected ring remains strong through the transition, with small fixed pointers marking the selection. A close contact shadow seats the metal in the runner. Snapshots include closed and intermediate states as raza_count_morph_0.png through _2.png.
+
+The count runner is a fixed recessed dark-metal channel covering the full travel of the bronze slider, including the bar length and a small inset at both ends. The metal slides inside it; the groove does not follow the metal. Count spacing is 0.95 cells. Geometry tests cover both travel extremes and the fixed groove boundaries.
+
+The disk and extended count slider share a softly domed bronze finish, with warm reflections curving over the full face rather than a straight cylindrical stripe.
+
+### Live multicolour background tuning
+
+F8 toggles a tuning panel drawn inside Raza; `-tune` opens it at launch.
+It starts at half the available height. Drag its title bar to move it, or
+any edge/corner to resize it. Its size and position survive closing and
+reopening within the run, and stay within the main window when it resizes.
+Its 68 sliders cover ambient RGB and strength, surface curvature and relief,
+reflection position/shape/colour/motion, highlight polish, perimeter-strip
+reach and blending, and each WUBRG light colour. Values update the shader
+uniforms and invalidate the surface cache immediately, even with Motion Off.
+Large text scales for monitor DPI. A visible scrollbar supports dragging and
+track clicks; the mouse wheel also scrolls. Up/Down selects a control;
+Left/Right adjusts it, with Shift for a finer step. Reset selected and Reset
+all restore the built-in defaults.
+
+Every edit is saved to `background-tuning.json` in the working folder (the
+project folder for normal development launches), using a temporary file and
+rename. JSON keys name the individual values so agents can inspect the result.
+All runs load it, whether the control panel is open or not. A different file
+can be selected with `-background_tuning:path`. Missing keys retain defaults;
+out-of-range values are reset to defaults; malformed input is reported and
+is not overwritten during loading. The panel shows save failures and offers
+a Save / retry button. Closing the control panel keeps the chosen settings.

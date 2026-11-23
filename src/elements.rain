@@ -737,6 +737,8 @@ braided :: (start: V2, bend: V2, end: V2, i: i64, n: i64, cell: f32 -> V2) #pure
 // give added with its bloom. (At rest, a player's damage spot is its two
 // icons, draw_damage_icons'.)
 draw_elements :: (canvas: *Draw.Canvas, layer: *Draw.Canvas, layout: Layout, game: Game, screen: Screen_State, elements: Elements, volleys: Volleys) {
+    // (nothing lit, no light to add: no drag, no volley)
+    if !screen.drag.active and volleys.list.count == 0 then return
     cell := cell_of(layout)
     layer.clear(Draw.rgb(0x000000))
     // A drag's stream: each of the dragger's elements drawn out from their

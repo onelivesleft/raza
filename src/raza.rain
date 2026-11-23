@@ -48,6 +48,7 @@ Raza :: program {
 
 #include "layout.rain"
 #include "game.rain"
+#include "background-tuning.rain"
 #include "frames.rain"
 #include "materials.rain"
 #include "motes.rain"
@@ -103,10 +104,12 @@ lighter :: (colour: Draw.RGBA, by: f32 -> Draw.RGBA) #pure {
 }
 
 ////////////////////////////////
-// Colour identity: five toggles at each player's bottom left
+// Colour identity: five toggles at each player's bottom left, in a pentagon
+// as Magic's card back has them, folding into one five-colour icon when
+// they've been left alone a moment
 
 TOGGLE_RADIUS :: 0.26          // in cells
-TOGGLE_STEP   :: 0.62          // from one toggle's middle to the next's
+TOGGLE_RING   :: 0.56          // from the pentagon's middle to each toggle's
 
 // Whether toggles of radius r at the places are inside the part and clear
 // of its sides.
@@ -120,15 +123,18 @@ toggles_fit :: (points: [] V2, places: [5] V2, r: f32 -> bool) #pure {
     return true
 }
 
-// Where a part's colour toggles go: a row across its player's frame (along
-// their text), as near them as it fits, and in it as far left as it fits,
-// clear of the part's sides. A player facing a side has their row a gap
-// from the screen's edge and its nearest toggle the same gap from the
-// part's divider; one facing into a corner has it as near the corner as it
-// fits.
-toggle_places :: (layout: Layout, seat: Seat -> places: [5] V2) #pure {
+// Where a part's colour toggles go: folded, the five-colour icon in its
+// player's bottom left corner, as near it as it fits; open, a pentagon in
+// their frame, in Mana's order (WUBRG) as a card's back has them, white at
+// its top as they see it, then blue, black, red and green clockwise, its
+// middle as near the icon as it fits (so opening, it moves out as little as
+// it can); each the gap clear of the part's sides.
+toggle_places :: (layout: Layout, seat: Seat -> places: [5] V2, middle: V2, folded: V2) #pure {
     places = ⟨⟩
+    middle = seat.middle
+    folded = seat.middle
     cell := cell_of(layout)
+    reach := (TOGGLE_RING + TOGGLE_RADIUS) * cell
     r := TOGGLE_RADIUS * cell
     gap := TOGGLE_GAP * cell
     points := seat.outline[:seat.count]
@@ -144,54 +150,202 @@ toggle_places :: (layout: Layout, seat: Seat -> places: [5] V2) #pure {
         top = Math.min(top, l.y)
         bottom = Math.max(bottom, l.y)
     }
-    // Rows from the nearest their player's edge lets, back toward the
-    // centre, each tried along in steps; the first place a row fits is
-    // halved down to where it only just does.
+    // The icon: of places in steps (two) across the part, the nearest its
+    // player's bottom left corner (its bounds') that fits, then halved toward
+    // the corner to where it only just does.
     step := 0.1 * cell
+    corner_of_part := V2⟨left, bottom⟩
+    *corner := V2⟨left + r + gap, bottom - r - gap⟩
+    *nearest: f32 = 1e30
     *y := bottom - r - gap
     while y > top + r + gap {
-        *x := left
-        while x < right {
-            if row_fits(layout, seat, points, x, y) {
-                *near := x - step
-                *far := x
-                for _: 0 < 12 {
-                    middle := (near + far) / 2
-                    if row_fits(layout, seat, points, middle, y) then far = middle else near = middle
-                }
-                places = toggle_row(seat, far, y, cell)
-                return
+        *x := left + r + gap
+        while x < right - r - gap {
+            d := Math.length(V2⟨x, y⟩ - corner_of_part)
+            if d < nearest and icon_fits(seat, points, x, y, r + gap) {
+                corner = ⟨x, y⟩
+                nearest = d
             }
-            x += step
+            x += 2 * step
         }
-        y -= step
+        y -= 2 * step
     }
-    // (a part with no room: the row at its player's edge, for what shows)
-    places = toggle_row(seat, left, bottom - r - gap, cell)
+    if nearest < 1e30 {
+        *near := corner_of_part
+        *far := corner
+        for _: 0 < 12 {
+            halfway := (near + far) / 2
+            if icon_fits(seat, points, halfway.x, halfway.y, r + gap) then far = halfway else near = halfway
+        }
+        corner = far
+    }
+    folded = placed(seat.middle, seat.angle, corner)
+    // The pentagon: of middles in steps about the icon, the nearest it that
+    // fits, then halved toward the icon to where it only just does.
+    span := 3 * reach
+    *best := corner
+    *best_distance: f32 = 1e30
+    *gy := corner.y - span
+    while gy <= corner.y + span {
+        *gx := corner.x - span
+        while gx <= corner.x + span {
+            at := V2⟨gx, gy⟩
+            d := Math.length(at - corner)
+            if d < best_distance and pentagon_fits(layout, seat, points, gx, gy) {
+                best = at
+                best_distance = d
+            }
+            gx += step
+        }
+        gy += step
+    }
+    if best_distance == 1e30 {
+        // (a part with no room: the pentagon at its player's edge, for what shows)
+        places = pentagon(seat, left + reach, bottom - reach - gap, cell)
+        middle = placed(seat.middle, seat.angle, ⟨left + reach, bottom - reach - gap⟩)
+        return
+    }
+    *near := corner
+    *far := best
+    for _: 0 < 12 {
+        halfway := (near + far) / 2
+        if pentagon_fits(layout, seat, points, halfway.x, halfway.y) then far = halfway else near = halfway
+    }
+    places = pentagon(seat, far.x, far.y, cell)
+    middle = placed(seat.middle, seat.angle, far)
 }
 
-// Whether a part's toggle row, its first at x, y in its player's frame,
-// fits: the first the gap from the part's sides, the rest at least half
-// that, and all clear of the font button.
-row_fits :: (layout: Layout, seat: Seat, points: [] V2, x: f32, y: f32 -> bool) #pure {
+// Whether the folded icon, its middle at x, y in a part's player's frame,
+// fits: in the part, clear of its sides by clear.
+icon_fits :: (seat: Seat, points: [] V2, x: f32, y: f32, clear: f32 -> bool) #pure {
+    at := placed(seat.middle, seat.angle, ⟨x, y⟩)
+    return inside(at, points) and clearance(at, points) >= clear
+}
+
+// Whether a part's toggle pentagon, its middle at x, y in its player's
+// frame, fits: its middle in the part, each toggle the gap from its sides.
+pentagon_fits :: (layout: Layout, seat: Seat, points: [] V2, x: f32, y: f32 -> bool) #pure {
     cell := cell_of(layout)
     r := TOGGLE_RADIUS * cell
     gap := TOGGLE_GAP * cell
-    first := placed(seat.middle, seat.angle, ⟨x, y⟩)
-    if !inside(first, points) or clearance(first, points) < r + gap - 0.5 then return false
-    row := toggle_row(seat, x, y, cell)
-    return toggles_fit(points, row, r + 0.5 * gap)
+    if !inside(placed(seat.middle, seat.angle, ⟨x, y⟩), points) then return false
+    return toggles_fit(points, pentagon(seat, x, y, cell), r + gap)
 }
 
-// A row of toggles in a part's player's frame, the first at x, y.
-toggle_row :: (seat: Seat, x: f32, y: f32, cell: f32 -> row: [5] V2) #pure {
-    row = ⟨⟩
-    for i: 0 < 5 { row[i] = placed(seat.middle, seat.angle, ⟨x + f32'i * TOGGLE_STEP * cell, y⟩) }
+// The five toggles' places about a middle at x, y in a part's player's
+// frame: the i'th colour (Mana's order) i fifths of a turn clockwise from
+// the top as they see it.
+pentagon :: (seat: Seat, x: f32, y: f32, cell: f32 -> places: [5] V2) #pure {
+    places = ⟨⟩
+    for i: 0 < 5 {
+        a := f32'i * f32'Math.TAU / 5
+        places[i] = placed(seat.middle, seat.angle, ⟨x + Math.sin(a) * TOGGLE_RING * cell, y - Math.cos(a) * TOGGLE_RING * cell⟩)
+    }
 }
 
 // The gap from a colour toggle to the screen's edge and to its part's
 // divider, in cells.
 TOGGLE_GAP :: 0.3
+
+// The toggles fold into one five-colour icon (FIVE_COLOURS, its side in
+// cells) in their player's corner once a player who's set one has left them
+// TOGGLE_LINGER seconds, folding or opening over TOGGLE_FOLD seconds; the
+// pentagon's middle touched folds them at once. The icon touched opens them
+// for TOGGLE_OPENED seconds, each one set then giving TOGGLE_LINGER again.
+// After a reset (every seat its starting colours) they're open, and stay so
+// until one's set; a restart or a new count keeps the colours, and the
+// toggles as they were.
+TOGGLE_OPENED :: 3.0
+TOGGLE_LINGER :: 2.0
+TOGGLE_FOLD   :: 0.2
+FIVE_COLOURS_SIDE :: 2 * TOGGLE_RADIUS / 0.84     // its dots as wide as a toggle (the image has 8% of its side clear round them)
+
+// Each player's toggles' state: open or folded, how far open as they're
+// drawn (0 folded, 1 open), and the seconds left before they fold (none:
+// open until one's set).
+Toggles :: struct {
+    open:  [MAX_PLAYERS] bool = ⟨true, true, true, true, true, true⟩
+    shown: [MAX_PLAYERS] f32 = ⟨1, 1, 1, 1, 1, 1⟩
+    left:  [MAX_PLAYERS] f32 = ⟨-1, -1, -1, -1, -1, -1⟩
+}
+
+// Every player's toggles folded (a game carried on from the last run).
+fold_toggles :: (toggles: *Toggles) {
+    for *o: toggles.open { o = false }
+    for *s: toggles.shown { s = 0 }
+}
+
+// The five-colour icon (Magic's card back's five dots, textures'), made an
+// image as Raza starts.
+FIVE_COLOURS_BYTES :: #data "../textures/five-colour-dots-96.png"
+five_colours_image: Draw.Image
+
+Five_Colours_Params :: struct {
+    box:  V4      // its middle, and its half side (pixels), then unused
+    turn: V4      // the cosine and sine of its turn (its player's text's), how much it shows, then unused
+}
+
+// The five-colour icon turned about its middle as its player's text is,
+// shown a share (its colour premultiplied, as the image is).
+five_colours_shade :: (from: Draw.Quad_Between, badge: Shader.Uniforms(Five_Colours_Params), texture: Shader.Texture_2D, filtering: Shader.Sampler -> colour: V4) {
+    d := from.pixel - badge.box.xy
+    // (into the icon's own frame: turned back by its turn)
+    local := V2⟨d.x * badge.turn.x + d.y * badge.turn.y, d.y * badge.turn.x - d.x * badge.turn.y⟩
+    uv := local / Math.max(badge.box.z * 2, 1) + V2⟨0.5, 0.5⟩
+    if uv.x < 0 or uv.x > 1 or uv.y < 0 or uv.y > 1 then return ⟨0, 0, 0, 0⟩
+    colour = Shader.sample_level(texture, filtering, uv, 0) * badge.turn.z
+}
+
+Five_Colours :: shader { vertex: Draw.quad_place; fragment: five_colours_shade }
+FIVE_COLOURS :: Five_Colours(Draw.SHADER_TARGET)
+
+// The five-colour icon drawn about a middle, its side side, turned by
+// angle, shown a share.
+draw_five_colours :: (canvas: *Draw.Canvas, middle: V2, side: f32, angle: f32, shows: f32) {
+    // (a square big enough for its corners however it's turned)
+    reach := side * 0.75
+    params := Five_Colours_Params⟨V4⟨middle.x, middle.y, side / 2, 0⟩, V4⟨Math.cos(angle), Math.sin(angle), shows, 0⟩⟩
+    canvas.draw_shader_image(middle - V2⟨reach, reach⟩, V2⟨reach, reach⟩ * 2, FIVE_COLOURS.code, FIVE_COLOURS.bindings.badge, params, five_colours_image,
+                             FIVE_COLOURS.bindings.texture, FIVE_COLOURS.bindings.filtering)
+}
+
+// Every player's toggles open until one's set (a reset).
+open_toggles :: (toggles: *Toggles) {
+    for *o: toggles.open { o = true }
+    for *l: toggles.left { l = -1 }
+}
+
+// A player's toggle set: open, folding TOGGLE_LINGER seconds from now.
+touch_toggles :: (toggles: *Toggles, k: i64) {
+    toggles.open[k] = true
+    toggles.left[k] = TOGGLE_LINGER
+}
+
+// A player's five-colour icon touched: open, folding TOGGLE_OPENED seconds
+// from now.
+unfold_toggles :: (toggles: *Toggles, k: i64) {
+    toggles.open[k] = true
+    toggles.left[k] = TOGGLE_OPENED
+}
+
+// A player's open pentagon's middle touched: folding now.
+fold_now :: (toggles: *Toggles, k: i64) {
+    toggles.open[k] = false
+    toggles.left[k] = 0
+}
+
+// Every player's toggles moved on by a frame's time: counting down to
+// folding, and opening or folding as they're drawn.
+step_toggles :: (toggles: *Toggles, seconds: f32) {
+    for k: 0 < MAX_PLAYERS {
+        if toggles.open[k] and toggles.left[k] > 0 {
+            toggles.left[k] -= seconds
+            if toggles.left[k] <= 0 then toggles.open[k] = false
+        }
+        way: f32 = if toggles.open[k] then 1 else -1
+        toggles.shown[k] = Math.clamp(toggles.shown[k] + way * seconds / TOGGLE_FOLD, 0, 1)
+    }
+}
 
 // The nearest a point comes to a polygon's edges.
 clearance :: (p: V2, points: [] V2 -> f32) #pure {
@@ -258,29 +412,53 @@ icon_at :: (layout: Layout, game: Game, p: V2 -> player: i64, combat: bool) [abs
 // out again only then (every frame of a line's moving, as before; once
 // otherwise).
 Toggle_Cache :: struct {
-    size:   V2
-    splits: Splits
-    places: [MAX_PLAYERS] [5] V2
+    size:    V2
+    splits:  Splits
+    places:  [MAX_PLAYERS] [5] V2
+    middles: [MAX_PLAYERS] V2
+    folded:  [MAX_PLAYERS] V2
 }
 
 toggle_cache: Toggle_Cache
 
-// A part's toggle places (toggle_places'), from the cache.
+// A part's toggle places and their pentagon's middle (toggle_places'), from
+// the cache.
 toggles_of :: (layout: Layout, k: i64 -> [5] V2) {
-    if toggle_cache.size != layout.size or toggle_cache.splits != layout.splits {
-        toggle_cache.size = layout.size
-        toggle_cache.splits = layout.splits
-        for seat, s: layout.seats[:layout.count] { toggle_cache.places[s] = toggle_places(layout, seat) }
-    }
+    fill_toggle_cache(layout)
     return toggle_cache.places[k]
 }
 
-// The colour toggle at a point: its part, and which colour; or absent.
-toggle_at :: (layout: Layout, p: V2 -> seat: i64, colour: i64) [absent] {
+toggle_middle :: (layout: Layout, k: i64 -> V2) {
+    fill_toggle_cache(layout)
+    return toggle_cache.middles[k]
+}
+
+// Where a part's five-colour icon is, folded (toggle_places').
+toggle_folded :: (layout: Layout, k: i64 -> V2) {
+    fill_toggle_cache(layout)
+    return toggle_cache.folded[k]
+}
+
+fill_toggle_cache :: (layout: Layout) {
+    if toggle_cache.size == layout.size and toggle_cache.splits == layout.splits then return
+    toggle_cache.size = layout.size
+    toggle_cache.splits = layout.splits
+    for seat, s: layout.seats[:layout.count] {
+        places, middle, folded := toggle_places(layout, seat)
+        toggle_cache.places[s] = places
+        toggle_cache.middles[s] = middle
+        toggle_cache.folded[s] = folded
+    }
+}
+
+// The colour toggle at a point, of a part whose toggles are open: its part,
+// and which colour; or absent.
+toggle_at :: (layout: Layout, toggles: Toggles, p: V2 -> seat: i64, colour: i64) [absent] {
     seat = 0
     colour = 0
     r := TOGGLE_RADIUS * cell_of(layout)
     for s, k: layout.seats[:layout.count] {
+        if !toggles.open[k] then continue
         for place, i: toggles_of(layout, k) {
             if Math.length(p - place) <= r * 1.15 {
                 seat = k
@@ -288,6 +466,26 @@ toggle_at :: (layout: Layout, p: V2 -> seat: i64, colour: i64) [absent] {
                 return
             }
         }
+    }
+    fail: absent
+}
+
+// The five-colour icon at a point, of a part whose toggles are folded: its
+// part; or absent.
+five_colours_at :: (layout: Layout, toggles: Toggles, p: V2 -> i64) [absent] {
+    reach := FIVE_COLOURS_SIDE / 2 * cell_of(layout)
+    for k: 0 < layout.count {
+        if !toggles.open[k] and Math.length(p - toggle_folded(layout, k)) <= reach then return k
+    }
+    fail: absent
+}
+
+// The open pentagon's middle at a point (the space inside its five toggles),
+// of a part whose toggles are open: its part; or absent.
+pentagon_middle_at :: (layout: Layout, toggles: Toggles, p: V2 -> i64) [absent] {
+    reach := (TOGGLE_RING - TOGGLE_RADIUS) * cell_of(layout)
+    for k: 0 < layout.count {
+        if toggles.open[k] and Math.length(p - toggle_middle(layout, k)) <= reach then return k
     }
     fail: absent
 }
@@ -318,6 +516,7 @@ Fonts :: struct {
     label:     Draw.Font         // the number grid's buttons
     output:    Draw.Font         // the number grid's number
     mana:      Draw.Font         // Mana's, for the colour toggles
+    change:    Draw.Font         // a life drum's change, DRUM_CHANGE of the life's size
 }
 
 // How many steps of size a cell has for the life totals: the size moves in
@@ -345,6 +544,8 @@ resize_life :: (fonts: *Fonts, family: string, layout: Layout) [os_error: Draw.D
     fonts.life.destroy()
     if big := Draw.load_font(family, size, 500) { fonts.life = big } else if os_error { fail: os_error }
     fonts.life_size = size
+    fonts.change.destroy()
+    if change := Draw.load_font(family, i32'(f32'size * DRUM_CHANGE), 500) { fonts.change = change } else if os_error { fail: os_error }
 }
 
 // The fonts for a layout, the text in a family.
@@ -354,6 +555,7 @@ load_fonts :: (family: string, layout: Layout -> fonts: Fonts) [os_error: Draw.D
     life := life_size_of(layout)
     if big := Draw.load_font(family, life, 500) { fonts.life = big } else if os_error { fail: os_error }
     fonts.life_size = life
+    if change := Draw.load_font(family, i32'(f32'life * DRUM_CHANGE), 500) { fonts.change = change } else if os_error { fail: os_error }
     if small := Draw.load_font(family, i32'(cell * 0.42), 600) { fonts.small = small } else if os_error { fail: os_error }
     if label := Draw.load_font(family, i32'(cell * 0.45), 500) { fonts.label = label } else if os_error { fail: os_error }
     if output := Draw.load_font(family, i32'(cell * 0.8), 500) { fonts.output = output } else if os_error { fail: os_error }
@@ -367,6 +569,7 @@ reload_fonts :: (fonts: *Fonts, family: string, layout: Layout) [os_error: Draw.
     fonts.label.destroy()
     fonts.output.destroy()
     fonts.mana.destroy()
+    fonts.change.destroy()
     if loaded := load_fonts(family, layout) { fonts = loaded } else if os_error { fail: os_error }
 }
 
@@ -500,24 +703,21 @@ Capsule_Part :: enum u8 {
 
 CAPSULE_PARTS :: [5] Capsule_Part⟨.UNDO, .REDO, .PLAYERS, .RESTART, .SYSTEM⟩
 
-// The controls at the screen's centre are a rounded plus, a button a cell
-// across in its middle and at each of its arms' ends: the players in the
-// middle, undo and redo on the left and right wings, a new game above and
-// the system's (settings and quitting) below. CAPSULE_ARM is how far an
-// arm's button is from the middle, CAPSULE_REACH how far its end is, and
-// CAPSULE_HALF an arm's half width, in cells.
-CAPSULE_ARM   :: 1.2
-CAPSULE_REACH :: 1.8
+// The controls at the screen's centre are a pill, across the screen, a
+// button a cell across at each of its places, CAPSULE_PITCH apart: from the
+// left, undo and redo, the players in the middle, then a new game and the
+// system's (settings and quitting), its power button, at the right end.
+// CAPSULE_REACH is how far its ends are from the middle, and CAPSULE_HALF
+// its half height (its round ends' radius), in cells.
+CAPSULE_PITCH :: 1.2
+CAPSULE_REACH :: 2 * CAPSULE_PITCH + CAPSULE_HALF
 CAPSULE_HALF  :: 0.6
 
-// The controls' half width (and height), in cells: what's kept clear of them.
-CAPSULE_HALF_WIDTH :: CAPSULE_REACH
-
-// How far a damage spot's middle keeps from the plus's arms, in cells (its
+// How far a damage spot's middle keeps from the pill, in cells (its
 // button's half and a little).
 CONTROLS_CLEAR :: 0.75
 
-// A damage spot clear of the controls (the plus, and CONTROLS_CLEAR round
+// A damage spot clear of the controls (the pill, and CONTROLS_CLEAR round
 // it), on a screen of a size: moved from where it would be toward its
 // part's middle (so staying in its part) till it is.
 clear_of_controls :: (size: V2, centre: V2, middle: V2, spot: V2 -> V2) #pure {
@@ -527,32 +727,28 @@ clear_of_controls :: (size: V2, centre: V2, middle: V2, spot: V2 -> V2) #pure {
         d := at - centre
         across := Math.abs(d.x) / cell
         up := Math.abs(d.y) / cell
-        wide := across < CAPSULE_REACH + CONTROLS_CLEAR and up < CAPSULE_HALF + CONTROLS_CLEAR
-        tall := across < CAPSULE_HALF + CONTROLS_CLEAR and up < CAPSULE_REACH + CONTROLS_CLEAR
-        if !wide and !tall then return at
+        if across >= CAPSULE_REACH + CONTROLS_CLEAR or up >= CAPSULE_HALF + CONTROLS_CLEAR then return at
         at = at + (middle - at) * 0.15
     }
     return at
 }
 
-// How far a point is from the controls' plus (0 on it), on a screen of a size.
+// How far a point is from the controls' pill (0 on it), on a screen of a size.
 controls_clearance :: (size: V2, centre: V2, p: V2 -> f32) #pure {
     cell := Math.min(size.x, size.y) * CELL_SHARE
     d := Math.abs(p - centre) / cell
-    wide := Math.length(Math.max(d - V2⟨CAPSULE_REACH, CAPSULE_HALF⟩, 0))
-    tall := Math.length(Math.max(d - V2⟨CAPSULE_HALF, CAPSULE_REACH⟩, 0))
-    return Math.min(wide, tall) * cell
+    return Math.length(Math.max(d - V2⟨CAPSULE_REACH, CAPSULE_HALF⟩, 0)) * cell
 }
 
 capsule_centre :: (layout: Layout, part: Capsule_Part -> V2) #pure {
-    offset: V2 = if part is {
-        case .UNDO: ⟨0 - CAPSULE_ARM, 0⟩
-        case .REDO: ⟨CAPSULE_ARM, 0⟩
-        case .PLAYERS: ⟨0, 0⟩
-        case .RESTART: ⟨0, 0 - CAPSULE_ARM⟩
-        case .SYSTEM: ⟨0, CAPSULE_ARM⟩
+    place: f32 = if part is {
+        case .UNDO: -2
+        case .REDO: -1
+        case .PLAYERS: 0
+        case .RESTART: 1
+        case .SYSTEM: 2
     }
-    return layout.centre + offset * cell_of(layout)
+    return layout.centre + V2⟨place * CAPSULE_PITCH, 0⟩ * cell_of(layout)
 }
 
 // The capsule's button at a point, or absent.
@@ -568,13 +764,9 @@ capsule_part_at :: (layout: Layout, at: V2 -> Capsule_Part) [absent] {
 // The controls are cut into the parts' surface as the channels between them
 // are: a recess, its floor the surface darkened, its walls the channels'
 // cosine bowl, each lit or shaded as it faces the light (PART_LIGHT) or
-// away. Its shape is a plus, arms reaching CAPSULE_REACH, CAPSULE_HALF wide
-// each, their ends round, their inside corners rounded by PLUS_CORNER;
-// opened (as the settings open, eased), it's part of the way to a square
-// CAPSULE_REACH out each way, its corners rounded by SETTINGS_ROUND: each
-// arm widening, so each inside corner is pushed out to the square's corner.
-// All in cells.
-PLUS_CORNER :: 0.25
+// away. Its shape is the pill, CAPSULE_REACH either way, CAPSULE_HALF up
+// and down, its ends round (in cells); the settings appear in it, in place
+// of its buttons.
 RECESS_WALL :: 0.12             // how wide its walls are, from the surface to its floor
 
 // How far a point is outside a box about 0, half its size each way, its
@@ -585,44 +777,36 @@ round_box_distance :: (p: V2, half: V2, radius: f32 -> f32) #pure {
 }
 
 // How far a point (from the controls' middle) is outside the recess
-// (negative inside), its shape as recess_shape gives it: the plus (or the
-// settings' square), part of the way to the count column's groove.
-recess_distance :: (p: V2, shape: V4, more: V4, column: V4 -> f32) #pure {
-    reach := shape.z
-    t := more.z
-    across := Math.mix(shape.w, reach, t)
-    radius := Math.mix(shape.w, more.y, t)
-    wide := round_box_distance(p, V2⟨reach, across⟩, radius)
-    tall := round_box_distance(p, V2⟨across, reach⟩, radius)
-    // (the two arms joined smoothly, so the inside corners are rounded;
-    // not at all once square)
-    k := Math.max(more.x * (1 - t), 0.0001)
-    h := Math.clamp(0.5 + 0.5 * (tall - wide) / k, 0, 1)
-    plus := Math.mix(tall, wide, h) - k * h * (1 - h)
-    if column.w <= 0 then return plus
-    // (the column's groove: a rounded upright box about its middle, its
-    // ends round; the two shapes' distances mixed, so one becomes the other)
-    groove := round_box_distance(p - V2⟨0, column.x⟩, V2⟨column.y, column.z⟩, column.y)
-    return Math.mix(plus, groove, column.w)
+// (negative inside), its shape as recess_shape gives it: the pill, and the
+// count runner grown up and down out of its middle a share of the way.
+recess_distance :: (p: V2, shape: V4, column: V4 -> f32) #pure {
+    pill := round_box_distance(p, shape.zw, shape.w)
+    if column.w <= 0 then return pill
+    // (the runner: a rounded upright box about the middle, its ends round,
+    // from the pill's height to its own length as it grows; the two joined
+    // smoothly, so the corners between them are rounded)
+    length := Math.mix(shape.w, column.z, column.w)
+    groove := round_box_distance(p, V2⟨column.y, length⟩, column.y)
+    k := Math.max(column.x, 0.0001)
+    h := Math.clamp(0.5 + 0.5 * (groove - pill) / k, 0, 1)
+    return Math.mix(groove, pill, h) - k * h * (1 - h)
 }
 
-// The recess's shape, in pixels, open a share of the way into the
-// settings' square: its middle and its arms' reach and half width (shape),
-// and its inside corners' rounding, the square's corners', how far it's
-// open (eased in and out), and its walls' width (more); and part of the way
-// (counts, eased in and out) to the count runner, the upright groove the
-// count bar slides in: its middle's offset down from the controls' (none),
-// its half width and half height, and how far (column).
-recess_shape :: (layout: Layout, open: f32, counts: f32 = 0 -> shape: V4, more: V4, column: V4) #pure {
+// The recess's shape, in pixels: the pill's middle, its half width and half
+// height (shape); and the count runner, the upright groove the count bar
+// slides in, grown a share of the way (counts, eased in and out) out of the
+// pill's middle: how round the corners where it meets the pill are, its half
+// width and half length, and how far (column).
+recess_shape :: (layout: Layout, counts: f32 = 0 -> shape: V4, column: V4) #pure {
     cell := cell_of(layout)
-    opened := Math.clamp(open, 0, 1)
-    t := opened * opened * (3 - 2 * opened)
     shape = ⟨layout.centre.x, layout.centre.y, CAPSULE_REACH * cell, CAPSULE_HALF * cell⟩
-    more = ⟨PLUS_CORNER * cell, SETTINGS_ROUND * cell, t, RECESS_WALL * cell⟩
     grooved := Math.clamp(counts, 0, 1)
     c := grooved * grooved * (3 - 2 * grooved)
-    column = ⟨0, COLUMN_HALF * cell, RUNNER_HALF * cell, c⟩
+    column = ⟨RUNNER_JOIN * cell, COLUMN_HALF * cell, RUNNER_HALF * cell, c⟩
 }
+
+// How round the corners where the runner meets the pill are, in cells.
+RUNNER_JOIN :: 0.25
 
 // The count runner's half width, in cells (a button's, and its round ends'),
 // and its half length: as far as the count bar's end goes either way, the
@@ -630,20 +814,20 @@ recess_shape :: (layout: Layout, open: f32, counts: f32 = 0 -> shape: V4, more: 
 // (the 2's ring at the button to MAX_PLAYERS' there).
 COLUMN_HALF :: 0.6
 BAR_HALF    :: f32'(MAX_PLAYERS - 2) / 2 * COUNT_PITCH + 0.55
-RUNNER_HALF :: f32'(MAX_PLAYERS - 2) / 2 * COUNT_PITCH + BAR_HALF + 0.05
+RUNNER_HALF :: f32'(MAX_PLAYERS - 2) / 2 * COUNT_PITCH + BAR_HALF + 0.08
 
-// Whether a point is in the controls' recess, open a share of the way (to
-// the settings' square, or to the count runner).
-in_controls :: (layout: Layout, p: V2, open: f32 = 0, counts: f32 = 0 -> bool) #pure {
-    shape, more, column := recess_shape(layout, open, counts)
-    return recess_distance(p - shape.xy, shape, more, column) < 0
+// Whether a point is in the controls' recess, the pill, or part of the way
+// (counts) to the count runner.
+in_controls :: (layout: Layout, p: V2, counts: f32 = 0 -> bool) #pure {
+    shape, column := recess_shape(layout, counts)
+    return recess_distance(p - shape.xy, shape, column) < 0
 }
 
 Recess_Params :: struct {
     shape:  V4
-    more:   V4
-    column: V4    // the count column's groove, and how far toward it (recess_shape's)
+    column: V4    // the count runner, and how far toward it (recess_shape's)
     floor:  V4    // its floor's colour (opaque: the controls' own, not the surface's)
+    wall:   V4    // its walls' width (pixels), then unused
 }
 
 // The recess over the surface: its walls going down from the surface to
@@ -652,15 +836,15 @@ Recess_Params :: struct {
 // what to lay over the surface (its colour premultiplied).
 recess_shade :: (from: Draw.Quad_Between, recess: Shader.Uniforms(Recess_Params), texture: Shader.Texture_2D, filtering: Shader.Sampler -> colour: V4) {
     p := from.pixel - recess.shape.xy
-    d := recess_distance(p, recess.shape, recess.more, recess.column)
+    d := recess_distance(p, recess.shape, recess.column)
     if d > 1 then return ⟨0, 0, 0, 0⟩
     coverage := Math.clamp(0.5 - d, 0, 1)
     // (the way out of it, toward the surface: its distance's slope)
-    gx := recess_distance(p + V2⟨0.5, 0⟩, recess.shape, recess.more, recess.column) - recess_distance(p - V2⟨0.5, 0⟩, recess.shape, recess.more, recess.column)
-    gy := recess_distance(p + V2⟨0, 0.5⟩, recess.shape, recess.more, recess.column) - recess_distance(p - V2⟨0, 0.5⟩, recess.shape, recess.more, recess.column)
+    gx := recess_distance(p + V2⟨0.5, 0⟩, recess.shape, recess.column) - recess_distance(p - V2⟨0.5, 0⟩, recess.shape, recess.column)
+    gy := recess_distance(p + V2⟨0, 0.5⟩, recess.shape, recess.column) - recess_distance(p - V2⟨0, 0.5⟩, recess.shape, recess.column)
     outward := Math.normalize(V2⟨gx, gy⟩ + V2⟨0.00001, 0⟩)
     // (as the channels are: across 0 on its floor, 1 at the surface)
-    across := Math.clamp(1 + d / Math.max(recess.more.w, 1), 0, 1)
+    across := Math.clamp(1 + d / Math.max(recess.wall.x, 1), 0, 1)
     wall := Math.sin(across * f32'Math.PI)
     facing := Math.dot(outward * -1.0, PART_LIGHT)
     // (the surface giving way to the floor down the wall, then the wall's
@@ -678,11 +862,11 @@ recess_shade :: (from: Draw.Quad_Between, recess: Shader.Uniforms(Recess_Params)
 Recess :: shader { vertex: Draw.quad_place; fragment: recess_shade }
 RECESS :: Recess(Draw.SHADER_TARGET)
 
-// The controls' recess drawn, open a share of the way into the settings'
-// square, or into the count runner.
-draw_recess :: (canvas: *Draw.Canvas, layout: Layout, open: f32, counts: f32) {
-    shape, more, column := recess_shape(layout, open, counts)
-    // (over the plus, and the runner's ends)
+// The controls' recess drawn: the pill, part of the way into the count
+// runner.
+draw_recess :: (canvas: *Draw.Canvas, layout: Layout, counts: f32) {
+    shape, column := recess_shape(layout, counts)
+    // (over the pill, and the runner's ends)
     margin := shape.z + 2
     *low := shape.xy - V2⟨margin, margin⟩
     *high := shape.xy + V2⟨margin, margin⟩
@@ -691,7 +875,8 @@ draw_recess :: (canvas: *Draw.Canvas, layout: Layout, open: f32, counts: f32) {
         high.y = Math.max(high.y, shape.y + column.x + column.z + 2)
     }
     floor := V4⟨CAPSULE.r, CAPSULE.g, CAPSULE.b, 1⟩
-    canvas.draw_shader_image(low, high - low, RECESS.code, RECESS.bindings.recess, Recess_Params⟨shape, more, column, floor⟩, control_image, RECESS.bindings.texture,
+    wall := V4⟨RECESS_WALL * cell_of(layout), 0, 0, 0⟩
+    canvas.draw_shader_image(low, high - low, RECESS.code, RECESS.bindings.recess, Recess_Params⟨shape, column, floor, wall⟩, control_image, RECESS.bindings.texture,
                              RECESS.bindings.filtering)
 }
 
@@ -748,24 +933,24 @@ slot_going :: (size: V2, count: i64 -> i64) #pure {
     return seat_of(starting_colours(size, count), count, GOING[count])
 }
 
-// The colours a game of to players takes from one of from players (each
-// count's lines as splits_for gives them, on a screen of a size), a count
-// at a time as the lines morph: down, the slot going taken away (GOING's)
-// and each other seat's colours, whatever they are, carried to the seat it
-// becomes; up, the slot coming given its starting colours.
-colours_for :: (identity: [MAX_PLAYERS] Identity, from: i64, to: i64, splits: [] Splits, size: V2 -> colours: [MAX_PLAYERS] Identity) #pure {
-    colours = identity
-    *n := Math.clamp(from, 2, MAX_PLAYERS)
+// The game of to players a game becomes (each count's lines as splits_for
+// gives them, on a screen of a size), a count at a time as the lines morph:
+// down, the slot going (GOING's) leaving the table and each other seat's
+// player, as they are, carried to the seat it becomes; up, the last to
+// leave coming back as they were. No one's life, damage or colours change.
+game_for :: (game: Game, to: i64, splits: [] Splits, size: V2 -> next: Game) #pure {
+    *order := SEATED_AS_THEY_ARE
+    *n := Math.clamp(game.players, 2, MAX_PLAYERS)
     target := Math.clamp(to, 2, MAX_PLAYERS)
     while n > target {
-        colours = carried_down(colours, splits_for(splits, n - 1, size), splits_for(splits, n, size), slot_going(size, n))
+        order = seated_down(order, splits_for(splits, n - 1, size), splits_for(splits, n, size), slot_going(size, n))
         n -= 1
     }
     while n < target {
-        coming := slot_going(size, n + 1)
-        colours = carried_up(colours, splits_for(splits, n, size), splits_for(splits, n + 1, size), coming, starting_colours(size, n + 1)[coming])
+        order = seated_up(order, splits_for(splits, n, size), splits_for(splits, n + 1, size), slot_going(size, n + 1))
         n += 1
     }
+    next = reseated(game, order, target)
 }
 
 // The lines moved on by a frame's time toward a count: a step at a time,
@@ -791,7 +976,7 @@ move_lines :: (counts: *Count_Picker, target: i64, seconds: f32) {
     }
 }
 
-COUNT_PITCH :: 1.15          // between counts in the column, in cells
+COUNT_PITCH :: 0.95          // between counts in the column, in cells
 
 // Where a count's ring is, with the column at a count (shown).
 count_place :: (layout: Layout, shown: f32, count: i64 -> V2) #pure {
@@ -826,7 +1011,8 @@ fill_turned_box :: (canvas: *Draw.Canvas, origin: V2, angle: f32, at: V2, size: 
     canvas.fill_rounded_rect(low, high - low, radius, colour)
 }
 
-draw_seat :: (canvas: *Draw.Canvas, layout: Layout, game: Game, fonts: Fonts, k: i64, targeted: bool, time: f32) {
+draw_seat :: (canvas: *Draw.Canvas, layer: *Draw.Canvas, layout: Layout, game: Game, fonts: Fonts, k: i64, targeted: bool, time: f32, toggles_shown: f32 = 1,
+              drum: Life_Drum = ⟨⟩, surface_kept := false) {
     seat := layout.seats[k]
     cell := cell_of(layout)
     out := is_out(game, k)
@@ -836,7 +1022,8 @@ draw_seat :: (canvas: *Draw.Canvas, layout: Layout, game: Game, fonts: Fonts, k:
     // (left to right), with its surface over it.
     *colours: [Draw.MAX_GRADIENT_COLOURS] Draw.RGBA
     n, pattern, surface := part_fill(game.identity[k], cell, k, time, seat.angle, colours)
-    draw_part(canvas, layout, k, colours[:n], pattern, surface, game.identity[k], out, targeted)
+    // (drawn here, or kept: keep_surfaces')
+    if !surface_kept then draw_part(canvas, layout, k, colours[:n], pattern, surface, game.identity[k], out, targeted)
     // (a part too thin for its displays, as it opens or closes, is its colour alone)
     if seat.room < 0.6 * cell then return
     // (dark ink where its colours are light at its middle, where its life is)
@@ -847,21 +1034,34 @@ draw_seat :: (canvas: *Draw.Canvas, layout: Layout, game: Game, fonts: Fonts, k:
     accent := accent_of(game.identity[k], artifact)
     // Its colour toggles: a colour's symbol in its circle when it's set, a
     // dim one when not; each over a soft shadow that quiets the surface
-    // around it, so the row reads the same on every frame.
+    // around it, so the pentagon reads the same on every frame. Folding,
+    // they draw in to the five-colour icon's corner and fade, and it comes
+    // in the corner (opening, the other way).
     places := toggles_of(layout, k)
-    r := TOGGLE_RADIUS * cell
-    for place: places { canvas.fill_glow(place, r * 1.8, Draw.rgba(0x000000, 0.3)) }
-    for place, i: places {
-        // (the row's places in Mana's order)
-        colour := Mana'i
-        if has_colour(game.identity[k], colour) {
-            canvas.fill_circle(place, r, MANA_CIRCLES[colour])
-            draw_centred(canvas, fonts.mana, place, seat.angle, MANA_GLYPHS[colour], MANA_INK)
+    hub := toggle_folded(layout, k)
+    opened := Math.clamp(toggles_shown, 0, 1)
+    s := opened * opened * (3 - 2 * opened)
+    r := TOGGLE_RADIUS * cell * (0.5 + 0.5 * s)
+    if s > 0 {
+        for place: places { canvas.fill_glow(Math.mix(hub, place, s), r * 1.8, Draw.rgba(0x000000, 0.3 * s)) }
+        for place, i: places {
+            // (the pentagon's places in Mana's order)
+            colour := Mana'i
+            at := Math.mix(hub, place, s)
+            if has_colour(game.identity[k], colour) {
+                canvas.fill_circle(at, r, faded(MANA_CIRCLES[colour], s))
+                draw_centred(canvas, fonts.mana, at, seat.angle, MANA_GLYPHS[colour], faded(MANA_INK, s))
+            }
+            else {
+                canvas.fill_circle(at, r, Draw.rgba(0x000000, 0.34 * s))
+                draw_centred(canvas, fonts.mana, at, seat.angle, MANA_GLYPHS[colour], Draw.rgba(0xF4EFE6, 0.5 * s))
+            }
         }
-        else {
-            canvas.fill_circle(place, r, Draw.rgba(0x000000, 0.34))
-            draw_centred(canvas, fonts.mana, place, seat.angle, MANA_GLYPHS[colour], Draw.rgba(0xF4EFE6, 0.5))
-        }
+    }
+    if s < 1 {
+        side := FIVE_COLOURS_SIDE * cell * (1 - 0.4 * s)
+        canvas.fill_glow(hub, side * 0.8, Draw.rgba(0x000000, 0.3 * (1 - s)))
+        draw_five_colours(canvas, hub, side, seat.angle, 1 - s)
     }
     // Its life total: white with a black border and a drop shadow, cast
     // from the screen's centre (falling away from it, toward its player: down
@@ -877,7 +1077,13 @@ draw_seat :: (canvas: *Draw.Canvas, layout: Layout, game: Game, fonts: Fonts, k:
                                   shadow: Draw.rgba(0x000000, 0.55), shadow_offset: falls * (cap * LIFE_SHADOW * 1.4), shadow_soft: cap * LIFE_SHADOW⟩
     life_text := "«game.life[k]»"
     life_width := f32'fonts.life.text_width(life_text)
-    canvas.draw_text(fonts.life, placed(seat.middle, seat.angle, ⟨-life_width / 2, cap / 2⟩), life_text, life_colour, life_style, seat.angle)
+    // (touched, a drum, over the chips; let go, flat again, with its change
+    // beside it a while)
+    if !drum_showing(drum, k) {
+        canvas.draw_text(fonts.life, placed(seat.middle, seat.angle, ⟨-life_width / 2, cap / 2⟩), life_text, life_colour, life_style, seat.angle)
+        shows := change_showing(drum, k)
+        if shows > 0 then draw_change(canvas, seat, fonts, drum, life_colour, shows)
+    }
     // The commander damage it's taken, a chip in each commander's colour, in
     // a row below its life (or where chip_places finds room).
     *shown: i64 = 0
@@ -897,6 +1103,7 @@ draw_seat :: (canvas: *Draw.Canvas, layout: Layout, game: Game, fonts: Fonts, k:
         draw_centred(canvas, fonts.small, middle, seat.angle, "«d»", ink_on(source))
         place += 1
     }
+    if drum_showing(drum, k) then draw_drum(canvas, layer, seat, fonts, drum, life_colour, life_style)
 }
 
 // A life total's border, and how far its shadow falls and how soft it is,
@@ -904,6 +1111,386 @@ draw_seat :: (canvas: *Draw.Canvas, layout: Layout, game: Game, fonts: Fonts, k:
 LIFE_OUTLINE :: 0.045
 LIFE_SHADOW :: 0.06
 LIFE_SHADOW_RIGHT :: 0.5     // how far to its reader's right it falls, against how far down
+
+////////////////////////////////
+// The life drum: a life total tapped opens into wheels, a digit each, as an
+// odometer's or a lock's, each on a cylinder with its digits round it (one
+// more each row up, one less each row down), and beside them a wheel of
+// the change since it opened (0 at the middle, +1 up, -1 down). A wheel
+// dragged turns with the finger (down brings the bigger digits to the
+// middle), changing the life by its place (the units' by one, the tens' by
+// ten) a row at a time; the others turn only as it carries into them. Let
+// go, the number at the middle is the life (undo brings each turn back). The
+// life tapped again closes it: the wheels flatten (DRUM_FLATTEN seconds),
+// and the change stays beside it, flat, DRUM_HOLD seconds, then fades over
+// DRUM_FADE.
+
+DRUM_PITCH   :: 1.3        // its rows apart, in the life's capitals' heights
+DRUM_RADIUS  :: 1.1        // the cylinder's radius, in rows (so a row and a half shows each way)
+DRUM_ROWS    :: 3          // the rows drawn each way from the middle
+DRUM_FLATTEN :: 0.15
+DRUM_HOLD    :: 1.0
+DRUM_FADE    :: 1.5
+DRUM_CHANGE  :: 0.45       // the change's size, against the life's
+DRUM_TAP     :: 0.15       // a press that moves less than this (capitals' heights) is a tap
+
+Life_Drum :: struct {
+    open:    bool          // tapped open: its wheels turn
+    player:  i64 = -1
+    start:   i32           // the life as it was opened
+    pressed: bool          // a finger down on it...
+    moved:   bool          // ...that's moved: a turn, not a tap
+    touched: V2            // where it touched, in its player's frame
+    place:   i32 = 1       // the wheel being turned: its digit's place (1, 10, 100)
+    from:    i32           // the life as that turn began
+    turned:  f32           // how far that wheel's turned, in rows (toward its player: the bigger digits coming down)
+    bend:    f32           // how round it is: 0 flat, 1 round
+    change:  i32           // closed, the change it made while open
+    since:   f32 = 1e9     // seconds since it was closed
+}
+
+// The life a drum's turn makes: from, and its place times the whole rows
+// it's turned by.
+drum_life :: (drum: Life_Drum -> i32) #pure {
+    return drum.from + drum.place * i32'Math.round(drum.turned)
+}
+
+// A drum part way through its turn: the life it's turning from (base; the
+// next, base + place) and how far toward the next (0 to 1).
+drum_between :: (drum: Life_Drum -> base: i32, frac: f32) #pure {
+    whole := Math.floor(drum.turned)
+    base = drum.from + drum.place * i32'whole
+    frac = drum.turned - whole
+}
+
+// A number's digit at a wheel (its place's: 0 the units), of its size.
+digit_of :: (n: i32, wheel: i64 -> i64) #pure {
+    *m := i64'Math.abs(n)
+    for _: 0 < wheel { m /= 10 }
+    return m % 10
+}
+
+// How many digits a number has (its size's; one at least).
+digits_in :: (n: i32 -> i64) #pure {
+    *m := i64'Math.abs(n)
+    *count: i64 = 1
+    while m >= 10 {
+        m /= 10
+        count += 1
+    }
+    return count
+}
+
+// Where a wheel is between two numbers, as a digit (between whole ones as
+// it turns): its digit of a, turned frac of the way to b's, the short way
+// round (9 to 0 forward, 0 to 9 back); a wheel whose digit doesn't change
+// stays.
+wheel_at :: (a: i32, b: i32, wheel: i64, frac: f32 -> f32) #pure {
+    da := digit_of(a, wheel)
+    db := digit_of(b, wheel)
+    if da == db then return f32'da
+    if db == (da + 1) % 10 then return f32'da + frac
+    if db == (da + 9) % 10 then return f32'da - frac
+    return f32'da + frac * f32'(db - da)
+}
+
+// A drum closed, if it's open: the change it made kept to show.
+close_drum :: (drum: *Life_Drum, game: Game) {
+    if !drum.open then return
+    drum.open = false
+    drum.change = if drum.player < game.players then game.life[drum.player] - drum.start else 0
+    drum.since = 0
+}
+
+// A finger down on a player's life, or a wheel of its open drum (its
+// place), at a point in their frame: a turn begins there (a drum shown for
+// another player closes, and is theirs no longer).
+press_drum :: (drum: *Life_Drum, game: Game, player: i64, at: V2, place: i32) {
+    if drum.player != player {
+        close_drum(drum, game)
+        drum.player = player
+        drum.bend = 0
+        drum.change = 0
+        drum.since = 1e9
+    }
+    drum.pressed = true
+    drum.moved = false
+    drum.touched = at
+    drum.place = place
+    drum.from = game.life[player]
+    drum.turned = 0
+}
+
+// The finger moved (a point in the drum's player's frame): past DRUM_TAP
+// it's a turn, and an open drum's wheel turns with it, a row a pitch.
+move_drum :: (drum: *Life_Drum, at: V2, cap: f32) {
+    if !drum.pressed then return
+    if Math.length(at - drum.touched) > DRUM_TAP * cap then drum.moved = true
+    if drum.open and drum.moved then drum.turned = (at.y - drum.touched.y) / Math.max(DRUM_PITCH * cap, 1)
+}
+
+// The finger lifted: a tap opens the drum, or closes it; a turn of an open
+// one gives the life it made (changes: the game's life is to become it).
+release_drum :: (drum: *Life_Drum, game: Game -> life: i32, changes: bool) {
+    life = 0
+    changes = false
+    if !drum.pressed then return
+    drum.pressed = false
+    if !drum.moved {
+        if drum.open {
+            close_drum(drum, game)
+        }
+        else {
+            drum.open = true
+            drum.start = game.life[drum.player]
+            drum.change = 0
+            drum.since = 1e9
+        }
+        return
+    }
+    if drum.open {
+        life = drum_life(drum)
+        changes = life != game.life[drum.player]
+    }
+}
+
+// A drum moved on by a frame's time: rounding as it opens, flattening as it
+// closes, its wheel settling on the row it was let go at; and following the
+// game's life when that changes otherwise (an undo, damage).
+step_drum :: (drum: *Life_Drum, game: Game, seconds: f32) {
+    if drum.player < 0 or drum.player >= game.players {
+        drum.open = false
+        drum.pressed = false
+        drum.bend = 0
+        drum.change = 0
+        return
+    }
+    way: f32 = if drum.open then 1 else -1
+    drum.bend = Math.clamp(drum.bend + way * seconds / DRUM_FLATTEN, 0, 1)
+    if !drum.pressed {
+        target := Math.round(drum.turned)
+        drum.turned += (target - drum.turned) * Math.min(1, seconds * 25)
+        if drum_life(drum) != game.life[drum.player] {
+            drum.from = game.life[drum.player]
+            drum.place = 1
+            drum.turned = 0
+        }
+    }
+    if !drum.open then drum.since += seconds
+}
+
+// Whether a player's life shows as a drum (open, or flattening), and how
+// much its change shows, flat beside it (0 none).
+drum_showing :: (drum: Life_Drum, k: i64 -> bool) #pure {
+    return drum.player == k and (drum.open or drum.bend > 0)
+}
+
+change_showing :: (drum: Life_Drum, k: i64 -> f32) #pure {
+    if drum.player != k or drum.open or drum.change == 0 then return 0
+    if drum.since <= DRUM_HOLD then return 1
+    return Math.clamp(1 - (drum.since - DRUM_HOLD) / DRUM_FADE, 0, 1)
+}
+
+// A change as it's shown: "+3", "-2", "0".
+change_text :: (change: i64 -> string) {
+    return if change > 0 then "+«change»" else "«change»"
+}
+
+// The life total at a point (around its number, a little past it): its
+// player; or absent.
+life_at :: (layout: Layout, fonts: Fonts, game: Game, p: V2 -> i64) [absent] {
+    cap := f32'fonts.life.cap_height
+    for seat, k: layout.seats[:layout.count] {
+        if seat.room < 0.6 * cell_of(layout) then continue
+        half := Math.max(f32'fonts.life.text_width("«game.life[k]»") / 2, cap * 0.6) + cap * 0.25
+        l := local_of(seat.middle, seat.angle, p)
+        if Math.abs(l.x) <= half and Math.abs(l.y) <= cap * 0.85 then return k
+    }
+    fail: absent
+}
+
+// Where a drum's parts are, across its player's text from its middle: its
+// wheels (as many as the life turning has digits, each as wide as the
+// widest digit), from left to right, then the change's wheel's middle and
+// half width.
+Drum_Shape :: struct {
+    wheels:      i64
+    wheel_width: f32
+    left:        f32
+    right:       f32
+    change_at:   f32
+    change_half: f32
+}
+
+drum_shape :: (fonts: Fonts, drum: Life_Drum -> shape: Drum_Shape) {
+    cap := f32'fonts.life.cap_height
+    base, _ := drum_between(drum)
+    *widest: f32 = 0
+    for d: 0 < 10 { widest = Math.max(widest, f32'fonts.life.text_width("«d»")) }
+    *widest_change: f32 = 0
+    for k: -DRUM_ROWS <= DRUM_ROWS {
+        widest_change = Math.max(widest_change, f32'fonts.change.text_width(change_text(i64'(base - drum.start) + k * i64'drum.place)))
+    }
+    shape.wheels = Math.max(digits_in(base), digits_in(base + drum.place))
+    shape.wheel_width = widest + cap * 0.18
+    shape.right = f32'shape.wheels * shape.wheel_width / 2
+    shape.left = 0 - shape.right
+    shape.change_half = widest_change / 2 + cap * 0.15
+    shape.change_at = shape.right + cap * 0.3 + shape.change_half
+}
+
+// An open drum's wheel at a point of the screen: its place; or absent.
+drum_wheel_at :: (layout: Layout, fonts: Fonts, drum: Life_Drum, p: V2 -> i32) [absent] {
+    if !drum.open or drum.player < 0 or drum.player >= layout.count then fail: absent
+    seat := layout.seats[drum.player]
+    if place := wheel_at_point(fonts, drum, local_of(seat.middle, seat.angle, p)) { return place } else if absent { fail: absent }
+}
+
+// An open drum's wheel at a point (of its player's frame): its place (the
+// change's wheel turns as the units'), or absent off the drum.
+wheel_at_point :: (fonts: Fonts, drum: Life_Drum, at: V2 -> place: i32) [absent] {
+    place = 1
+    shape := drum_shape(fonts, drum)
+    cap := f32'fonts.life.cap_height
+    radius := DRUM_RADIUS * DRUM_PITCH * cap
+    if Math.abs(at.y) > radius or at.x < shape.left - cap * 0.2 or at.x > shape.change_at + shape.change_half + cap * 0.2
+        fail: absent
+    if at.x > shape.right then return
+    i := Math.clamp(i64'Math.floor((at.x - shape.left) / shape.wheel_width), 0, shape.wheels - 1)
+    for _: 0 < shape.wheels - 1 - i { place *= 10 }
+}
+
+Drum_Params :: struct {
+    middle: V4    // the drum's middle (pixels), its radius (pixels), how round it is (0 flat, 1 round)
+    turn:   V4    // the cosine and sine of its player's text's turn, the layer's size (pixels)
+    widths: V4    // its wheels' left and right, the change's wheel's middle and half width
+    wheels: V4    // a wheel's width, then unused
+    ink:    V4    // the numbers' colour (straight)
+}
+
+// A drum's numbers, drawn flat into a layer, wrapped round its cylinder:
+// each place on it shows the layer as far along the cylinder's surface as
+// it is round from the middle, darker as it turns away; a dark band behind
+// each drum's numbers. (A canvas is opaque, so the layer has the numbers'
+// parts in its channels, each drawn over black: their fill in red, their
+// border in green, their shadow in blue; the border and the shadow black.)
+drum_shade :: (from: Draw.Quad_Between, drum: Shader.Uniforms(Drum_Params), layer: Shader.Texture_2D, filtering: Shader.Sampler -> colour: V4) {
+    d := from.pixel - drum.middle.xy
+    // (into its player's frame: x along their text, y toward them)
+    local := V2⟨d.x * drum.turn.x + d.y * drum.turn.y, d.y * drum.turn.x - d.x * drum.turn.y⟩
+    radius := Math.max(drum.middle.z, 1)
+    bend := drum.middle.w
+    on_life := local.x >= drum.widths.x and local.x <= drum.widths.y
+    on_change := Math.abs(local.x - drum.widths.z) <= drum.widths.w
+    if !on_life and !on_change then return ⟨0, 0, 0, 0⟩
+    if Math.abs(local.y) > radius then return ⟨0, 0, 0, 0⟩
+    angle := Math.asin(Math.clamp(local.y / radius, -1, 1))
+    facing := Math.cos(angle)
+    along := Math.mix(local.y, angle * radius, bend)
+    back := V2⟨local.x * drum.turn.x - along * drum.turn.y, local.x * drum.turn.y + along * drum.turn.x⟩
+    parts := Shader.sample_level(layer, filtering, (drum.middle.xy + back) / drum.turn.zw, 0)
+    covered := Math.clamp(parts.x + parts.y + parts.z, 0, 1) * drum.ink.w
+    text := V4⟨drum.ink.x * parts.x * drum.ink.w, drum.ink.y * parts.x * drum.ink.w, drum.ink.z * parts.x * drum.ink.w, covered⟩
+    shade := Math.mix(1, 0.2 + 0.8 * facing * facing, bend)
+    // (the band, each wheel itself: soft at its ends across, so wheels part,
+    // dark toward its edges along the cylinder, a light's gleam a little
+    // above its middle)
+    wheel := Math.max(drum.wheels.x, 1)
+    into := local.x - drum.widths.x
+    within := into - Math.floor(into / wheel) * wheel
+    from_end := if on_life then Math.min(within, wheel - within) else drum.widths.w - Math.abs(local.x - drum.widths.z)
+    ends := Math.clamp(from_end / 5, 0, 1)
+    band := 0.7 * bend * ends
+    gleam := (angle + 0.45) / 0.22
+    grey := 0.05 + 0.22 * facing + 0.3 * Math.exp(0 - gleam * gleam)
+    lit := text * shade
+    colour = ⟨lit.x + grey * band * (1 - lit.w), lit.y + grey * band * (1 - lit.w), lit.z + grey * band * (1 - lit.w), lit.w + band * (1 - lit.w)⟩
+}
+
+Drum :: shader { vertex: Draw.quad_place; fragment: drum_shade }
+DRUM :: Drum(Draw.SHADER_TARGET)
+
+// A player's life as a drum: its rows drawn flat into the layer (cleared),
+// then wrapped round the cylinder onto the canvas.
+draw_drum :: (canvas: *Draw.Canvas, layer: *Draw.Canvas, seat: Seat, fonts: Fonts, drum: Life_Drum, colour: Draw.RGBA, style: Draw.Text_Style) {
+    cap := f32'fonts.life.cap_height
+    pitch := DRUM_PITCH * cap
+    radius := DRUM_RADIUS * pitch
+    shape := drum_shape(fonts, drum)
+    base, frac := drum_between(drum)
+    next := base + drum.place
+    change_cap := f32'fonts.change.cap_height
+    // (each part in the channels: fill red, border green, shadow blue; a
+    // row at the middle shows whole, the rest as round as the drum is)
+    parted :: (style: Draw.Text_Style, shows: f32 -> Draw.Text_Style) {
+        return ⟨outline: Draw.rgba(0x00FF00, shows), outline_width: style.outline_width,
+                shadow: Draw.rgba(0x0000FF, style.shadow.a * shows), shadow_offset: style.shadow_offset, shadow_soft: style.shadow_soft⟩
+    }
+    change_style := Draw.Text_Style⟨outline_width: Math.max(1.5, change_cap * LIFE_OUTLINE * 1.5)⟩
+    layer.clear(Draw.rgb(0x000000))
+    // Each wheel: its digit where it's turned to, the digits round it above
+    // (bigger) and below; a leading wheel's 0 blank.
+    for i: 0 < shape.wheels {
+        wheel := shape.wheels - 1 - i
+        middle_x := shape.left + (f32'i + 0.5) * shape.wheel_width
+        q := wheel_at(base, next, wheel, frac)
+        nearest := i64'Math.round(q)
+        for k: -DRUM_ROWS <= DRUM_ROWS {
+            d := nearest + k
+            digit := ((d % 10) + 10) % 10
+            if digit == 0 and wheel == shape.wheels - 1 and shape.wheels > 1 then continue
+            shows := if drum.open or k == 0 then 1.0 else drum.bend
+            if shows <= 0 then continue
+            y := (q - f32'd) * pitch
+            text := "«digit»"
+            width := f32'fonts.life.text_width(text)
+            layer.draw_text(fonts.life, placed(seat.middle, seat.angle, ⟨middle_x - width / 2, y + cap / 2⟩), text, Draw.rgba(0xFF0000, shows),
+                            parted(style, shows), seat.angle)
+        }
+    }
+    // The change's wheel: the change since it opened, a row each of the
+    // turning wheel's place.
+    for k: -DRUM_ROWS <= DRUM_ROWS {
+        shows := if drum.open or k == i64'Math.round(frac) then 1.0 else drum.bend
+        if shows <= 0 then continue
+        y := (frac - f32'k) * pitch
+        change := change_text(i64'(base - drum.start) + k * i64'drum.place)
+        width := f32'fonts.change.text_width(change)
+        layer.draw_text(fonts.change, placed(seat.middle, seat.angle, ⟨shape.change_at - width / 2, y + change_cap / 2⟩), change,
+                        Draw.rgba(0xFF0000, shows), ⟨outline: Draw.rgba(0x00FF00, shows), outline_width: change_style.outline_width⟩, seat.angle)
+    }
+    // (the quad: the screen's box round the drum's turned rectangle)
+    *low := V2⟨1e30, 1e30⟩
+    *high := V2⟨-1e30, -1e30⟩
+    far := shape.change_at + shape.change_half
+    for corner: [4] V2⟨⟨shape.left, -radius⟩, ⟨far, -radius⟩, ⟨shape.left, radius⟩, ⟨far, radius⟩⟩ {
+        at := placed(seat.middle, seat.angle, corner)
+        low = Math.min(low, at)
+        high = Math.max(high, at)
+    }
+    low = Math.floor(low) - V2⟨2, 2⟩
+    high = Math.ceil(high) + V2⟨2, 2⟩
+    params := Drum_Params⟨V4⟨seat.middle.x, seat.middle.y, radius, drum.bend⟩,
+                          V4⟨Math.cos(seat.angle), Math.sin(seat.angle), f32'layer.size[0], f32'layer.size[1]⟩,
+                          V4⟨shape.left, shape.right, shape.change_at, shape.change_half⟩, V4⟨shape.wheel_width, 0, 0, 0⟩,
+                          V4⟨colour.r, colour.g, colour.b, colour.a⟩⟩
+    canvas.draw_shader_canvas(low, high - low, DRUM.code, DRUM.bindings.drum, params, layer, DRUM.bindings.layer, DRUM.bindings.filtering)
+    // (a life below nothing: its minus, flat, before the wheels)
+    if base < 0 and next <= 0 {
+        minus := f32'fonts.life.text_width("-")
+        canvas.draw_text(fonts.life, placed(seat.middle, seat.angle, ⟨shape.left - minus - cap * 0.1, cap / 2⟩), "-", colour, style, seat.angle)
+    }
+}
+
+// A drum's change let go, flat beside the life, as much as it shows.
+draw_change :: (canvas: *Draw.Canvas, seat: Seat, fonts: Fonts, drum: Life_Drum, colour: Draw.RGBA, shows: f32) {
+    change_at := drum_shape(fonts, drum).change_at
+    change_cap := f32'fonts.change.cap_height
+    change_style := Draw.Text_Style⟨outline: Draw.rgba(0x000000, shows), outline_width: Math.max(1.5, change_cap * LIFE_OUTLINE * 1.5)⟩
+    change := change_text(i64'drum.change)
+    width := f32'fonts.change.text_width(change)
+    canvas.draw_text(fonts.change, placed(seat.middle, seat.angle, ⟨change_at - width / 2, change_cap / 2⟩), change, faded(colour, shows), change_style, seat.angle)
+}
 
 // How big a commander damage chip is (cells), and how far apart they are.
 CHIP_RADIUS :: 0.4
@@ -1030,10 +1617,12 @@ draw_picker :: (canvas: *Draw.Canvas, layout: Layout, fonts: Fonts, picker: Pick
 }
 
 // A ring of people, a count of them, round a point, in a button a cell
-// across (two side by side).
+// across, placed as that count's parts are: two side by side; an odd count's
+// one at the bottom (three's and five's lone part is the bottom's), the
+// others' one at the top.
 draw_people :: (canvas: *Draw.Canvas, centre: V2, count: i64, cell: f32, colour: Draw.RGBA) {
     ring := if count == 2 then 0.15 * cell else 0.24 * cell
-    start := if count == 2 then f32'Math.PI else -f32'Math.PI / 2
+    start := if count == 2 then f32'Math.PI else if count % 2 == 1 then f32'Math.PI / 2 else -f32'Math.PI / 2
     for i: 0 < count {
         a := start + f32'Math.TAU * f32'i / f32'count
         draw_icon_at(canvas, PERSON_ICON, centre + V2⟨Math.cos(a), Math.sin(a)⟩ * ring, 0.26 * cell, colour)
@@ -1042,32 +1631,28 @@ draw_people :: (canvas: *Draw.Canvas, centre: V2, count: i64, cell: f32, colour:
 
 draw_capsule :: (canvas: *Draw.Canvas, layout: Layout, game: Game, screen: Screen_State) {
     cell := cell_of(layout)
-    // (opening into the settings' square: the screen behind it darkened as
-    // it opens, the plus's buttons fading out over the first half, the
-    // settings' fading in over the second)
+    // (the settings in it: the screen behind it darkened as they come, the
+    // pill's buttons fading out over the first half, the settings' fading in
+    // over the second)
     open := Math.clamp(screen.settings_shown, 0, 1)
     if open > 0 then canvas.fill_rect(⟨0, 0⟩, layout.size, Draw.rgba(0x000000, 0.35 * open))
-    // (and into the count column's groove while a count's picked, undo's and
-    // redo's arms going as it grows)
+    // (and the count runner grown out of its middle while a count's picked,
+    // the rest of the pill as it is)
     grooved := Math.clamp(screen.counts_shown, 0, 1)
-    draw_recess(canvas, layout, open, grooved)
-    plus_shows := Math.clamp(1 - 2 * open, 0, 1)
-    // (the plus's own buttons fade out over the first half of the groove's
-    // morph, and back in over the last half of its way back; the column's
-    // rings, draw_counts', fade with it)
-    buttons_show := plus_shows * Math.clamp(1 - 2 * grooved, 0, 1)
+    draw_recess(canvas, layout, grooved)
+    buttons_show := Math.clamp(1 - 2 * open, 0, 1)
     settings_show := Math.clamp(2 * open - 1, 0, 1)
     // The system's button, the power icon, stays where it is throughout:
     // opened, it's Quit, on red.
     system := capsule_centre(layout, .SYSTEM)
     if open > 0 then canvas.fill_circle(system, 0.48 * cell, faded(QUIT_RED, settings_show))
     system_ink := Math.mix(lighter(CAPSULE, 0.75), INK, open)
-    draw_icon_at(canvas, SYSTEM_ICON, system, 0.62 * cell, faded(system_ink, Math.clamp(1 - 2 * grooved, 0, 1)))
+    draw_icon_at(canvas, SYSTEM_ICON, system, 0.62 * cell, system_ink)
     if settings_show > 0 then draw_settings(canvas, layout, screen.motion, settings_show)
     if buttons_show <= 0 then return
     // The players (a ring of a person each), undo and redo (each dim with
     // nothing to undo or redo), and a new game.
-    draw_people(canvas, capsule_centre(layout, .PLAYERS), game.players, cell, faded(INK, buttons_show))
+    // The player-count button is drawn with its continuously morphing metal bar.
     undo_ink := if screen.can_undo then INK else lighter(CAPSULE, 0.25)
     draw_icon_at(canvas, UNDO_ICON, capsule_centre(layout, .UNDO), 0.62 * cell, faded(undo_ink, buttons_show))
     redo_ink := if screen.can_redo then INK else lighter(CAPSULE, 0.25)
@@ -1080,31 +1665,39 @@ faded :: (colour: Draw.RGBA, share: f32 -> Draw.RGBA) #pure {
     return ⟨colour.r, colour.g, colour.b, colour.a * share⟩
 }
 
-// The counts, each a ring of people engraved on one metal bar that slides
-// along the runner the plus has become (draw_capsule's recess) as the finger
-// moves it: the count at the button marked either side of the runner, its
-// ring darkest, the rest fainter with their distance from it. Shown over the
-// last half of the runner's morph, gone over the first half of its way back.
-draw_counts :: (canvas: *Draw.Canvas, layout: Layout, screen: Screen_State) {
+// One metal piece: circular when closed, extending into the sliding bar.
+// Its selected engraving stays readable throughout the opening transition.
+draw_counts :: (canvas: *Draw.Canvas, layout: Layout, screen: Screen_State, game: Game) {
     cell := cell_of(layout)
-    active := i64'Math.round(screen.counts.shown)
-    shows := Math.clamp(2 * screen.counts_shown - 1, 0, 1)
+    shows := Math.clamp(1 - 2 * screen.settings_shown, 0, 1)
     if shows <= 0 then return
-    // (the bar, from 2's ring to MAX_PLAYERS', BAR_HALF each way of its middle)
-    middle := (count_place(layout, screen.counts.shown, 2) + count_place(layout, screen.counts.shown, MAX_PLAYERS)) / 2
-    draw_metal_bar(canvas, middle, V2⟨BAR_WIDTH, BAR_HALF⟩ * cell, shows)
-    for count: 2 <= MAX_PLAYERS {
-        away := Math.abs(f32'count - screen.counts.shown)
-        engraved := if count == active then 0.9 else Math.clamp(0.75 - away * 0.2, 0.25, 0.75)
-        draw_people(canvas, count_place(layout, screen.counts.shown, count), count, cell, Draw.rgba(0x1C1A17, engraved * shows))
-    }
-    // (the count at the button: a small pointer either side of the runner)
+    opened := Math.clamp(screen.counts_shown, 0, 1)
+    t := opened * opened * (3 - 2 * opened)
+    shown := if opened > 0 then screen.counts.shown else f32'game.players
+    active := i64'Math.round(shown)
     button := capsule_centre(layout, .PLAYERS)
+    full_middle := (count_place(layout, shown, 2) + count_place(layout, shown, MAX_PLAYERS)) / 2
+    middle := Math.mix(button, full_middle, t)
+    half := V2⟨BAR_WIDTH, Math.mix(BAR_WIDTH, BAR_HALF, t)⟩ * cell
+    // A close contact shadow seats the metal in its slate runner.
+    canvas.fill_rounded_rect(middle - half + V2⟨0, 0.045 * cell⟩, half * 2, half.x, Draw.rgba(0x000000, 0.38 * shows))
+    draw_metal_bar(canvas, middle, half, shows)
+    for count: 2 <= MAX_PLAYERS {
+        away := Math.abs(f32'count - shown)
+        selected := 1 - Math.smoothstep(0, 0.65, away)
+        appeared := if count == active then 1.0 else Math.smoothstep(0.25, 0.85, opened)
+        position := Math.mix(button, count_place(layout, shown, count), t)
+        strength := (0.56 + selected * 0.4) * shows * appeared
+        // A shallow engraved highlight beneath the dark cut.
+        draw_people(canvas, position + V2⟨0, 0.015 * cell⟩, count, cell * (0.90 + selected * 0.10), Draw.rgba(0xFFF1D8, strength * 0.33))
+        draw_people(canvas, position, count, cell * (0.90 + selected * 0.10), Draw.rgba(0x171C22, strength))
+    }
+    // Small stationary pointers mark the selection without covering the bar.
     for side: [2] f32⟨-1, 1⟩ {
-        tip := button + V2⟨side * (COLUMN_HALF + 0.06) * cell, 0⟩
-        back := tip + V2⟨side * 0.2 * cell, 0⟩
-        points := [3] V2⟨tip, back + V2⟨0, -0.13 * cell⟩, back + V2⟨0, 0.13 * cell⟩⟩
-        canvas.fill_polygon(points[:], faded(INK, shows))
+        tip := button + V2⟨side * (COLUMN_HALF + 0.02) * cell, 0⟩
+        back := tip + V2⟨side * 0.12 * cell, 0⟩
+        points := [3] V2⟨tip, back + V2⟨0, -0.075 * cell⟩, back + V2⟨0, 0.075 * cell⟩⟩
+        canvas.fill_polygon(points[:], Draw.rgba(0xDCCAA5, shows * Math.smoothstep(0.4, 1, opened)))
     }
 }
 
@@ -1116,7 +1709,7 @@ Metal_Bar_Params :: struct {
     more: V4      // how much it shows, then unused
 }
 
-// A rounded steel bar, upright: its section round, so its surface turns from
+// A softly domed bronze bar, sharing the circular button's finish. Its surface turns from
 // facing out along its middle to facing sideways at its edges (and its
 // ends), reflecting a bright band from the light at the top left and a
 // softer one from the other side, brushed along its length, darker toward
@@ -1132,15 +1725,15 @@ metal_bar_shade :: (from: Draw.Quad_Between, bar: Shader.Uniforms(Metal_Bar_Para
     gy := round_box_distance(p + V2⟨0, 0.5⟩, bar.box.zw, radius) - round_box_distance(p - V2⟨0, 0.5⟩, bar.box.zw, radius)
     outward := Math.normalize(V2⟨gx, gy⟩ + V2⟨0.00001, 0⟩)
     edge := Math.clamp(1 + d / Math.max(radius, 1), 0, 1)
-    tilt := outward * edge
-    up := Math.sqrt(Math.max(1 - edge * edge, 0))
+    tilt := p / bar.box.zw * 0.65 + outward * edge * 0.35
+    up := Math.sqrt(Math.max(1 - Math.dot(tilt, tilt), 0))
     // (what it reflects: a view from straight above turned by its surface)
     reflected := tilt * (2 * up)
     key := Math.exp(0 - Math.pow(Math.dot(reflected, PART_LIGHT) - 0.55, 2) * 18)
     fill := Math.exp(0 - Math.pow(Math.dot(reflected, PART_LIGHT * -1.0) - 0.7, 2) * 10)
-    brushed := Patterns.noise(V2⟨p.x * 0.35, p.y * 0.012⟩ + V2⟨3.1, 0⟩)
-    steel := V3⟨0.52, 0.54, 0.58⟩ * (0.86 + 0.18 * brushed) * (1 - 0.45 * edge * edge)
-    rgb := steel + V3⟨1, 0.97, 0.9⟩ * (key * 0.55) + V3⟨0.7, 0.78, 0.9⟩ * (fill * 0.2)
+    brushed := Patterns.noise(V2⟨p.x * 2.3, p.y * 0.15⟩ + V2⟨3.1, 0⟩)
+    bronze := V3⟨0.58, 0.44, 0.30⟩ * (0.94 + 0.045 * brushed) * (1 - 0.45 * edge * edge)
+    rgb := bronze + V3⟨1, 0.87, 0.65⟩ * (key * 0.30) + V3⟨0.75, 0.62, 0.46⟩ * (fill * 0.14)
     colour = V4⟨rgb.x, rgb.y, rgb.z, 1⟩ * coverage
 }
 
@@ -1164,8 +1757,11 @@ Screen_State :: struct {
     can_redo:      bool
     previewing:    bool          // the lines are another count's, or moving to one
     settings_open: bool
-    settings_shown: f32          // how far the plus has opened into the settings' square, 0 to 1
+    settings_shown: f32          // how far the settings have come into the pill, 0 to 1
     counts_shown:  f32           // how far it's become the count column's groove, 0 to 1
+    toggles:       Toggles       // each player's colour toggles: open or folded into the five-colour icon
+    drum:          Life_Drum     // a life total touched, turned as a drum
+    keep_surfaces: bool          // the parts' surfaces kept between frames (keep_surfaces'); snapshots draw each
     motion:        Motion        // how fast their surfaces move
     surface_time:  f32           // how far they've moved, in features
     fps:           f32           // frames a second, over the last half second (0: none yet, not shown)
@@ -1194,19 +1790,16 @@ draw_fps :: (canvas: *Draw.Canvas, layout: Layout, fonts: Fonts, fps: f32) {
 }
 
 ////////////////////////////////
-// Settings: the system's button opens the plus into a square (its inside
-// corners pushed out to the square's, recess_shape's), a button at each of
-// the plus's places in a three by three grid, CAPSULE_ARM apart: top left,
-// Reset (every count's lines back where they start, each seat its starting
-// colours, the motion slow); top right, the surfaces' motion, one button
-// going round paused, slow, medium and fast; and bottom middle, where the
-// system's button was, Quit. Anywhere else, in the square or out of it,
-// closes it again.
+// Settings: the system's button puts them in the pill itself, in place of
+// its buttons, at the pill's places: at the far left, Reset (every count's
+// lines back where they start, each seat its starting colours, the motion
+// slow); in the middle, the surfaces' motion, one button going round paused,
+// slow, medium and fast; and at the right end, where the system's button is,
+// Quit. Anywhere else, in the pill or out of it, puts its buttons back.
 
-// The square's corners' radius, in cells, and the seconds it takes to open
-// (or close): the count column's groove's morph's too.
-SETTINGS_ROUND :: 0.5
-SETTINGS_TIME  :: 0.11
+// The seconds the settings take to come into the pill (or go): the count
+// runner's morph's too.
+SETTINGS_TIME :: 0.11
 
 QUIT_RED :: Draw.rgb(0x8A3030)
 
@@ -1235,14 +1828,14 @@ in_box :: (p: V2, low: V2, high: V2 -> bool) #pure {
     return p.x >= low.x and p.x <= high.x and p.y >= low.y and p.y <= high.y
 }
 
-// Where each of the settings' buttons is, in grid places from the screen's
-// centre (a place CAPSULE_ARM cells).
-RESET_PLACE     :: V2⟨-1, -1⟩
-ANIMATION_PLACE :: V2⟨1, -1⟩
-QUIT_PLACE      :: V2⟨0, 1⟩
+// Where each of the settings' buttons is in the pill, in places from its
+// middle (a place CAPSULE_PITCH cells): Quit at the system's button's.
+RESET_PLACE     :: V2⟨-2, 0⟩
+ANIMATION_PLACE :: V2⟨0, 0⟩
+QUIT_PLACE      :: V2⟨2, 0⟩
 
 settings_part_at :: (layout: Layout, p: V2 -> Settings_Part) #pure {
-    local := (p - layout.centre) / (cell_of(layout) * CAPSULE_ARM)
+    local := (p - layout.centre) / (cell_of(layout) * CAPSULE_PITCH)
     on :: (q: V2, place: V2 -> bool) #pure {
         // (a button's half a place across, less a little)
         return Math.abs(q.x - place.x) <= 0.45 and Math.abs(q.y - place.y) <= 0.45
@@ -1253,11 +1846,11 @@ settings_part_at :: (layout: Layout, p: V2 -> Settings_Part) #pure {
     return Settings_Part.close
 }
 
-// The settings' buttons in the opened square (the Quit button's red and
-// its icon drawn with the plus's), shown a share of the way in.
+// The settings' buttons in the pill (the Quit button's red and its icon
+// drawn with the pill's), shown a share of the way in.
 draw_settings :: (canvas: *Draw.Canvas, layout: Layout, motion: Motion, shown: f32) {
     cell := cell_of(layout)
-    pitch := CAPSULE_ARM * cell
+    pitch := CAPSULE_PITCH * cell
     c := layout.centre
     size := 0.62 * cell
     ink := faded(INK, shown)
@@ -1290,12 +1883,17 @@ draw_play :: (canvas: *Draw.Canvas, middle: V2, count: i64, size: f32, colour: D
 draw :: (canvas: *Draw.Canvas, layer: *Draw.Canvas, layout: Layout, game: Game, fonts: Fonts, screen: Screen_State, motes: Particles.System,
          elements: Elements, volleys: Volleys = ⟨⟩) {
     cell := cell_of(layout)
-    canvas.clear(BACKGROUND)
     *targeted: i64 = -1
     if screen.drag.active {
         if to, _ := aim(layout, game, screen.drag.from, screen.mouse) is not missed then targeted = to
     }
-    for k: 0 < layout.count { draw_seat(canvas, layout, game, fonts, k, k == targeted, screen.surface_time) }
+    // (the surfaces kept, a part's drawn again a frame, covering the whole
+    // screen; or each drawn here, on the background)
+    kept := screen.keep_surfaces and keep_surfaces(layout, game, targeted, screen.surface_time)
+    if kept then canvas.draw_canvas(kept_surfaces.canvas, ⟨0, 0⟩) else canvas.clear(BACKGROUND)
+    for k: 0 < layout.count {
+        draw_seat(canvas, layer, layout, game, fonts, k, k == targeted, screen.surface_time, screen.toggles.shown[k], screen.drum, kept)
+    }
     // The surfaces form the grooves; a thin light marks the one being moved.
     for end, k: layout.ends[:layout.count] {
         if k == screen.moving_end {
@@ -1307,7 +1905,7 @@ draw :: (canvas: *Draw.Canvas, layer: *Draw.Canvas, layout: Layout, game: Game, 
     draw_elements(canvas, layer, layout, game, screen, elements, volleys)
     motes.draw(canvas)
     draw_capsule(canvas, layout, game, screen)
-    if screen.counts_shown > 0 then draw_counts(canvas, layout, screen)
+    draw_counts(canvas, layout, screen, game)
     if screen.drag.active then draw_drag(canvas, layout, game, fonts, screen.drag, screen.mouse, ARTIFACT, motes.time)
     if screen.picker.open then draw_picker(canvas, layout, fonts, screen.picker, game, ARTIFACT)
     draw_fps(canvas, layout, fonts, screen.fps)
@@ -1392,17 +1990,46 @@ save_snapshots :: (folder: string) [failed: string] {
             grid_path := `scratch "«folder»/raza_grid.png"
             if canvas.save_png(grid_path) is os_error then fail: failed = "can't write «grid_path»: «os_error»"
             // The column dragged past five: the lines half way through
-            // snapping from four's to five's, a new game of five shown.
+            // snapping from four's to five's, the game as five shown.
             *none: [MAX_PLAYERS + 1] Splits
             picking := Count_Picker⟨open: true, held: true, shown: 5.2, laid: 4, toward: 5, progress: 0.5⟩
             moving := lay_out(screen_size, shown_splits(picking, none[:], screen_size))
-            preview := new_game(moving.count, colours_for(game.identity, game.players, moving.count, none[:], screen_size))
+            preview := game_for(game, moving.count, none[:], screen_size)
             if fonts.resize_life(TEXT_FAMILY, moving) is os_error then fail: failed = "no font: «os_error»"
             moving_motes, _ := settled_motes(moving, preview)
             draw(canvas, layer, moving, preview, fonts, ⟨counts: picking, counts_shown: 1, previewing: true, can_undo: true⟩, moving_motes, elements)
             counts_path := `scratch "«folder»/raza_counts.png"
             if canvas.save_png(counts_path) is os_error then fail: failed = "can't write «counts_path»: «os_error»"
-            // The settings: the plus part of the way to its square, then open.
+            // The colour toggles folded into the five-colour icon, and half way.
+            for fold, f: [2] f32⟨0, 0.5⟩ {
+                *folded: Toggles
+                for *s: folded.shown { s = fold }
+                for *o: folded.open { o = false }
+                draw(canvas, layer, layout, game, fonts, ⟨toggles: folded, can_undo: true⟩, still, elements)
+                folded_path := `scratch "«folder»/raza_folded_«f».png"
+                if canvas.save_png(folded_path) is os_error then fail: failed = "can't write «folded_path»: «os_error»"
+            }
+            // A life drum open: its units' wheel turned up a row and two
+            // fifths (carrying back into the tens'), then its tens' turned
+            // down two fifths; then closing, half flattened, and closed, its
+            // change flat beside it.
+            if fonts.resize_life(TEXT_FAMILY, layout) is os_error then fail: failed = "no font: «os_error»"
+            life := game.life[0]
+            drums := [4] Life_Drum⟨⟨open: true, player: 0, start: life, from: life, place: 1, turned: -1.4, bend: 1⟩,
+                                   ⟨open: true, player: 0, start: life, from: life, place: 10, turned: 0.4, bend: 1⟩,
+                                   ⟨player: 0, start: life - 2, from: life, bend: 0.5, change: 2, since: 0.05⟩,
+                                   ⟨player: 0, start: life - 2, from: life, change: 2, since: 0.5⟩⟩
+            for drum, d: drums {
+                draw(canvas, layer, layout, game, fonts, ⟨drum: drum, can_undo: true⟩, still, elements)
+                drum_path := `scratch "«folder»/raza_drum_«d».png"
+                if canvas.save_png(drum_path) is os_error then fail: failed = "can't write «drum_path»: «os_error»"
+            }
+            for step, morph_index: [3] f32⟨0, 0.35, 0.7⟩ {
+                draw(canvas, layer, moving, preview, fonts, ⟨counts: picking, counts_shown: step, previewing: true, can_undo: true⟩, moving_motes, elements)
+                morph_path := `scratch "«folder»/raza_count_morph_«morph_index».png"
+                if canvas.save_png(morph_path) is os_error then fail: failed = "can't write «morph_path»: «os_error»"
+            }
+            // The settings: part of the way into the pill, then in.
             for shown, s: [2] f32⟨0.4, 1⟩ {
                 draw(canvas, layer, layout, game, fonts, ⟨settings_open: true, settings_shown: shown, motion: .SLOW, can_undo: true⟩, still, elements)
                 settings_path := `scratch "«folder»/raza_settings_«s».png"
@@ -1498,6 +2125,8 @@ redo :: (timeline: *Timeline, game: *Game -> bool) {
 }
 
 Options :: struct {
+    tune: bool
+    background_tuning: string = "background-tuning.json"
     elements: string ⟦help: "draw each element, at rest and drawn out, into raza_elements.png in this folder, and quit"⟧
     snapshot: string ⟦help: "draw each count of players into PNGs in this folder (raza_2.png to raza_6.png, and raza_grid.png), and quit"⟧
     quit_after: f64 = 0 ⟦help: "quit after this many seconds, as if Quit were pressed (to profile it: rain -profile raza.rain -quit_after:15)"⟧
@@ -1518,12 +2147,16 @@ main :: (args: [] string) [failed: string] {
     else if bad_arguments {
         fail: failed = bad_arguments
     }
+    tuning_loaded := load_gold_tuning(options.background_tuning)
     if loaded := Draw.image_from_bytes(MATERIAL_BYTES[:]) { material_image = loaded }
     else if bad_image { fail: failed = "cannot load textures/materials-v1.png" }
     defer material_image.destroy()
     if loaded_controls := Draw.image_from_bytes(CONTROL_BYTES[:]) { control_image = loaded_controls }
-    else if bad_image { fail: failed = "cannot load textures/control-slate-v1.png" }
+    else if bad_image { fail: failed = "cannot load textures/control-metal-v1.png" }
     defer control_image.destroy()
+    if loaded_five := Draw.image_from_bytes(FIVE_COLOURS_BYTES[:]) { five_colours_image = loaded_five }
+    else if bad_image { fail: failed = "cannot load textures/five-colour-dots-96.png" }
+    defer five_colours_image.destroy()
     if options.elements != "" {
         if save_element_sheet(options.elements) is failed then fail: failed
         return
@@ -1537,6 +2170,12 @@ main :: (args: [] string) [failed: string] {
         fail: failed = "can't open a window: «os_error»"
     }
     w.set_fullscreen(true)
+    *tuner: Gold_Tuner
+    tuner.saved = tuning_loaded
+    defer close_gold_tuner(tuner)
+    if options.tune {
+        if open_gold_tuner(tuner, w) is failed then fail: failed
+    }
     *canvas: Draw.Canvas
     if c := Draw.create_canvas(w.size, w.handle) { canvas = c } else if os_error { fail: failed = "no canvas: «os_error»" }
     // (the light the elements give, drawn each frame, then added with its bloom)
@@ -1568,6 +2207,10 @@ main :: (args: [] string) [failed: string] {
     *fonts_for := V2⟨0, 0⟩           // the size the fonts were made for (0: none yet)
     *fonts_players: i64 = 0          // ...and the count of players
     *screen: Screen_State
+    screen.keep_surfaces = true
+    // (the game carried on from the last run: its colours set, so each
+    // player's toggles start folded, the five-colour icon to open them)
+    fold_toggles(screen.toggles)
     // The motes (miasmas, a drag's stream, volleys), and the damage dealt
     // whose volleys haven't landed yet (pending[to][from]: shown undone).
     *motes: Particles.System
@@ -1591,6 +2234,11 @@ main :: (args: [] string) [failed: string] {
         if w.close_requested then w.destroy()
         if options.quit_after > 0 and Time.seconds_since_start() - started >= options.quit_after then w.destroy()
         if !w.is_open then break
+        if w.keys[.F8].PRESSED {
+            if tuner.open then tuner.open = false
+            else if open_gold_tuner(tuner, w) is failed then fail: failed
+        }
+        tuning_input := step_gold_tuner(tuner, w, options.background_tuning)
         size := V2⟨f32'w.size[0], f32'w.size[1]⟩
         if canvas.size != w.size {
             if canvas.resize(w.size) is os_error then fail: failed = "can't resize the canvas"
@@ -1611,7 +2259,8 @@ main :: (args: [] string) [failed: string] {
 
         if w.keys[.F11].PRESSED then w.set_fullscreen(!w.is_fullscreen)
         if w.keys[.ESCAPE].PRESSED {
-            if screen.picker.open then screen.picker.open = false
+            if tuner.open then tuner.open = false
+            else if screen.picker.open then screen.picker.open = false
             else if screen.settings_open then screen.settings_open = false
             else if screen.counts.open then screen.counts.open = false
             else if w.is_fullscreen then w.set_fullscreen(false)
@@ -1623,7 +2272,7 @@ main :: (args: [] string) [failed: string] {
             if moved then call_off_volleys(motes, volleys, pending)
         }
 
-        if w.mouse.buttons[.LEFT].PRESSED {
+        if !tuning_input and w.mouse.buttons[.LEFT].PRESSED {
             if screen.picker.open {
                 part := picker_part_at(layout, screen.picker, mouse)
                 if part is {
@@ -1649,16 +2298,19 @@ main :: (args: [] string) [failed: string] {
                 case reset:
                     // Every count's lines forgotten, here and stored: a count
                     // whose lines don't fit is laid out as equal_splits starts it.
-                    // Then each seat its starting colours, and the motion
-                    // its default, slow.
+                    // Then each seat its starting colours, those who've left
+                    // the table forgotten, and the motion its default, slow.
                     for n: 2 <= MAX_PLAYERS {
                         splits[n] = ⟨⟩
                         if Defaults.remove(`scratch "splits.«n»") is { case absent, os_error: _ }
                     }
                     splits[game.players] = equal_splits(game.players, size)
                     layout = lay_out(size, splits[game.players])
-                    game.identity = starting_colours(size, game.players)
+                    reset_colours := starting_colours(size, game.players)
+                    for k: 0 < game.players { game.identity[k] = reset_colours[k] }
+                    forget_the_absent(game, reset_colours)
                     speed = Motion.SLOW
+                    open_toggles(screen.toggles)
                 case quit:
                     // (what's changed is already stored, each frame's as it's made)
                     w.destroy()
@@ -1678,8 +2330,8 @@ main :: (args: [] string) [failed: string] {
                                      toward: screen.counts.toward, progress: screen.counts.progress⟩
                 case .RESTART:
                     // A new game of as many players, each seat's colours kept:
-                    // every life back to the start's, no damage (undo brings
-                    // the old one back).
+                    // every life back to the start's (those off the table's
+                    // too), no damage (undo brings the old one back).
                     timeline.remember(game)
                     game = new_game(game.players, game.identity)
                     call_off_volleys(motes, volleys, pending)
@@ -1687,13 +2339,32 @@ main :: (args: [] string) [failed: string] {
                     screen.settings_open = true
                 }
             }
-            else if seat, colour := toggle_at(layout, mouse) is not absent {
+            else if place := drum_wheel_at(layout, fonts, screen.drum, mouse) is not absent {
+                // (an open drum's wheel: a turn of it, or a tap that closes it)
+                spun := layout.seats[screen.drum.player]
+                press_drum(screen.drum, game, screen.drum.player, local_of(spun.middle, spun.angle, mouse), place)
+            }
+            else if seat, colour := toggle_at(layout, screen.toggles, mouse) is not absent {
+                // (one set: its pentagon folds TOGGLE_LINGER seconds from now,
+                // unless another's set before then)
                 bit := u8'1 << u8'colour
                 was := game.identity[seat]
                 game.identity[seat] = if was & bit != 0 then was & ~bit else was | bit
+                touch_toggles(screen.toggles, seat)
+            }
+            else if folded := five_colours_at(layout, screen.toggles, mouse) is not absent {
+                unfold_toggles(screen.toggles, folded)
+            }
+            else if opened := pentagon_middle_at(layout, screen.toggles, mouse) is not absent {
+                fold_now(screen.toggles, opened)
             }
             else if spot, combat := icon_at(layout, game, mouse) is not absent {
                 screen.drag = ⟨true, spot, combat⟩
+            }
+            else if who := life_at(layout, fonts, game, mouse) is not absent {
+                // (a life touched: a tap opens its drum)
+                touched := layout.seats[who]
+                press_drum(screen.drum, game, who, local_of(touched.middle, touched.angle, mouse), 1)
             }
             else if line := line_at(layout, mouse, 0.5 * cell) is not absent {
                 screen.moving_end = line
@@ -1705,6 +2376,20 @@ main :: (args: [] string) [failed: string] {
         if screen.moving_end >= 0 {
             if aimed := share_through(layout, mouse) is not absent then splits[game.players].move_split(screen.moving_end, aimed)
             layout = lay_out(size, splits[game.players])
+        }
+        // A drum's wheel turns with the finger, toward its player and away.
+        if screen.drum.pressed and screen.drum.player < layout.count {
+            turning := layout.seats[screen.drum.player]
+            screen.drum.move_drum(local_of(turning.middle, turning.angle, mouse), f32'fonts.life.cap_height)
+        }
+        if w.mouse.buttons[.LEFT].RELEASED and screen.drum.pressed {
+            // Let go: a tap opens or closes it; a turn's number at the
+            // middle is the life (undo brings the old one back).
+            life, changes := screen.drum.release_drum(game)
+            if changes {
+                timeline.remember(game)
+                game.life[screen.drum.player] = life
+            }
         }
         if w.mouse.buttons[.LEFT].RELEASED {
             if screen.drag.active {
@@ -1726,12 +2411,12 @@ main :: (args: [] string) [failed: string] {
             if screen.counts.open and screen.counts.held {
                 // Let go: the count at the button is the game's (the same,
                 // let go without moving), the column and the lines settling
-                // on it, and the groove going back to the plus.
+                // on it, and the runner going back to the pill.
                 screen.counts.held = false
                 count := i64'Math.round(screen.counts.shown)
                 if count != game.players {
                     timeline.remember(game)
-                    game = new_game(count, colours_for(game.identity, game.players, count, splits[:], size))
+                    game = game_for(game, count, splits[:], size)
                     call_off_volleys(motes, volleys, pending)
                 }
                 screen.counts.open = false
@@ -1755,7 +2440,7 @@ main :: (args: [] string) [failed: string] {
         }
         // The lines snap to the count at the button as it changes (or, let
         // go, to the game's), a count at a time; while they're another
-        // count's, the parts show what a new game of that count would.
+        // count's, the parts show the game as that count would have it.
         now := Time.seconds_since_start()
         seconds := f32'Math.min(now - last_frame, 0.1)
         last_frame = now
@@ -1772,7 +2457,7 @@ main :: (args: [] string) [failed: string] {
         screen.previewing = lines_moving(screen.counts, game.players)
         if screen.previewing {
             layout = lay_out(size, shown_splits(screen.counts, splits[:], size))
-            if layout.count != game.players then shown = new_game(layout.count, colours_for(game.identity, game.players, layout.count, splits[:], size))
+            if layout.count != game.players then shown = game_for(game, layout.count, splits[:], size)
         }
 
         // The elements and their motes moved on: each stirred or settling,
@@ -1803,18 +2488,22 @@ main :: (args: [] string) [failed: string] {
 
         screen.can_undo = timeline.past.count > 0
         screen.can_redo = timeline.future.count > 0
-        // (the plus opening into the settings' square, or closing back)
+        // (the settings coming into the pill, or going)
         opening: f32 = if screen.settings_open then 1 else -1
         screen.settings_shown = Math.clamp(screen.settings_shown + opening * seconds / SETTINGS_TIME, 0, 1)
         // (and into the count column's groove while a finger's on the
         // column, back as it's let go)
         grooving: f32 = if screen.counts.open then 1 else -1
         screen.counts_shown = Math.clamp(screen.counts_shown + grooving * seconds / SETTINGS_TIME, 0, 1)
+        // (each player's toggles counting down to folding, and folding or opening)
+        step_toggles(screen.toggles, seconds)
+        step_drum(screen.drum, game, seconds)
         // (the surfaces moved on by the frame's time at the chosen speed)
         surface_time += seconds * MOTION_RATES[speed]
         screen.motion = speed
         screen.surface_time = surface_time
         draw(canvas, layer, layout, shown, fonts, screen, motes, elements, volleys)
+        draw_gold_tuner(canvas, tuner)
         canvas.present(w.handle, vsync: true)
         worked := Time.seconds_since_start() - frame_start
         busy += worked

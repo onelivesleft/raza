@@ -52,8 +52,8 @@ material_tiles_follow_identity :: () #test {
     }
 }
 
-// Dark slate material, shared by the central controls and count selector.
-CONTROL_BYTES :: #data "../textures/control-slate-v1.png"
+// Dark brushed metal material, shared by the central controls and count selector.
+CONTROL_BYTES :: #data "../textures/control-metal-v1.png"
 control_image: Draw.Image
 
 control_material :: (texture: Shader.Texture_2D, filtering: Shader.Sampler, uv: V2 -> V3) {

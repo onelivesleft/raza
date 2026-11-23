@@ -234,9 +234,11 @@ lines_morph_between_counts :: () #test {
     }
 }
 
-// Each part's colour toggles are inside it, and its nearest is as far from
-// the part's divider as the row is from the screen's edge.
-toggles_keep_their_gap :: () #test {
+// Each part's colour toggles are a pentagon inside it, each the gap clear of
+// its sides, none touching another, its middle (where they fold to) in it
+// too; white at its top as its player sees it, then blue, black, red and
+// green clockwise, as a card's back has them.
+toggles_make_a_pentagon :: () #test {
     for players: 2 <= MAX_PLAYERS {
         for size: [2] V2⟨LANDSCAPE, PORTRAIT⟩ {
             layout := laid_out(players, size)
@@ -244,14 +246,149 @@ toggles_keep_their_gap :: () #test {
             want := (TOGGLE_RADIUS + TOGGLE_GAP) * cell
             for seat, k: layout.seats[:players] {
                 points := seat.outline[:seat.count]
-                places := toggle_places(layout, seat)
-                for p: places { assert(inside(p, points), "«players» on «size»: part «k»'s toggles are inside it") }
-                gap := clearance(places[0], points)
-                assert(gap >= want - 1, "«players» on «size»: part «k»'s nearest toggle is «gap» from its sides, under «want»")
-                assert(gap <= want + 1, "«players» on «size»: part «k»'s nearest toggle is «gap» from its divider, not «want»")
+                places, middle, folded := toggle_places(layout, seat)
+                assert(inside(middle, points), "«players» on «size»: part «k»'s pentagon's middle is inside it")
+                // (the icon in the corner, the gap clear of the sides; the
+                // pentagon as near it as fits: a step nearer doesn't)
+                assert(inside(folded, points) and clearance(folded, points) >= want - 1, "«players» on «size»: part «k»'s icon fits")
+                corner := local_of(seat.middle, seat.angle, folded)
+                hub := local_of(seat.middle, seat.angle, middle)
+                *bottom_left := V2⟨1e30, -1e30⟩
+                for p: points {
+                    l := local_of(seat.middle, seat.angle, p)
+                    bottom_left = ⟨Math.min(bottom_left.x, l.x), Math.max(bottom_left.y, l.y)⟩
+                }
+                assert(Math.length(corner - bottom_left) <= Math.length(hub - bottom_left), "«players» on «size»: part «k»'s icon nearer its player's bottom left than the pentagon")
+                if Math.length(corner - hub) > 0.1 * cell {
+                    nearer := hub + Math.normalize(corner - hub) * 0.1 * cell
+                    assert(!pentagon_fits(layout, seat, points, nearer.x, nearer.y), "«players» on «size»: part «k»'s pentagon could come nearer its icon")
+                }
+                for p, i: places {
+                    assert(inside(p, points), "«players» on «size»: part «k»'s toggles are inside it")
+                    gap := clearance(p, points)
+                    assert(gap >= want - 1, "«players» on «size»: part «k»'s toggle «i» is «gap» from its sides, under «want»")
+                    next := places[(i + 1) % 5]
+                    assert(Math.length(next - p) >= 2 * TOGGLE_RADIUS * cell, "«players» on «size»: part «k»'s toggles «i» and the next touch")
+                    // (clockwise as its player sees it: each the next a fifth of a turn round)
+                    a := local_of(middle, seat.angle, p)
+                    b := local_of(middle, seat.angle, next)
+                    assert(a.x * b.y - a.y * b.x > 0, "«players» on «size»: part «k»'s toggles go clockwise")
+                }
+                top := local_of(middle, seat.angle, places[0])
+                assert(Math.abs(top.x) < 0.5 and top.y < 0, "«players» on «size»: part «k»'s white toggle at its top as its player sees it")
             }
         }
     }
+}
+
+// A life tapped opens its drum, and tapped again closes it; a press that
+// moves is a turn, not a tap. Open, a wheel turned changes the life by its
+// place a whole row at a time, rounding to the nearest (down, the bigger
+// digits come to the middle: more), each turn the game's as it's let go;
+// the drum follows the life changed otherwise. Closed, it flattens, and its
+// change shows DRUM_HOLD seconds, then fades over DRUM_FADE; a change of
+// nothing shows nothing.
+life_drums_open_turn_and_close :: () #test {
+    cap: f32 = 100
+    row := DRUM_PITCH * cap
+    *game := new_game(4)
+    *drum: Life_Drum
+    // (a tap opens it, and a press that moves on a closed one does nothing)
+    press_drum(drum, game, 1, ⟨0, 0⟩, 1)
+    move_drum(drum, ⟨0, 0.5 * row⟩, cap)
+    life, changes := release_drum(drum, game)
+    assert(!drum.open and !changes, "a turn of a closed drum does nothing")
+    press_drum(drum, game, 1, ⟨0, 0⟩, 1)
+    _, _ := release_drum(drum, game)
+    assert(drum.open and drum.start == 40, "a tap opens it")
+    step_drum(drum, game, DRUM_FLATTEN)
+    assert(drum.bend == 1 and drum_showing(drum, 1) and !drum_showing(drum, 0), "open, round")
+    // (the units' wheel down two and two fifths rows: two more)
+    press_drum(drum, game, 1, ⟨0, 0⟩, 1)
+    move_drum(drum, ⟨0, 2.4 * row⟩, cap)
+    turned, turns := release_drum(drum, game)
+    assert(turns and turned == 42, "the units' two rows down: «turned»")
+    game.life[1] = turned
+    // (the tens' up a row and three fifths: twenty less)
+    press_drum(drum, game, 1, ⟨0, 0⟩, 10)
+    move_drum(drum, ⟨0, -1.6 * row⟩, cap)
+    tens, _ := release_drum(drum, game)
+    assert(tens == 22, "the tens' two rows up: «tens»")
+    game.life[1] = tens
+    step_drum(drum, game, 1)
+    assert(drum.open and drum_life(drum) == 22, "settled on its row")
+    assert(change_showing(drum, 1) == 0, "open, no flat change")
+    // (the life changed otherwise: the drum follows it)
+    game.life[1] = 19
+    step_drum(drum, game, 0.01)
+    assert(drum_life(drum) == 19, "it follows the life")
+    // (a tap closes it)
+    press_drum(drum, game, 1, ⟨0, 0⟩, 1)
+    _, _ := release_drum(drum, game)
+    assert(!drum.open and drum.change == -21, "a tap closes it, its change kept: «drum.change»")
+    for _: 0 < 10 { step_drum(drum, game, DRUM_FLATTEN / 10) }
+    assert(drum.bend == 0 and !drum_showing(drum, 1), "closed, flat")
+    assert(change_showing(drum, 1) == 1, "its change shows")
+    step_drum(drum, game, DRUM_HOLD - DRUM_FLATTEN)
+    assert(change_showing(drum, 1) > 0.5, "then fades: «change_showing(drum, 1)»")
+    step_drum(drum, game, DRUM_FADE)
+    assert(change_showing(drum, 1) == 0, "and is gone")
+    assert(change_text(3) == "+3" and change_text(-2) == "-2" and change_text(0) == "0")
+    nothing := Life_Drum⟨player: 1, start: 30, since: 0⟩
+    assert(change_showing(nothing, 1) == 0, "no change, nothing shown")
+}
+
+// Each digit's a wheel of its own: as a number turns to the next, a wheel
+// whose digit doesn't change stays, one that does turns the short way round
+// (9 to 0 forward), so the tens turn only as the units carry.
+wheels_turn_alone :: () #test {
+    assert(digit_of(305, 0) == 5 and digit_of(305, 1) == 0 and digit_of(305, 2) == 3 and digit_of(-27, 0) == 7)
+    assert(digits_in(0) == 1 and digits_in(9) == 1 and digits_in(10) == 2 and digits_in(-120) == 3)
+    assert(wheel_at(30, 31, 0, 0.25) == 0.25 and wheel_at(30, 31, 1, 0.25) == 3, "30 to 31: the units turn, the tens stay")
+    assert(wheel_at(29, 30, 0, 0.5) == 9.5 and wheel_at(29, 30, 1, 0.5) == 2.5, "29 to 30: the units carry into the tens")
+    assert(wheel_at(30, 29, 0, 0.5) == -0.5 and wheel_at(30, 29, 1, 0.5) == 2.5, "30 to 29: both back")
+    assert(wheel_at(30, 40, 0, 0.5) == 0 and wheel_at(30, 40, 1, 0.5) == 3.5, "30 to 40: the tens alone")
+    *drum := Life_Drum⟨from: 30, place: 1, turned: -1.4⟩
+    base, frac := drum_between(drum)
+    assert(base == 28 and Math.abs(frac - 0.6) < 0.001, "turned up a row and two fifths from 30: 28, three fifths to 29")
+}
+
+// The toggles stay open after a new game until one's set; then fold
+// TOGGLE_LINGER seconds later, unless another's set first (which starts it
+// again); folded, the icon touched opens them for TOGGLE_OPENED, and one set
+// then gives TOGGLE_LINGER from then; the pentagon's middle touched folds
+// them at once.
+toggles_fold_when_left_alone :: () #test {
+    *toggles: Toggles
+    fold_toggles(toggles)
+    open_toggles(toggles)
+    for _: 0 < 100 { step_toggles(toggles, 0.1) }
+    assert(toggles.open[0] and toggles.shown[0] == 1, "open until one's set")
+    touch_toggles(toggles, 0)
+    step_toggles(toggles, TOGGLE_LINGER - 0.5)
+    touch_toggles(toggles, 0)
+    step_toggles(toggles, TOGGLE_LINGER - 0.5)
+    assert(toggles.open[0], "another set starts the countdown again")
+    step_toggles(toggles, 1)
+    assert(!toggles.open[0] and toggles.open[1], "folded once left alone, the others' open as they were")
+    for _: 0 < 10 { step_toggles(toggles, 0.1) }
+    assert(toggles.shown[0] == 0, "folded all the way")
+    unfold_toggles(toggles, 0)
+    step_toggles(toggles, TOGGLE_OPENED - 0.1)
+    assert(toggles.open[0], "the icon touched opens them")
+    step_toggles(toggles, 0.2)
+    assert(!toggles.open[0], "and they fold again TOGGLE_OPENED later")
+    unfold_toggles(toggles, 0)
+    step_toggles(toggles, 0.5)
+    touch_toggles(toggles, 0)
+    step_toggles(toggles, TOGGLE_LINGER - 0.1)
+    assert(toggles.open[0], "one set gives TOGGLE_LINGER from then")
+    step_toggles(toggles, 0.2)
+    assert(!toggles.open[0], "and no more")
+    unfold_toggles(toggles, 0)
+    fold_now(toggles, 0)
+    step_toggles(toggles, 0.01)
+    assert(!toggles.open[0], "the middle touched folds them at once")
 }
 
 // The lines snap toward a count a step at a time: from three to six they
@@ -320,26 +457,27 @@ dragged_lines_pass_under_the_finger :: () #test {
     if aimed := share_through(layout, layout.centre) is not absent then assert(false, "the centre aims nowhere, not «aimed»")
 }
 
-// The settings' buttons are each at its place in the square's grid: Reset
-// top left, the motion's button top right, Quit where the system's button
-// is; a blank place in the square, or past it, closes it.
+// The settings' buttons are each at its place in the pill: Reset at the far
+// left (undo's place), the motion's button in the middle (the players'),
+// Quit where the system's button is (the right end); the pill's other
+// places, or past it, put its buttons back.
 settings_buttons_are_where_drawn :: () #test {
     layout := laid_out(4, LANDSCAPE)
-    pitch := CAPSULE_ARM * cell_of(layout)
+    pitch := CAPSULE_PITCH * cell_of(layout)
     at :: (layout: Layout, place: V2, pitch: f32 -> Settings_Part) { return settings_part_at(layout, layout.centre + place * pitch) }
-    if at(layout, V2⟨1, -1⟩, pitch) is {
+    if settings_part_at(layout, capsule_centre(layout, .PLAYERS)) is {
     case animation: _
-    case reset, quit, close: assert(false, "top right moves the motion on")
+    case reset, quit, close: assert(false, "the middle moves the motion on")
     }
-    if at(layout, V2⟨-1, -1⟩, pitch) is {
+    if settings_part_at(layout, capsule_centre(layout, .UNDO)) is {
     case reset: _
-    case animation, quit, close: assert(false, "top left resets")
+    case animation, quit, close: assert(false, "the far left resets")
     }
     if settings_part_at(layout, capsule_centre(layout, .SYSTEM)) is {
     case quit: _
     case animation, reset, close: assert(false, "the system's button's place quits")
     }
-    blanks := [7] V2⟨⟨0, -1⟩, ⟨-1, 0⟩, ⟨0, 0⟩, ⟨1, 0⟩, ⟨-1, 1⟩, ⟨1, 1⟩, ⟨0, 3⟩⟩
+    blanks := [5] V2⟨⟨-1, 0⟩, ⟨1, 0⟩, ⟨0, -1⟩, ⟨2, 1⟩, ⟨0, 2⟩⟩
     for blank: blanks {
         if at(layout, blank, pitch) is {
         case close: _
@@ -570,78 +708,65 @@ undo_calls_off_volleys :: () #test {
     assert(pending[3][2] == 0 and volleys.list.count == 0)
 }
 
-// Opened, the plus is the settings' square: every one of its grid's places
-// inside it, its corners filled in; part of the way, between the two.
-plus_opens_into_a_square :: () #test {
-    layout := laid_out(4, LANDSCAPE)
-    cell := cell_of(layout)
-    c := layout.centre
-    for row: -1 <= 1 {
-        for column: -1 <= 1 {
-            place := c + V2⟨f32'column, f32'row⟩ * (CAPSULE_ARM * cell)
-            for k: 0 < 8 {
-                a := f32'k / 8 * f32'Math.TAU
-                assert(in_controls(layout, place + V2⟨Math.cos(a), Math.sin(a)⟩ * (0.5 * cell), 1), "«column», «row»'s button inside the square")
-            }
-        }
-    }
-    assert(!in_controls(layout, c + V2⟨CAPSULE_REACH + 0.1, 0⟩ * cell, 1), "the square reaches as far as the plus")
-    // (the inside corner a third of the way out, half way through)
-    assert(in_controls(layout, c + V2⟨1.0, 1.0⟩ * cell, 0.5), "half open, the inside corner's moved out")
-    assert(!in_controls(layout, c + V2⟨1.6, 1.6⟩ * cell, 0.5), "half open, it's not yet square")
-}
-
-// While a count's picked, the plus becomes the count runner: the count
-// bar, every count's ring on it, inside it wherever the bar's slid to (its
-// ends too, from one end of its travel to the other), the runner on the
-// screen either way up, undo's arm gone.
-plus_becomes_the_count_runner :: () #test {
+// While a count's picked, the count runner grows out of the pill's middle:
+// the count bar, every count's ring on it, inside it wherever the bar's slid
+// to (its ends too, from one end of its travel to the other), the runner on
+// the screen either way up, and the rest of the pill (undo's end) still
+// there; half grown, the runner's not yet its full length.
+count_runner_grows_out_of_the_pill :: () #test {
     for screen: [2] V2⟨LANDSCAPE, PORTRAIT⟩ {
         layout := laid_out(4, screen)
         cell := cell_of(layout)
         for shown: [4] f32⟨2, 3.4, 5.5, 6⟩ {
             for count: 2 <= MAX_PLAYERS {
                 ring := count_place(layout, shown, count)
-                assert(in_controls(layout, ring + V2⟨BAR_WIDTH * cell, 0⟩, 0, 1), "«count»'s ring's width in the runner, at «shown»")
+                assert(in_controls(layout, ring + V2⟨BAR_WIDTH * cell, 0⟩, 1), "«count»'s ring's width in the runner, at «shown»")
             }
             middle := (count_place(layout, shown, 2) + count_place(layout, shown, MAX_PLAYERS)) / 2
             for end: [2] f32⟨-1, 1⟩ {
                 tip := middle + V2⟨0, end * (BAR_HALF - 0.01) * cell⟩
-                assert(in_controls(layout, tip, 0, 1), "the bar's end at «tip» in the runner, at «shown»")
+                assert(in_controls(layout, tip, 1), "the bar's end at «tip» in the runner, at «shown»")
+                outside := layout.centre + V2⟨0, end * (RUNNER_HALF + 0.1) * cell⟩
+                assert(!in_controls(layout, outside, 1), "the fixed groove ends beyond the full slider travel")
             }
         }
         reach := RUNNER_HALF * cell
         assert(layout.centre.y - reach > 0 and layout.centre.y + reach < screen.y, "the runner on the screen, on «screen»")
-        assert(!in_controls(layout, capsule_centre(layout, .UNDO), 0, 1), "undo's arm gone")
-        assert(in_controls(layout, capsule_centre(layout, .UNDO), 0, 0), "undo's arm there before")
+        for part: CAPSULE_PARTS {
+            assert(in_controls(layout, capsule_centre(layout, part), 1), "«part»'s place still in the pill as the runner grows")
+        }
+        far := layout.centre + V2⟨0, (RUNNER_HALF - 0.2) * cell⟩
+        assert(!in_controls(layout, far, 0) and !in_controls(layout, far, 0.5) and in_controls(layout, far, 1), "the runner grows to its length")
     }
 }
 
-// The controls are a plus: the players in the middle, undo on the left
-// wing, redo on the right, a new game above and the system's below; each
-// button found at its middle, inside the plus's outline, and none between
-// the middle and an arm's.
-capsule_buttons_make_a_plus :: () #test {
+// The controls are a pill across the screen: from the left, undo, redo, the
+// players in the middle, a new game, and the system's at the right end;
+// each button found at its middle, inside the pill, and none between two
+// neighbours; above and below the pill is outside it.
+capsule_buttons_make_a_pill :: () #test {
     layout := laid_out(4, LANDSCAPE)
     cell := cell_of(layout)
     c := layout.centre
-    for part: CAPSULE_PARTS {
+    for part, i: CAPSULE_PARTS {
         middle := capsule_centre(layout, part)
+        assert(Math.abs(middle.y - c.y) < 0.01, "«part» on the pill's line")
         if found := capsule_part_at(layout, middle) { assert(found == part, "«part»'s middle is «found»") }
         else if absent { assert(false, "«part»'s middle is no button") }
         // (a button's round, its icon 0.62 cells across: points round it half a cell out)
         for k: 0 < 8 {
             a := f32'k / 8 * f32'Math.TAU
-            assert(in_controls(layout, middle + V2⟨Math.cos(a), Math.sin(a)⟩ * (0.5 * cell)), "«part»'s button inside the plus")
+            assert(in_controls(layout, middle + V2⟨Math.cos(a), Math.sin(a)⟩ * (0.5 * cell)), "«part»'s button inside the pill")
         }
-        if part != .PLAYERS {
-            between := (capsule_centre(layout, .PLAYERS) + middle) / 2
-            if stray := capsule_part_at(layout, between) is not absent then assert(false, "between the players and «part» is «stray»")
+        if i > 0 {
+            before := capsule_centre(layout, CAPSULE_PARTS[i - 1])
+            assert(before.x < middle.x, "«CAPSULE_PARTS[i - 1]» left of «part»")
+            between := (before + middle) / 2
+            if stray := capsule_part_at(layout, between) is not absent then assert(false, "between «CAPSULE_PARTS[i - 1]» and «part» is «stray»")
         }
     }
-    assert(capsule_centre(layout, .UNDO).x < c.x and capsule_centre(layout, .REDO).x > c.x, "undo left, redo right")
-    assert(capsule_centre(layout, .RESTART).y < c.y and capsule_centre(layout, .SYSTEM).y > c.y, "a new game above, the system's below")
-    assert(!in_controls(layout, c + V2⟨1.2, 1.2⟩ * cell), "the plus's corners are open")
+    assert(capsule_centre(layout, .PLAYERS) == c, "the players in the middle")
+    assert(!in_controls(layout, c + V2⟨0, CAPSULE_PITCH⟩ * cell) and !in_controls(layout, c - V2⟨0, CAPSULE_PITCH⟩ * cell), "above and below the pill is outside it")
 }
 
 // Undo goes back a game and redo forward again; doing something new
@@ -780,8 +905,8 @@ holds :: (colours: [MAX_PLAYERS] Identity, players: i64, colour: Identity -> boo
 // starting colours. Six players with colours of their own (none their
 // slot's default): down from six, the artifact deck's slot goes, then
 // white's, black's, green's, whatever colours they hold, the rest keeping
-// theirs, each in the slot of its name; back up, each slot comes back with
-// its default.
+// theirs, each in the slot of its name; back up, each slot comes back as it
+// left, its colours, life and damage kept.
 slots_follow_the_count :: () #test {
     gone := [4] Identity⟨0, mono(.WHITE), mono(.BLACK), mono(.GREEN)⟩
     // (each slot's own colours: two colours each, told apart, none a default)
@@ -789,31 +914,68 @@ slots_follow_the_count :: () #test {
                         mono(.GREEN) | mono(.WHITE), mono(.WHITE) | mono(.BLACK)⟩
     *none: [MAX_PLAYERS + 1] Splits
     names := starting_colours(LANDSCAPE, 6)
-    *colours := starting_colours(LANDSCAPE, 6)
-    for k: 0 < 6 { colours[k] = own[k] }
-    // (whose colours each slot of six holds: by its name)
-    own_of :: (names: [MAX_PLAYERS] Identity, own: [6] Identity, name: Identity -> Identity) {
-        for n, k: names[:6] { if n == name then return own[k] }
-        return 0
+    // (six players, each its own colours and life, and each commander's
+    // damage to each player its own: 10 * to + from + 1)
+    *game := new_game(6)
+    for k: 0 < 6 {
+        game.identity[k] = own[k]
+        game.life[k] = i32'(30 + k)
+        for j: 0 < 6 { if j != k then game.commander[k][j] = i32'(10 * k + j + 1) }
     }
+    start := game
     for n: 0 < 4 {
         from := 6 - n
-        next := colours_for(colours, from, from - 1, none[:], LANDSCAPE)
-        next_names := starting_colours(LANDSCAPE, from - 1)
-        assert(!holds(next, from - 1, own_of(names, own, gone[n])), "«from» to «from - 1» players drops the slot of «gone[n]»: «next»")
-        for name, j: next_names[:from - 1] {
-            assert(next[j] == own_of(names, own, name), "«from» to «from - 1» players: the slot of «name» keeps its colours, «own_of(names, own, name)», not «next[j]»")
-        }
-        colours = next
+        game = game_for(game, from - 1, none[:], LANDSCAPE)
+        assert(!holds(game.identity, from - 1, own[place_of(names, gone[n])]), "«from» to «from - 1» players drops the slot of «gone[n]»: «game.identity»")
+        seated_as_named(game, start, names, LANDSCAPE)
     }
     for to: 3 <= 6 {
-        colours = colours_for(colours, to - 1, to, none[:], LANDSCAPE)
-        back_names := starting_colours(LANDSCAPE, to)
-        name := gone[6 - to]
-        for n, j: back_names[:to] {
-            if n == name then assert(colours[j] == name, "back up to «to»: the slot of «name» comes back with its default, not «colours[j]»")
+        game = game_for(game, to, none[:], LANDSCAPE)
+        seated_as_named(game, start, names, LANDSCAPE)
+    }
+    assert(game == start, "back to six, everyone as they were")
+}
+
+// The place among six's of the player with a slot's name.
+place_of :: (names: [MAX_PLAYERS] Identity, name: Identity -> i64) {
+    for n, k: names[:6] { if n == name then return k }
+    return -1
+}
+
+// That each seat of a game's count holds its slot's player as they were in
+// start, a game of six: their colours, life, and the damage between them.
+seated_as_named :: (game: Game, start: Game, names: [MAX_PLAYERS] Identity, size: V2) {
+    seat_names := starting_colours(size, game.players)
+    for name, j: seat_names[:game.players] {
+        k := place_of(names, name)
+        assert(game.identity[j] == start.identity[k], "«game.players» players: the slot of «name» keeps its colours, «start.identity[k]», not «game.identity[j]»")
+        assert(game.life[j] == start.life[k], "«game.players» players: the slot of «name» keeps its life, «start.life[k]», not «game.life[j]»")
+        for other, i: seat_names[:game.players] {
+            from := place_of(names, other)
+            assert(game.commander[j][i] == start.commander[k][from], "«game.players» players: «other»'s damage to «name» kept")
         }
     }
+}
+
+// A reset forgets those who've left the table; a restart starts everyone
+// again, at the table or not.
+the_absent_are_forgotten_by_a_reset :: () #test {
+    *none: [MAX_PLAYERS + 1] Splits
+    *game := new_game(6, starting_colours(LANDSCAPE, 6))
+    for k: 0 < 6 { game.life[k] = i32'(20 + k) }
+    game.deal(5, 0, 7)
+    *four := game_for(game, 4, none[:], LANDSCAPE)
+    colours := starting_colours(LANDSCAPE, 4)
+    forget_the_absent(four, colours)
+    for k: 4 < 6 {
+        assert(four.life[k] == STARTING_LIFE and four.identity[k] == colours[k], "place «k» off the table forgotten")
+        for j: 0 < 6 { assert(four.commander[k][j] == 0 and four.commander[j][k] == 0, "place «k»'s damage forgotten") }
+    }
+    *kept := 0
+    for k: 0 < 4 { if four.life[k] != STARTING_LIFE then kept += 1 }
+    assert(kept == 4, "those at the table keep their lives")
+    restarted := new_game(6, game_for(four, 6, none[:], LANDSCAPE).identity)
+    for l: restarted.life { assert(l == STARTING_LIFE) }
 }
 
 // Commander damage is life lost too, and 21 from one commander is out.
@@ -901,4 +1063,66 @@ drag_damage_uses_the_entry_line :: () #test {
             }
         }
     }
+}
+
+background_settings_round_trip :: () #test {
+    with scratch.rewind()
+    `scratch {
+        *settings: Gold_Tuning
+        settings.ambient_strength = 1.75
+        settings.strip_reach = 2.4
+        settings.green_g = 0.61
+        text := Json.to_json(settings, 2)
+        if loaded := Json.parse_json(text, Gold_Tuning) {
+            assert(loaded == settings)
+        }
+        else if bad_json { assert(false, bad_json.why) }
+        else if mismatch { assert(false, mismatch) }
+    }
+}
+background_settings_validate_ranges :: () #test {
+    *settings: Gold_Tuning
+    settings.key_width = 0
+    settings.ambient_strength = -1
+    settings.strip_reach = 2.4
+    validate_gold_tuning(settings)
+    defaults: Gold_Tuning = ⟨⟩
+    assert(settings.key_width == defaults.key_width)
+    assert(settings.ambient_strength == defaults.ambient_strength)
+    assert(settings.strip_reach == f32'2.4)
+    *fields: i64 = 0
+    #unroll for field: #fields_of(Gold_Tuning) { fields += 1 }
+    assert(fields == GOLD_CONTROL_COUNT)
+}
+background_scrollbar_reaches_both_ends :: () #test {
+    rows := tuner_rows(760)
+    top, thumb := tuner_thumb(760, rows, 0)
+    bottom, _ := tuner_thumb(760, rows, GOLD_CONTROL_COUNT - rows)
+    assert(top == 90)
+    assert(thumb >= 32)
+    assert(Math.abs(bottom + thumb - (90 + f32'rows * 50)) < 0.001)
+}
+gold_panel_moves_resizes_and_starts_half_height :: () #test {
+    *panel: Gold_Tuner
+    fit_gold_tuner(panel, ⟨1440, 900⟩)
+    assert(panel.size == V2⟨760, 438⟩)
+    panel.grab_origin = panel.origin
+    panel.grab_size = panel.size
+    panel.grab_mouse = ⟨0, 0⟩
+    panel.moving = true
+    drag_gold_tuner(panel, ⟨1440, 900⟩, ⟨-100, 80⟩)
+    assert(panel.origin == V2⟨568, 92⟩)
+    panel.moving = false
+    panel.resizing = true
+    panel.resize_edges = ⟨-1, -1⟩
+    panel.grab_origin = panel.origin
+    panel.grab_size = panel.size
+    far := panel.origin + panel.size
+    drag_gold_tuner(panel, ⟨1440, 900⟩, ⟨500, 500⟩)
+    assert(panel.size == V2⟨600, 270⟩)
+    assert(panel.origin + panel.size == far)
+    fit_gold_tuner(panel, ⟨800, 500⟩)
+    assert(panel.origin.x >= 12 and panel.origin.y >= 12)
+    assert(panel.origin.x + panel.size.x <= 788)
+    assert(panel.origin.y + panel.size.y <= 488)
 }

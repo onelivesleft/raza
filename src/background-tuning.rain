@@ -1,0 +1,377 @@
+// Live gold and perimeter-light controls. JSON keys are the shader parameter names.
+#import Json
+#import File
+
+Gold_Tuning :: struct {
+    texture_step: f32 = 0.008 ⟦label: "Surface / Relief sampling", low: 0.001, high: 0.05⟧
+    strip_falloff: f32 = 2.0 ⟦label: "Perimeter / Falloff shape", low: 1.0, high: 4.0⟧
+    ambient_r: f32 = 0.72 ⟦label: "Ambient / Red", low: 0.0, high: 1.5⟧
+    ambient_g: f32 = 0.56 ⟦label: "Ambient / Green", low: 0.0, high: 1.5⟧
+    ambient_b: f32 = 0.27 ⟦label: "Ambient / Blue", low: 0.0, high: 1.5⟧
+    ambient_strength: f32 = 1.0 ⟦label: "Ambient / Strength", low: 0.0, high: 3.0⟧
+    ambient_shape: f32 = 0.15 ⟦label: "Ambient / Surface shading", low: 0.0, high: 1.0⟧
+    surface_scale: f32 = 4.0 ⟦label: "Surface / Scale", low: 0.5, high: 12.0⟧
+    texture_scale: f32 = 18.0 ⟦label: "Surface / Texture scale", low: 2.0, high: 40.0⟧
+    texture_slope: f32 = 0.12 ⟦label: "Surface / Texture relief", low: 0.0, high: 1.0⟧
+    slope_x: f32 = 0.12 ⟦label: "Surface / Horizontal curvature", low: 0.0, high: 0.5⟧
+    slope_y: f32 = 0.12 ⟦label: "Surface / Vertical curvature", low: 0.0, high: 0.5⟧
+    wave_x: f32 = 0.09 ⟦label: "Surface / Horizontal ripple", low: 0.0, high: 0.5⟧
+    wave_y: f32 = 0.07 ⟦label: "Surface / Vertical ripple", low: 0.0, high: 0.5⟧
+    freq_x: f32 = 2.1 ⟦label: "Surface / Horizontal frequency", low: 0.1, high: 8.0⟧
+    freq_y: f32 = 1.7 ⟦label: "Surface / Vertical frequency", low: 0.1, high: 8.0⟧
+    cross_x: f32 = 0.7 ⟦label: "Surface / Horizontal crossflow", low: -3.0, high: 3.0⟧
+    cross_y: f32 = -0.6 ⟦label: "Surface / Vertical crossflow", low: -3.0, high: 3.0⟧
+    speed_x: f32 = 0.0528 ⟦label: "Motion / Horizontal speed", low: -0.2, high: 0.2⟧
+    speed_y: f32 = 0.0288 ⟦label: "Motion / Vertical speed", low: -0.2, high: 0.2⟧
+    repeat: f32 = 0.72 ⟦label: "Reflections / Spacing", low: 0.15, high: 2.0⟧
+    key_x: f32 = -0.19 ⟦label: "Main light / Horizontal position", low: -1.0, high: 1.0⟧
+    key_y: f32 = -0.13 ⟦label: "Main light / Vertical position", low: -1.0, high: 1.0⟧
+    key_width: f32 = 0.038 ⟦label: "Main light / Width", low: 0.005, high: 0.3⟧
+    key_height: f32 = 0.095 ⟦label: "Main light / Height", low: 0.005, high: 0.4⟧
+    key_soft_start: f32 = 0.65 ⟦label: "Main light / Solid core", low: 0.0, high: 1.2⟧
+    key_soft_end: f32 = 1.25 ⟦label: "Main light / Soft edge", low: 1.21, high: 3.0⟧
+    key_r: f32 = 0.34 ⟦label: "Main light / Red", low: 0.0, high: 1.0⟧
+    key_g: f32 = 0.38 ⟦label: "Main light / Green", low: 0.0, high: 1.0⟧
+    key_b: f32 = 0.3 ⟦label: "Main light / Blue", low: 0.0, high: 1.0⟧
+    spill_width: f32 = 0.38 ⟦label: "Light spill / Tightness", low: 0.05, high: 3.0⟧
+    spill_r: f32 = 0.29 ⟦label: "Light spill / Red", low: 0.0, high: 1.0⟧
+    spill_g: f32 = 0.25 ⟦label: "Light spill / Green", low: 0.0, high: 1.0⟧
+    spill_b: f32 = 0.14 ⟦label: "Light spill / Blue", low: 0.0, high: 1.0⟧
+    rim_x: f32 = 0.32 ⟦label: "Glints / Horizontal position", low: -1.0, high: 1.0⟧
+    rim_y: f32 = 0.19 ⟦label: "Glints / Vertical position", low: -1.0, high: 1.0⟧
+    rim_width: f32 = 0.025 ⟦label: "Glints / Width", low: 0.003, high: 0.2⟧
+    rim_height: f32 = 0.06 ⟦label: "Glints / Height", low: 0.003, high: 0.3⟧
+    rim_tightness: f32 = 2.5 ⟦label: "Glints / Tightness", low: 0.1, high: 10.0⟧
+    glint_r: f32 = 0.38 ⟦label: "Glints / Red", low: 0.0, high: 1.0⟧
+    glint_g: f32 = 0.45 ⟦label: "Glints / Green", low: 0.0, high: 1.0⟧
+    glint_b: f32 = 0.43 ⟦label: "Glints / Blue", low: 0.0, high: 1.0⟧
+    core_tightness: f32 = 6.0 ⟦label: "Polish / Core tightness", low: 0.1, high: 20.0⟧
+    core_strength: f32 = 0.85 ⟦label: "Polish / Main strength", low: 0.0, high: 2.0⟧
+    rim_strength: f32 = 0.9 ⟦label: "Polish / Glint strength", low: 0.0, high: 2.0⟧
+    polish_limit: f32 = 0.95 ⟦label: "Polish / Maximum strength", low: 0.0, high: 1.0⟧
+    polish_r: f32 = 1.0 ⟦label: "Polish / Red", low: 0.0, high: 1.0⟧
+    polish_g: f32 = 0.97 ⟦label: "Polish / Green", low: 0.0, high: 1.0⟧
+    polish_b: f32 = 0.82 ⟦label: "Polish / Blue", low: 0.0, high: 1.0⟧
+    strip_reach: f32 = 1.2 ⟦label: "Perimeter / Light reach", low: 0.05, high: 5.0⟧
+    strip_strength: f32 = 0.5 ⟦label: "Perimeter / Strength", low: 0.0, high: 2.0⟧
+    strip_limit: f32 = 0.55 ⟦label: "Perimeter / Maximum tint", low: 0.0, high: 1.0⟧
+    strip_dark_floor: f32 = 0.3 ⟦label: "Perimeter / Dark hue floor", low: 0.05, high: 1.0⟧
+    white_r: f32 = 0.9764705882352941 ⟦label: "Hue white / R", low: 0.0, high: 1.0⟧
+    white_g: f32 = 0.9803921568627451 ⟦label: "Hue white / G", low: 0.0, high: 1.0⟧
+    white_b: f32 = 0.9568627450980393 ⟦label: "Hue white / B", low: 0.0, high: 1.0⟧
+    blue_r: f32 = 0.054901960784313725 ⟦label: "Hue blue / R", low: 0.0, high: 1.0⟧
+    blue_g: f32 = 0.40784313725490196 ⟦label: "Hue blue / G", low: 0.0, high: 1.0⟧
+    blue_b: f32 = 0.6705882352941176 ⟦label: "Hue blue / B", low: 0.0, high: 1.0⟧
+    black_r: f32 = 0.08235294117647059 ⟦label: "Hue black / R", low: 0.0, high: 1.0⟧
+    black_g: f32 = 0.043137254901960784 ⟦label: "Hue black / G", low: 0.0, high: 1.0⟧
+    black_b: f32 = 0.0 ⟦label: "Hue black / B", low: 0.0, high: 1.0⟧
+    red_r: f32 = 0.8274509803921568 ⟦label: "Hue red / R", low: 0.0, high: 1.0⟧
+    red_g: f32 = 0.12549019607843137 ⟦label: "Hue red / G", low: 0.0, high: 1.0⟧
+    red_b: f32 = 0.16470588235294117 ⟦label: "Hue red / B", low: 0.0, high: 1.0⟧
+    green_r: f32 = 0.0 ⟦label: "Hue green / R", low: 0.0, high: 1.0⟧
+    green_g: f32 = 0.45098039215686275 ⟦label: "Hue green / G", low: 0.0, high: 1.0⟧
+    green_b: f32 = 0.24313725490196078 ⟦label: "Hue green / B", low: 0.0, high: 1.0⟧
+}
+GOLD_CONTROL_COUNT :: 68
+gold_tuning: Gold_Tuning
+gold_tuning_revision: i64
+
+Gold_Control :: struct { label: string; low: f32; high: f32; value: f32; original: f32 }
+gold_control :: (index: i64 -> result: Gold_Control) {
+    defaults: Gold_Tuning = ⟨⟩
+    #unroll for field, i: #fields_of(Gold_Tuning) {
+        if index == i then return ⟨field.notes.label, f32'field.notes.low, f32'field.notes.high, gold_tuning.$field, defaults.$field⟩
+    }
+    unreachable
+}
+set_gold_control :: (index: i64, value: f32) {
+    #unroll for field, i: #fields_of(Gold_Tuning) {
+        if index == i {
+            gold_tuning.$field = Math.clamp(value, f32'field.notes.low, f32'field.notes.high)
+            gold_tuning_revision += 1
+            return
+        }
+    }
+}
+validate_gold_tuning :: (value: *Gold_Tuning) {
+    defaults: Gold_Tuning = ⟨⟩
+    #unroll for field: #fields_of(Gold_Tuning) {
+        if !(value.$field >= f32'field.notes.low and value.$field <= f32'field.notes.high) then value.$field = defaults.$field
+    }
+}
+save_gold_tuning :: (path: string -> bool) {
+    with scratch.rewind()
+    text := `scratch Json.to_json(gold_tuning, 2)
+    temporary := `scratch "«path».tmp"
+    if File.write_file(temporary, text) is { case absent, os_error: return false }
+    if File.rename_file(temporary, path) is { case absent, os_error: return false }
+    return true
+}
+load_gold_tuning :: (path: string -> bool) {
+    with scratch.rewind()
+    `scratch {
+        if text := File.read_file(path) {
+            if parsed := Json.parse_json(text, Gold_Tuning) {
+                gold_tuning = parsed
+                validate_gold_tuning(gold_tuning)
+                return true
+            }
+            else if bad_json { echo("Background tuning JSON: «bad_json.why»") }
+            else if mismatch { echo("Background tuning JSON: «mismatch»") }
+        }
+        else if absent { return save_gold_tuning(path) }
+        else if os_error { echo("Cannot read background tuning: «os_error»") }
+        return false
+    }
+}
+
+Gold_Tuner :: struct {
+    font: Draw.Font
+    made: bool
+    open: bool
+    ui_scale: f32 = 1
+    origin: V2
+    size: V2
+    scroll: i64
+    selected: i64
+    dragging: i64 = -1
+    scrolling: bool
+    scroll_grab: f32
+    placed: bool
+    moving: bool
+    resizing: bool
+    resize_edges: V2
+    grab_mouse: V2
+    grab_origin: V2
+    grab_size: V2
+    saved: bool = true
+}
+open_gold_tuner :: (tuner: *Gold_Tuner, w: ^Window) [failed: string] {
+    scale := Math.max(w.scale, 1)
+    if !tuner.made or tuner.ui_scale != scale {
+        if tuner.made then tuner.font.destroy()
+        tuner.made = false
+        if font := Draw.load_font(TEXT_FAMILY, i32'(21 * scale), 500) { tuner.font = font }
+        else if os_error { fail: failed = "can't load background control font: «os_error»" }
+        tuner.ui_scale = scale
+        tuner.made = true
+    }
+    tuner.dragging = -1
+    tuner.scrolling = false
+    tuner.moving = false
+    tuner.resizing = false
+    tuner.open = true
+}
+close_gold_tuner :: (tuner: *Gold_Tuner) {
+    if tuner.made then tuner.font.destroy()
+    tuner.made = false
+    tuner.open = false
+}
+tuner_rows :: (height: f32 -> i64) #pure {
+    return Math.max(i64'((height - 170) / 50), 1)
+}
+tuner_thumb :: (height: f32, rows: i64, scroll: i64 -> top: f32, size: f32) #pure {
+    track := f32'rows * 50
+    size = Math.min(track, Math.max(32, track * f32'rows / f32'GOLD_CONTROL_COUNT))
+    last := Math.max(GOLD_CONTROL_COUNT - rows, 1)
+    top = 90 + (track - size) * f32'scroll / f32'last
+}
+
+fit_gold_tuner :: (tuner: *Gold_Tuner, screen_size: V2) {
+    available := Math.max(screen_size - V2⟨24, 24⟩, V2⟨1, 1⟩)
+    minimum := Math.min(V2⟨600, 270⟩, available)
+    if !tuner.placed {
+        tuner.size = ⟨Math.min(760, available.x), Math.max(minimum.y, available.y * 0.5)⟩
+        tuner.origin = ⟨screen_size.x - tuner.size.x - 12, 12⟩
+        tuner.placed = true
+    }
+    tuner.size = Math.clamp(tuner.size, minimum, available)
+    tuner.origin = Math.clamp(tuner.origin, V2⟨12, 12⟩, Math.max(V2⟨12, 12⟩, screen_size - tuner.size - V2⟨12, 12⟩))
+}
+drag_gold_tuner :: (tuner: *Gold_Tuner, screen_size: V2, mouse: V2) {
+    delta := mouse - tuner.grab_mouse
+    if tuner.moving {
+        tuner.origin = tuner.grab_origin + delta
+    }
+    else if tuner.resizing {
+        far := tuner.grab_origin + tuner.grab_size
+        minimum := Math.min(V2⟨600, 270⟩, Math.max(screen_size - V2⟨24, 24⟩, V2⟨1, 1⟩))
+        if tuner.resize_edges.x < 0 {
+            tuner.origin.x = Math.clamp(tuner.grab_origin.x + delta.x, 12, far.x - minimum.x)
+            tuner.size.x = far.x - tuner.origin.x
+        }
+        else if tuner.resize_edges.x > 0 {
+            tuner.size.x = Math.clamp(tuner.grab_size.x + delta.x, minimum.x, screen_size.x - tuner.origin.x - 12)
+        }
+        if tuner.resize_edges.y < 0 {
+            tuner.origin.y = Math.clamp(tuner.grab_origin.y + delta.y, 12, far.y - minimum.y)
+            tuner.size.y = far.y - tuner.origin.y
+        }
+        else if tuner.resize_edges.y > 0 {
+            tuner.size.y = Math.clamp(tuner.grab_size.y + delta.y, minimum.y, screen_size.y - tuner.origin.y - 12)
+        }
+    }
+    fit_gold_tuner(tuner, screen_size)
+}
+
+step_gold_tuner :: (tuner: *Gold_Tuner, w: ^Window, path: string -> captured: bool) {
+    if !tuner.open then return false
+    scale := tuner.ui_scale
+    screen_size := V2⟨f32'w.size[0], f32'w.size[1]⟩ / scale
+    fit_gold_tuner(tuner, screen_size)
+    pointer := V2⟨f32'w.mouse.position[0], f32'w.mouse.position[1]⟩ / scale
+    if tuner.moving or tuner.resizing {
+        drag_gold_tuner(tuner, screen_size, pointer)
+        if !w.mouse.buttons[.LEFT].HELD {
+            tuner.moving = false
+            tuner.resizing = false
+        }
+        tuner.scroll = Math.clamp(tuner.scroll, 0, Math.max(GOLD_CONTROL_COUNT - tuner_rows(tuner.size.y), 0))
+        return true
+    }
+    width := tuner.size.x
+    height := tuner.size.y
+    rows := tuner_rows(height)
+    last_scroll := Math.max(GOLD_CONTROL_COUNT - rows, 0)
+    mouse := pointer - tuner.origin
+    in_panel := mouse.x >= 0 and mouse.x <= width and mouse.y >= 0 and mouse.y <= height
+    near_panel := mouse.x >= -6 and mouse.x <= width + 6 and mouse.y >= -6 and mouse.y <= height + 6
+    captured = near_panel or tuner.dragging >= 0 or tuner.scrolling
+    if near_panel and w.mouse.buttons[.LEFT].PRESSED {
+        edge_x: f32 = if mouse.x <= 6 then -1 else if mouse.x >= width - 6 then 1 else 0
+        edge_y: f32 = if mouse.y <= 6 then -1 else if mouse.y >= height - 6 then 1 else 0
+        tuner.resizing = edge_x != 0 or edge_y != 0
+        tuner.moving = !tuner.resizing and mouse.y < 38 and mouse.x < width - 42
+        if tuner.moving or tuner.resizing {
+            tuner.resize_edges = ⟨edge_x, edge_y⟩
+            tuner.grab_mouse = pointer
+            tuner.grab_origin = tuner.origin
+            tuner.grab_size = tuner.size
+            return true
+        }
+    }
+    if in_panel and w.mouse.wheel != 0 then tuner.scroll = Math.clamp(tuner.scroll - i64'(w.mouse.wheel * 3), 0, last_scroll)
+    tuner.scroll = Math.clamp(tuner.scroll, 0, last_scroll)
+    left := Math.min(330.0, width * 0.48)
+    right := Math.max(left + 30, width - 108)
+    *changed := false
+    if w.mouse.buttons[.LEFT].PRESSED and in_panel {
+        if mouse.x >= width - 42 and mouse.y < 38 {
+            tuner.open = false
+            tuner.dragging = -1
+            tuner.scrolling = false
+            return true
+        }
+        if mouse.x >= width - 28 and mouse.y >= 90 and mouse.y < 90 + f32'rows * 50 {
+            top, thumb := tuner_thumb(height, rows, tuner.scroll)
+            tuner.scrolling = true
+            tuner.scroll_grab = if mouse.y >= top and mouse.y <= top + thumb then mouse.y - top else thumb / 2
+        }
+        else if mouse.y >= 90 and mouse.y < 90 + f32'rows * 50 {
+            index := tuner.scroll + i64'((mouse.y - 90) / 50)
+            if index < GOLD_CONTROL_COUNT {
+                tuner.selected = index
+                if mouse.x >= left - 10 and mouse.x <= right + 10 then tuner.dragging = index
+            }
+        }
+        if mouse.y >= 43 and mouse.y < 77 {
+            if mouse.x >= 20 and mouse.x < 170 {
+                c := gold_control(tuner.selected)
+                set_gold_control(tuner.selected, c.original)
+                changed = true
+            }
+            else if mouse.x >= 185 and mouse.x < 335 {
+                gold_tuning = ⟨⟩
+                gold_tuning_revision += 1
+                changed = true
+            }
+            else if mouse.x >= width - 192 and mouse.x <= width - 42 {
+                tuner.saved = save_gold_tuning(path)
+            }
+        }
+    }
+    if tuner.scrolling {
+        _, thumb := tuner_thumb(height, rows, tuner.scroll)
+        travel := Math.max(f32'rows * 50 - thumb, 1)
+        tuner.scroll = i64'Math.round(Math.clamp((mouse.y - 90 - tuner.scroll_grab) / travel, 0, 1) * f32'last_scroll)
+        if !w.mouse.buttons[.LEFT].HELD then tuner.scrolling = false
+    }
+    if tuner.dragging >= 0 {
+        c := gold_control(tuner.dragging)
+        value := c.low + Math.clamp((mouse.x - left) / (right - left), 0, 1) * (c.high - c.low)
+        if value != c.value { set_gold_control(tuner.dragging, value); changed = true }
+        if !w.mouse.buttons[.LEFT].HELD then tuner.dragging = -1
+    }
+    if w.keys[.UP].PRESSED then tuner.selected = Math.max(tuner.selected - 1, 0)
+    if w.keys[.DOWN].PRESSED then tuner.selected = Math.min(tuner.selected + 1, GOLD_CONTROL_COUNT - 1)
+    if w.keys[.LEFT].PRESSED or w.keys[.RIGHT].PRESSED {
+        c := gold_control(tuner.selected)
+        direction: f32 = if w.keys[.RIGHT].PRESSED then 1 else -1
+        step: f32 = if w.modifiers.SHIFT then 0.001 else 0.01
+        set_gold_control(tuner.selected, c.value + (c.high - c.low) * direction * step)
+        changed = true
+    }
+    if w.keys[.UP].PRESSED or w.keys[.DOWN].PRESSED {
+        tuner.scroll = Math.clamp(tuner.scroll, Math.max(0, tuner.selected - rows + 1), tuner.selected)
+    }
+    if changed then tuner.saved = save_gold_tuning(path)
+}
+draw_gold_tuner :: (canvas: *Draw.Canvas, tuner: Gold_Tuner) {
+    if !tuner.open or !tuner.made then return
+    width := tuner.size.x
+    height := tuner.size.y
+    rows := tuner_rows(height)
+    left := Math.min(330.0, width * 0.48)
+    right := Math.max(left + 30, width - 108)
+    tuning_rect(canvas, tuner, ⟨-4, -4⟩, tuner.size + V2⟨8, 8⟩, Draw.rgba(0x000000, 0.55))
+    tuning_rect(canvas, tuner, ⟨0, 0⟩, tuner.size, Draw.rgb(0x171B20))
+    tuning_rect(canvas, tuner, ⟨6, 6⟩, ⟨width - 12, 30⟩, Draw.rgb(0x29313A))
+    tuning_text(canvas, tuner, ⟨20, 29⟩, "Multicolour background", Draw.rgb(0xF1E7CE))
+    tuning_text(canvas, tuner, ⟨width - 34, 29⟩, "×", Draw.rgb(0xF1E7CE))
+    for label, i: [3] string⟨"Reset selected", "Reset all", "Save / retry"⟩ {
+        x := if i == 2 then width - 192 else 20 + f32'i * 165
+        tuning_rect(canvas, tuner, ⟨x, 43⟩, ⟨150, 34⟩, Draw.rgb(0x303A43))
+        tuning_text(canvas, tuner, ⟨x + 10, 67⟩, label, Draw.rgb(0xE2E7E9))
+    }
+    for row: 0 < rows {
+        index := tuner.scroll + row
+        if index >= GOLD_CONTROL_COUNT then break
+        c := gold_control(index)
+        y := 90 + f32'row * 50
+        if index == tuner.selected then tuning_rect(canvas, tuner, ⟨10, y⟩, ⟨width - 44, 48⟩, Draw.rgb(0x29313A))
+        tuning_text(canvas, tuner, ⟨20, y + 29⟩, c.label, Draw.rgb(0xE1DFD7))
+        fraction := (c.value - c.low) / (c.high - c.low)
+        tuning_rect(canvas, tuner, ⟨left, y + 23⟩, ⟨right - left, 5⟩, Draw.rgb(0x45515D))
+        tuning_rect(canvas, tuner, ⟨left, y + 23⟩, ⟨(right - left) * fraction, 5⟩, Draw.rgb(0xD5AD57))
+        canvas.fill_circle((tuner.origin + V2⟨left + fraction * (right - left), y + 25⟩) * tuner.ui_scale, 7 * tuner.ui_scale, Draw.rgb(0xF6D48C))
+        tuning_text(canvas, tuner, ⟨right + 12, y + 29⟩, `scratch "«c.value, ⟨precision: 3⟩»", Draw.rgb(0xF2DDAA))
+    }
+    top, thumb := tuner_thumb(height, rows, tuner.scroll)
+    tuning_rect(canvas, tuner, ⟨width - 25, 90⟩, ⟨15, f32'rows * 50⟩, Draw.rgb(0x303A43))
+    tuning_rect(canvas, tuner, ⟨width - 25, top⟩, ⟨15, thumb⟩, Draw.rgb(0xB9A16F))
+    for i: 0 < 3 {
+        tuning_rect(canvas, tuner, ⟨width - 8 - f32'i * 5, height - 8⟩, ⟨3, 3⟩, Draw.rgb(0xD5AD57))
+        tuning_rect(canvas, tuner, ⟨width - 8, height - 8 - f32'i * 5⟩, ⟨3, 3⟩, Draw.rgb(0xD5AD57))
+    }
+    status := if tuner.saved then "Saved automatically" else "NOT SAVED — Save / retry"
+    status_colour := if tuner.saved then Draw.rgb(0x9ED3AD) else Draw.rgb(0xFF9C87)
+    tuning_text(canvas, tuner, ⟨20, height - 46⟩, `scratch "«status»  ·  «tuner.scroll + 1»–«Math.min(tuner.scroll + rows, GOLD_CONTROL_COUNT)» / «GOLD_CONTROL_COUNT»", status_colour)
+    tuning_text(canvas, tuner, ⟨20, height - 18⟩, "Wheel / scrollbar  ·  Arrows: adjust  ·  Shift: fine  ·  F8: close", Draw.rgb(0xAAB5BE))
+}
+tuning_text :: (canvas: *Draw.Canvas, tuner: Gold_Tuner, at: V2, text: string, colour: Draw.RGBA) {
+    canvas.draw_text(tuner.font, (tuner.origin + at) * tuner.ui_scale, text, colour)
+}
+tuning_rect :: (canvas: *Draw.Canvas, tuner: Gold_Tuner, at: V2, size: V2, colour: Draw.RGBA) {
+    canvas.fill_rect((tuner.origin + at) * tuner.ui_scale, size * tuner.ui_scale, colour)
+}
+
+gold_hue :: (mana: Mana -> Draw.RGBA) {
+    return if mana is {
+    case .WHITE: ⟨gold_tuning.white_r, gold_tuning.white_g, gold_tuning.white_b, 1⟩
+    case .BLUE: ⟨gold_tuning.blue_r, gold_tuning.blue_g, gold_tuning.blue_b, 1⟩
+    case .BLACK: ⟨gold_tuning.black_r, gold_tuning.black_g, gold_tuning.black_b, 1⟩
+    case .RED: ⟨gold_tuning.red_r, gold_tuning.red_g, gold_tuning.red_b, 1⟩
+    case .GREEN: ⟨gold_tuning.green_r, gold_tuning.green_g, gold_tuning.green_b, 1⟩
+    }
+}
+

@@ -44,30 +44,72 @@ seat_of :: (identity: [MAX_PLAYERS] Identity, count: i64, name: Identity -> i64)
     return -1
 }
 
-// Each seat's colours carried from a count's lines (more) to one fewer's
-// (fewer), as the lines' morph takes the seats: the seat going (its index
-// among more's) is the one whose two lines meet in one, and each other's
-// colours go to the seat it becomes.
-carried_down :: (identity: [MAX_PLAYERS] Identity, fewer: Splits, more: Splits, going: i64 -> carried: [MAX_PLAYERS] Identity) #pure {
+// Every one of the six players is kept, at the table or not: a game of n
+// players has them at its places 0 to n - 1, a seat each, and those who've
+// left at the places from n up, the last to leave first. A count's change
+// moves them, as an order: order[k] is the place, before, of the player at
+// k after.
+Seating :: [MAX_PLAYERS] i64
+SEATED_AS_THEY_ARE :: Seating⟨0, 1, 2, 3, 4, 5⟩
+
+// The players moved from a count's lines (more) to one fewer's (fewer), as
+// the lines' morph takes the seats: the seat going (its index among more's)
+// is the one whose two lines meet in one, its player leaving to the first
+// place off the table; each other seat's going to the seat it becomes.
+seated_down :: (order: Seating, fewer: Splits, more: Splits, going: i64 -> next: Seating) #pure {
     doubled, turn := morph_choice(fewer, more, going)
     m := more.count
-    carried = ⟨⟩
+    next = order
     for i: 0 < m {
-        if i != doubled then carried[source_of(i, doubled)] = identity[(i + turn) % m]
+        if i != doubled then next[source_of(i, doubled)] = order[(i + turn) % m]
     }
+    next[m - 1] = order[(doubled + turn) % m]
 }
 
 // ...and from a count's lines (fewer) up to one more's (more): the seat
-// that's new (coming, its index among more's) given added, each other's
-// colours going to the seat it becomes.
-carried_up :: (identity: [MAX_PLAYERS] Identity, fewer: Splits, more: Splits, coming: i64, added: Identity -> carried: [MAX_PLAYERS] Identity) #pure {
+// that's new (coming, its index among more's) the last player to leave,
+// back as they were; each other seat's going to the seat it becomes.
+seated_up :: (order: Seating, fewer: Splits, more: Splits, coming: i64 -> next: Seating) #pure {
     doubled, turn := morph_choice(fewer, more, coming)
     m := more.count
-    carried = ⟨⟩
+    next = order
     for i: 0 < m {
-        if i != doubled then carried[(i + turn) % m] = identity[source_of(i, doubled)]
+        if i != doubled then next[(i + turn) % m] = order[source_of(i, doubled)]
     }
-    carried[coming] = added
+    next[(doubled + turn) % m] = order[m - 1]
+}
+
+// Each seat's colours carried from a count's lines (more) to one fewer's
+// (fewer), as seated_down moves the players.
+carried_down :: (identity: [MAX_PLAYERS] Identity, fewer: Splits, more: Splits, going: i64 -> carried: [MAX_PLAYERS] Identity) #pure {
+    order := seated_down(SEATED_AS_THEY_ARE, fewer, more, going)
+    carried = ⟨⟩
+    for k: 0 < MAX_PLAYERS { carried[k] = identity[order[k]] }
+}
+
+// A game with its players moved as an order says (each one's life, colours,
+// and the damage each commander has done to each player), of a count.
+reseated :: (game: Game, order: Seating, players: i64 -> moved: Game) #pure {
+    moved = ⟨players: players⟩
+    for k: 0 < MAX_PLAYERS {
+        moved.life[k] = game.life[order[k]]
+        moved.identity[k] = game.identity[order[k]]
+        for j: 0 < MAX_PLAYERS { moved.commander[k][j] = game.commander[order[k]][order[j]] }
+    }
+}
+
+// The players who've left the table forgotten: each place off it a player
+// at the starting life, with no damage done or taken, and the colours a
+// reset gives that slot (colours's own places off the table).
+forget_the_absent :: (game: *Game, colours: [MAX_PLAYERS] Identity) {
+    for k: game.players < MAX_PLAYERS {
+        game.life[k] = STARTING_LIFE
+        game.identity[k] = colours[k]
+        for j: 0 < MAX_PLAYERS {
+            game.commander[k][j] = 0
+            game.commander[j][k] = 0
+        }
+    }
 }
 
 // The colours the settings' Reset gives, seat by seat, for a count of
@@ -77,8 +119,8 @@ carried_up :: (identity: [MAX_PLAYERS] Identity, fewer: Splits, more: Splits, co
 // one facing nearest straight up (of two as near, the one right of the top).
 // Fewer are six's with slots taken away as GOING says, the rest carried as
 // the lines' morph takes them (so the seat that goes is the one that's seen
-// to go).
-starting_colours :: (size: V2, players: i64 -> identity: [MAX_PLAYERS] Identity) #pure {
+// to go), and those off the table, as each left, their slots' names.
+starting_colours ::(size: V2, players: i64 -> identity: [MAX_PLAYERS] Identity) #pure {
     // (within a step and a half of facing counts as as near: facings are
     // rounded to steps, so two places mirrored about the top may differ by one)
     six := lay_out(size, equal_splits(MAX_PLAYERS, size))
