@@ -481,6 +481,34 @@ miasmas_stay_home :: () #test {
     assert(each[0] > 20 and each[1] > 20 and each[3] > 20 and each[2] == 0, "a miasma each but the one out's: «each»")
 }
 
+// Each colour's miasma keeps about its own number of motes alive, however
+// long its motes live; in a mix, each colour keeps about its share, so a
+// long-lived one doesn't bury a quick one.
+miasmas_are_balanced :: () #test {
+    layout := laid_out(2, LANDSCAPE)
+    for which: 0 < 6 {
+        *game := new_game(2)
+        game.identity[0] = if which < 5 then u8'1 << u8'which else 0
+        motes := settled_motes(layout, game)
+        *alive: f32 = 0
+        for m: motes.motes { if m.tag & MIASMA_MOTE != 0 and m.tag & 0xFF == 0 then alive += 1 }
+        want := STYLES[which].alive
+        assert(alive > want * 0.6 and alive < want * 1.4, "style «which» alone: «alive» alive, not about «want»")
+    }
+    // White and black, red and black: each about its share.
+    for pair: [2] [2] i64⟨⟨0, 2⟩, ⟨3, 2⟩⟩ {
+        *game := new_game(2)
+        game.identity[0] = (u8'1 << u8'pair[0]) | (u8'1 << u8'pair[1])
+        motes := settled_motes(layout, game)
+        *each: [6] f32
+        for m: motes.motes { if m.tag & MIASMA_MOTE != 0 and m.tag & 0xFF == 0 then each[i64'((m.tag >> 8) & 0xFF)] += 1 }
+        for which: pair {
+            want := STYLES[which].alive / 2
+            assert(each[which] > want * 0.55 and each[which] < want * 1.45, "«pair»: style «which» «each[which]» alive, not about «want»")
+        }
+    }
+}
+
 // A turn there and back is where it began.
 frames_turn_back :: () #test {
     for angle: [4] f32⟨0, f32'Math.PI / 2, f32'Math.PI, -f32'Math.PI / 2⟩ {

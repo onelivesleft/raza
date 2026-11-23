@@ -48,6 +48,11 @@ throws**, in place of an icon and an arrow.
 - **The miasma.** Each player who isn't out has a swirling cloud of motes at
   their damage spot, in a mix of their identity's colours (an artifact's
   with none). It always swirls, whatever Motion says: it's what you touch.
+- **Every colour equally present.** Each colour's miasma keeps about its own
+  number of motes alive (many tiny sparks, a few big smoke wisps), however
+  long its motes live; in a mix, each colour keeps an equal share, so no
+  colour buries another. Motes are born evenly over the miasma, not bunched
+  at its middle.
 - **Each colour its own character:**
   - white: holy light, soft halos rising among small bright sparkles;
   - blue: water, drops falling and streaking, eddying;
@@ -64,7 +69,8 @@ throws**, in place of an icon and an arrow.
 - **The volley, on release.** One mote per point of damage, fired a little
   apart (faster for big numbers from the grid), flying along the stream's
   curve as it was when let go (with a little spread), each landing at the
-  life total with a splash.
+  life total with a splash. Each keeps its own material (black stays dark
+  smoke) with a soft halo of its colour behind it, so it can be followed.
 - **The life ticks down as they land.** The game itself changes at release
   (so undo is simple); what's shown counts down as they land (several at
   once, for a big volley in one frame). A volley is settled when it has no
