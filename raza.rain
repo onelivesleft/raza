@@ -403,7 +403,7 @@ picker_part_at :: (layout: Layout, picker: Picker, at: V2 -> Picker_Part) #pure 
 // The icons that aren't Magic's own: Material Design Icons' (the Icons
 // module's), each copied into icons/ by its tool.
 UNDO_ICON   :: icon(Mdi.UNDO)
-RESET_ICON  :: icon(Mdi.RESTORE)
+RESTART_ICON :: icon(Mdi.RESTORE)
 SYSTEM_ICON :: icon(Mdi.MENU)
 PERSON_ICON :: icon(Mdi.ACCOUNT)
 TICK_ICON   :: icon(Mdi.CHECK)
@@ -417,17 +417,17 @@ draw_icon_at :: (canvas: *Draw.Canvas, drawn: Icons.Icon, middle: V2, size: f32,
 Capsule_Part :: enum u8 {
     UNDO
     PLAYERS
-    RESET
+    RESTART
     SYSTEM
 }
 
-CAPSULE_PARTS :: [4] Capsule_Part⟨.UNDO, .PLAYERS, .RESET, .SYSTEM⟩
+CAPSULE_PARTS :: [4] Capsule_Part⟨.UNDO, .PLAYERS, .RESTART, .SYSTEM⟩
 
 // The capsule's buttons' middles, in a row at the screen's centre, a cell
 // apart and a cell each: undo, the players, a new game, the system's
 // (settings and quitting).
 capsule_centre :: (layout: Layout, part: Capsule_Part -> V2) #pure {
-    offset: f32 = if part is { case .UNDO: -1.8; case .PLAYERS: -0.6; case .RESET: 0.6; case .SYSTEM: 1.8 }
+    offset: f32 = if part is { case .UNDO: -1.8; case .PLAYERS: -0.6; case .RESTART: 0.6; case .SYSTEM: 1.8 }
     return layout.centre + V2⟨offset * cell_of(layout), 0⟩
 }
 
@@ -726,7 +726,7 @@ draw_capsule :: (canvas: *Draw.Canvas, layout: Layout, game: Game, screen: Scree
     // (bright while its panel's open).
     undo_ink := if screen.can_undo then INK else lighter(CAPSULE, 0.25)
     draw_icon_at(canvas, UNDO_ICON, capsule_centre(layout, .UNDO), 0.62 * cell, undo_ink)
-    draw_icon_at(canvas, RESET_ICON, capsule_centre(layout, .RESET), 0.62 * cell, lighter(CAPSULE, 0.75))
+    draw_icon_at(canvas, RESTART_ICON, capsule_centre(layout, .RESTART), 0.62 * cell, lighter(CAPSULE, 0.75))
     system_ink := if screen.settings_open then INK else lighter(CAPSULE, 0.75)
     draw_icon_at(canvas, SYSTEM_ICON, capsule_centre(layout, .SYSTEM), 0.62 * cell, system_ink)
 }
@@ -810,14 +810,14 @@ QUIT_HIGH :: V2⟨BUTTONS_RIGHT, TITLE_Y + 0.4⟩
 QUIT_RED  :: Draw.rgb(0x8A3030)
 
 // The Reset button, the last row: every count's lines back where they
-// start (equal_splits').
+// start (equal_splits'), and each seat its starting colours.
 RESET_LOW  :: V2⟨BUTTONS_LEFT, LINES_Y - 0.5⟩
 RESET_HIGH :: V2⟨BUTTONS_RIGHT, LINES_Y + 0.5⟩
 
 Settings_Part :: union {
     era: Era
     motion: Motion
-    reset_lines
+    reset
     quit
     panel
     outside
@@ -831,7 +831,7 @@ settings_part_at :: (layout: Layout, p: V2 -> Settings_Part) #pure {
     local := (p - layout.centre) / cell_of(layout)
     if Math.abs(local.x) > SETTINGS_HALF.x or Math.abs(local.y) > SETTINGS_HALF.y then return Settings_Part.outside
     if in_box(local, QUIT_LOW, QUIT_HIGH) then return Settings_Part.quit
-    if in_box(local, RESET_LOW, RESET_HIGH) then return Settings_Part.reset_lines
+    if in_box(local, RESET_LOW, RESET_HIGH) then return Settings_Part.reset
     for era: [3] Era⟨.ORIGINAL, .MODERN, .M15⟩ {
         low, high := era_button(era)
         if in_box(local, low, high) then return Settings_Part.era(era)
@@ -1138,15 +1138,17 @@ main :: (args: [] string) [failed: string] {
                 if setting is {
                 case era: frames = era
                 case motion: speed = motion
-                case reset_lines:
+                case reset:
                     // Every count's lines forgotten, here and stored: a count
                     // whose lines don't fit is laid out as equal_splits starts it.
+                    // Then each seat its starting colours.
                     for n: 2 <= MAX_PLAYERS {
                         splits[n] = ⟨⟩
                         if Defaults.remove(`scratch "splits.«n»") is { case absent, os_error: _ }
                     }
                     splits[game.players] = equal_splits(game.players, size)
                     layout = lay_out(size, splits[game.players])
+                    game.identity = starting_colours(layout)
                 case quit:
                     // (what's changed is already stored, each frame's as it's made)
                     w.destroy()
@@ -1166,12 +1168,12 @@ main :: (args: [] string) [failed: string] {
                     count := f32'game.players
                     screen.counts = ⟨open: true, held: true, grabbed: mouse.y, from: count, shown: count, laid: screen.counts.laid,
                                      toward: screen.counts.toward, progress: screen.counts.progress⟩
-                case .RESET:
-                    // A new game of as many players: every life back to the
-                    // start's, no damage, each seat its starting colours
-                    // (undo brings the old one back).
+                case .RESTART:
+                    // A new game of as many players, each seat's colours kept:
+                    // every life back to the start's, no damage (undo brings
+                    // the old one back).
                     history.add(game)
-                    game = new_game(game.players, starting_colours(lay_out(size, splits[game.players])))
+                    game = new_game(game.players, game.identity)
                     call_off_volleys(motes, volleys, pending)
                 case .SYSTEM:
                     screen.settings_open = true

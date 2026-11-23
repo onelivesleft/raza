@@ -25,7 +25,7 @@ mono :: (colour: Mana -> Identity) #pure {
     return u8'1 << u8'colour
 }
 
-// The colours a reset gives, from the top seat round clockwise: white, blue,
+// The colours the settings' Reset gives, from the top seat round clockwise: white, blue,
 // green, black, red and an artifact deck (no colours) for six; five drop the
 // artifact, four white, three black, and two green. The top seat is the one
 // facing nearest straight up (of two as near, the one right of the top).
