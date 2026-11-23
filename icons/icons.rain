@@ -1,7 +1,7 @@
 // The icons raza.rain draws, from Iconify's sets (iconify/icon-sets
 // 2.2.560), written by
 //
-//     rain -run tools/icons/icons.rain update C:\repos\raza\raza.rain
+//     rain -run tools/icons/icons.rain update C:/repos/raza/raza.rain
 //
 // Run it again after naming another icon (one not copied here yet is an
 // error that says so). Don't edit this file.
@@ -13829,22 +13829,22 @@ Mdi :: enum #partial {
 MDI_ACCOUNT :: #data "mdi/account.svg"
 MDI_CHECK :: #data "mdi/check.svg"
 MDI_CLOSE :: #data "mdi/close.svg"
-MDI_MENU :: #data "mdi/menu.svg"
+MDI_POWER :: #data "mdi/power.svg"
 MDI_REDO :: #data "mdi/redo.svg"
 MDI_RESTORE :: #data "mdi/restore.svg"
 MDI_UNDO :: #data "mdi/undo.svg"
 
 // Each icon's SVG, in the order icon(...) numbers them.
-SVGS :: [] string⟨string'MDI_ACCOUNT[:], string'MDI_CHECK[:], string'MDI_CLOSE[:], string'MDI_MENU[:], string'MDI_REDO[:], string'MDI_RESTORE[:], string'MDI_UNDO[:]⟩
+SVGS :: [] string⟨string'MDI_ACCOUNT[:], string'MDI_CHECK[:], string'MDI_CLOSE[:], string'MDI_POWER[:], string'MDI_REDO[:], string'MDI_RESTORE[:], string'MDI_UNDO[:]⟩
 
 // The icon of Mdi's of that name, to draw (HOME :: icon(Mdi.HOME)).
 icon :: ($name: Mdi -> Icons.Icon) {
-    #assert(name == .ACCOUNT or name == .CHECK or name == .CLOSE or name == .MENU or name == .REDO or name == .RESTORE or name == .UNDO, "this icon of Mdi's isn't in icons/ yet: run rain -run tools/icons/icons.rain update C:\\repos\\raza\\raza.rain, which copies each icon the program names")
+    #assert(name == .ACCOUNT or name == .CHECK or name == .CLOSE or name == .POWER or name == .REDO or name == .RESTORE or name == .UNDO, "this icon of Mdi's isn't in icons/ yet: run rain -run tools/icons/icons.rain update C:/repos/raza/raza.rain, which copies each icon the program names")
     return if name is {
         case .ACCOUNT: ⟨0⟩
         case .CHECK: ⟨1⟩
         case .CLOSE: ⟨2⟩
-        case .MENU: ⟨3⟩
+        case .POWER: ⟨3⟩
         case .REDO: ⟨4⟩
         case .RESTORE: ⟨5⟩
         case .UNDO: ⟨6⟩

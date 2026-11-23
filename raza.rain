@@ -441,7 +441,7 @@ picker_part_at :: (layout: Layout, picker: Picker, at: V2 -> Picker_Part) #pure 
 UNDO_ICON   :: icon(Mdi.UNDO)
 REDO_ICON   :: icon(Mdi.REDO)
 RESTART_ICON :: icon(Mdi.RESTORE)
-SYSTEM_ICON :: icon(Mdi.MENU)
+SYSTEM_ICON :: icon(Mdi.POWER)
 PERSON_ICON :: icon(Mdi.ACCOUNT)
 TICK_ICON   :: icon(Mdi.CHECK)
 CROSS_ICON  :: icon(Mdi.CLOSE)
