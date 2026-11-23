@@ -52,6 +52,10 @@ throws**, in place of an icon and an arrow.
 - **The miasma.** Each player who isn't out has a swirling cloud of motes at
   their damage spot, in a mix of their identity's colours (an artifact's
   with none). It always swirls, whatever Motion says: it's what you touch.
+- **Shaped, not just dots.** Blue's motes are drops (a head forward, a
+  tail behind), green's leaves (pointed, creased, tumbling), black's wisps
+  (edges broken like smoke), red's and the artifact's sparks (a sharp
+  point in a faint glow), white's sparkles sparks among soft halos.
 - **Every colour equally present.** Each colour's miasma keeps about its own
   number of motes alive (many tiny sparks, a few big smoke wisps), however
   long its motes live; in a mix, each colour keeps an equal share, so no
