@@ -170,7 +170,10 @@ part_shade :: (from: Draw.Quad_Between, part: Shader.Uniforms(Part_Params) -> co
     surface := part.toward.w
     local_y := d.y * Math.cos(angle) - d.x * Math.sin(angle)
     *rgb := base
-    if surface > 1.5 {
+    if surface > 2.5 {
+        rgb = forest_at(V2⟨local_x, local_y⟩, base, part.look.y, part.look.w, part.more.x)
+    }
+    else if surface > 1.5 {
         rgb = rust_at(V2⟨local_x, local_y⟩, base, part.look.y, part.look.w)
     }
     else if surface > 0.5 {
@@ -257,6 +260,87 @@ rust_at :: (at: V2, base: V3, scale: f32, seed: f32 -> V3) {
     return rgb * (1 - 0.5 * pit)
 }
 
+// A layer of fallen leaves at q (in leaves' cells): in each cell a leaf about
+// a point scattered in it, turned its own way, pointed at both ends with a
+// vein down it, its colour one of a forest's (green, olive, brown, yellow,
+// dark); of the cells about q, the leaf on top (each cell's place in the
+// pile its own). Its colour, and how much it covers.
+leaf_layer :: (q: V2, seed: f32 -> rgb: V3, cover: f32) {
+    cell := Math.floor(q)
+    f := q - cell
+    *top: f32 = -1
+    rgb = V3⟨0, 0, 0⟩
+    cover = 0
+    for oy: -1 <= 1 {
+        for ox: -1 <= 1 {
+            o := V2⟨f32'ox, f32'oy⟩
+            id := cell + o + V2⟨seed * 7.1, seed * 3.3⟩
+            centre := o + Patterns.hash2(id)
+            turn := Patterns.hash(id * 1.7 + V2⟨2.1, 0.3⟩) * f32'Math.TAU
+            rel := f - centre
+            along := rel.x * Math.cos(turn) + rel.y * Math.sin(turn)
+            across := rel.y * Math.cos(turn) - rel.x * Math.sin(turn)
+            long := 0.5 + 0.3 * Patterns.hash(id + V2⟨9.7, 4.1⟩)
+            wide := long * 0.38 * Math.max(1 - (along / long) * (along / long), 0)
+            m := Math.clamp((wide - Math.abs(across)) * 40, 0, 1) * Math.step(Math.abs(along), long)
+            order := Patterns.hash(id + V2⟨1.3, 8.8⟩)
+            if m > 0.01 and order > top {
+                top = order
+                pick := Patterns.hash(id + V2⟨5.5, 2.2⟩)
+                *leaf := V3⟨0.36, 0.42, 0.16⟩
+                if pick > 0.8 then leaf = V3⟨0.62, 0.5, 0.18⟩
+                else if pick > 0.6 then leaf = V3⟨0.45, 0.3, 0.13⟩
+                else if pick > 0.4 then leaf = V3⟨0.46, 0.44, 0.2⟩
+                else if pick > 0.25 then leaf = V3⟨0.26, 0.19, 0.1⟩
+                // (its vein, and lighter toward its tip)
+                vein := 1 - Math.clamp(Math.abs(across) * 60, 0, 1)
+                rgb = leaf * (0.85 + 0.3 * (along / long * 0.5 + 0.5)) * (1 - 0.3 * vein)
+                cover = m
+            }
+        }
+    }
+}
+
+// A forest floor, at a point in its player's frame (pixels): soil and moss
+// (the part's green), two layers of fallen leaves over it, the lower in the
+// upper's shade, a few twigs on top, and dappled light through the canopy
+// drifting slowly over it all.
+forest_at :: (at: V2, base: V3, scale: f32, seed: f32, time: f32 -> V3) {
+    q := at / (scale * 1.3)
+    // (soil and moss)
+    moss := Patterns.layered(q * 0.6 + V2⟨seed, 0⟩, 5)
+    soil := V3⟨0.2, 0.14, 0.08⟩
+    *rgb := Math.mix(soil, base * 0.9, Math.smoothstep(0.35, 0.65, moss))
+    // (the lower leaves, in shade, then the upper, casting a little shadow)
+    lower, lower_cover := leaf_layer(q * 1.35 + V2⟨11.3, 4.7⟩, seed + 1)
+    rgb = Math.mix(rgb, lower * 0.62, lower_cover)
+    _, shadowed := leaf_layer(q + V2⟨0.06, 0.08⟩, seed)
+    rgb = rgb * (1 - 0.35 * shadowed)
+    upper, upper_cover := leaf_layer(q, seed)
+    rgb = Math.mix(rgb, upper, upper_cover)
+    // (twigs: a few, each a thin dark stick across a cell of a coarser grid)
+    t := q * 0.45 + V2⟨seed * 2.9, 5.1⟩
+    tcell := Math.floor(t)
+    *sticks: f32 = 0
+    for oy: -1 <= 1 {
+        for ox: -1 <= 1 {
+            id := tcell + V2⟨f32'ox, f32'oy⟩
+            if Patterns.hash(id + V2⟨3.3, 7.7⟩) < 0.3 {
+                mid := id + Patterns.hash2(id)
+                turn := Patterns.hash(id * 2.3) * f32'Math.PI
+                way := V2⟨Math.cos(turn), Math.sin(turn)⟩
+                h := Math.clamp(Math.dot(t - mid, way), -0.6, 0.6)
+                d := Math.length(t - mid - way * h)
+                sticks = Math.max(sticks, Math.clamp((0.022 - d) * 300, 0, 1))
+            }
+        }
+    }
+    rgb = Math.mix(rgb, V3⟨0.17, 0.11, 0.06⟩, sticks)
+    // (dappled light, drifting)
+    dapple := Math.smoothstep(0.5, 0.72, Patterns.layered(q * 0.22 + V2⟨time * 0.03, seed⟩, 4))
+    return rgb * (V3⟨0.78, 0.78, 0.78⟩ + V3⟨1.0, 0.95, 0.8⟩ * (0.45 * dapple))
+}
+
 Part_Surface :: shader { vertex: Draw.quad_place; fragment: part_shade }
 PART_SURFACE :: Part_Surface(Draw.SHADER_TARGET)
 
@@ -297,11 +381,12 @@ draw_part :: (canvas: *Draw.Canvas, layout: Layout, k: i64, colours: [] Draw.RGB
 }
 
 // What a part's surface is: its look's pattern, a pool seen from above
-// (blue's), or rusting metal (an artifact's).
+// (blue's), rusting metal (an artifact's), or a forest floor (green's).
 Surface :: enum u8 {
     PATTERN
     POOL
     RUST
+    FOREST
 }
 
 // A part's fill, for its player's colours in an era: its gradient's colours
@@ -335,11 +420,12 @@ part_fill :: (era: Era, identity: Identity, cell: f32, seat: i64, time: f32, ang
     else {
         if colours == 1 then look = looks.colours[only]
         // (one colour: its ground, lit and shaded by its surface; blue's a
-        // pool, none's rusting metal)
+        // pool, green's a forest floor, none's rusting metal)
         into[0] = look.ground
         count = 1
         if colours == 0 then surface = .RUST
         else if only == .BLUE then surface = .POOL
+        else if only == .GREEN then surface = .FOREST
     }
     // (every part's features one size in an era, and quieter than the
     // looks' own contrast: the surface stays behind what's on it)
