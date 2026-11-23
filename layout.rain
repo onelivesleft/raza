@@ -3,11 +3,12 @@
 // out to their side, with their life total facing them.
 //
 // The parts are split by lines from the centre to the screen's edge, each
-// line's end a place on the edge (Splits). To start with they're regular,
-// each the same turn from the last: one goes straight up when there's an odd
-// number of players (half a step round from it when there's an even), so two
-// players have the halves, four an X square to the screen's sides. A player
-// drags a line's end along the edge to move it.
+// line's end a place on the edge (Splits). To start with every part has the
+// same area, and they're mirrored about the screen's upright middle: one
+// line goes straight up when there's an odd number of players, and the top
+// part is centred on the top when there's an even, so two players have the
+// halves, four an X between the corners. A player drags a line's end along
+// the edge to move it.
 
 MAX_PLAYERS :: 6
 
@@ -112,6 +113,38 @@ share_at :: (size: V2, p: V2 -> f32) #pure {
     return wrapped_share(s / perimeter)
 }
 
+// The area a part gains for each pixel its edge goes along a side: half the
+// side's distance from the centre (a thin triangle from the centre).
+area_rate :: (size: V2, share: f32 -> f32) #pure {
+    corners := corner_shares(size)
+    s := wrapped_share(share)
+    on_side := (s >= corners[0] and s < corners[1]) or s >= corners[2]
+    return if on_side then size.x / 4 else size.y / 4
+}
+
+// The share past from at which a part from from has an area.
+share_after_area :: (size: V2, from: f32, area: f32 -> f32) #pure {
+    perimeter := perimeter_of(size)
+    corners := [5] f32⟨0, corner_shares(size)[0], corner_shares(size)[1], corner_shares(size)[2], 1⟩
+    *at := wrapped_share(from)
+    *left := area
+    *travelled: f32 = 0
+    for _: 0 < 9 {
+        // the next corner past at
+        *next: f32 = 1
+        for c: corners { if c > at + 0.000_001 { next = c; break } }
+        rate := area_rate(size, at + 0.000_001)
+        length := (next - at) * perimeter
+        if left <= rate * length {
+            return wrapped_share(from + travelled + left / rate / perimeter)
+        }
+        left -= rate * length
+        travelled += next - at
+        at = wrapped_share(next)
+    }
+    return wrapped_share(from + travelled)
+}
+
 // Where the edge meets a line from the centre at an angle (y down).
 edge_point :: (centre: V2, half: V2, angle: f32 -> V2) #pure {
     d := V2⟨Math.cos(angle), Math.sin(angle)⟩
@@ -120,17 +153,18 @@ edge_point :: (centre: V2, half: V2, angle: f32 -> V2) #pure {
     return centre + d * Math.min(across, down)
 }
 
-// The lines a count of players starts with on a screen of a size, regular:
-// the first straight up (odd) or half a step round (even), each the next a
-// step round (a turn shared equally).
+// The lines a count of players starts with on a screen of a size: every
+// part the same area, and the whole mirrored about the screen's upright
+// middle. An odd count's first line goes straight up; an even count's top
+// part is centred on the top (its first line half a part's area round from
+// the top's middle). Each line after is a part's area round from the last.
 equal_splits :: (players: i64, size: V2 -> splits: Splits) #pure {
     n := Math.clamp(players, 2, MAX_PLAYERS)
     splits = ⟨count: n⟩
-    half := size / 2
-    half_pi := f32'Math.PI / 2
-    step := f32'Math.TAU / f32'n
-    first := if n % 2 == 0 then -half_pi + step / 2 else -half_pi
-    for k: 0 < n { splits.at[k] = share_at(size, edge_point(half, half, first + f32'k * step)) }
+    each := size.x * size.y / f32'n
+    top_middle := size.x / 2 / perimeter_of(size)
+    splits.at[0] = if n % 2 == 1 then top_middle else share_after_area(size, top_middle, each / 2)
+    for k: 1 < n { splits.at[k] = share_after_area(size, splits.at[k - 1], each) }
 }
 
 // Splits that can be used for a count of players: as many lines, each

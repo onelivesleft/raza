@@ -31,18 +31,23 @@ lays_out_every_count :: () #test {
     }
 }
 
-// As they start, the parts are regular: each line the same turn round from
-// the last, at every count, either way up.
-parts_start_regular :: () #test {
+// As they start, every part has the same area, at every count, either way
+// up, and the lines are mirrored about the screen's upright middle.
+parts_start_equal :: () #test {
     for players: 2 <= MAX_PLAYERS {
         for size: [2] V2⟨LANDSCAPE, PORTRAIT⟩ {
             layout := laid_out(players, size)
-            step := f32'Math.TAU / f32'players
-            for end, k: layout.ends[:players] {
-                next := layout.ends[(k + 1) % players]
-                a := Math.atan2(end.y - layout.centre.y, end.x - layout.centre.x)
-                b := Math.atan2(next.y - layout.centre.y, next.x - layout.centre.x)
-                assert(Math.abs(wrapped(b - a) - step) < 0.001, "«players» players on «size»: line «k» to the next is «wrapped(b - a)», not «step»")
+            each := size.x * size.y / f32'players
+            for seat, k: layout.seats[:players] {
+                area := area_of(seat.outline[:seat.count])
+                assert(Math.abs(area - each) < each * 0.005, "«players» players on «size»: part «k» is «area», not «each»")
+            }
+            for end: layout.ends[:players] {
+                *mirrored := false
+                for other: layout.ends[:players] {
+                    if near_point(other, V2⟨size.x - end.x, end.y⟩) then mirrored = true
+                }
+                assert(mirrored, "«players» players on «size»: «end» has no line mirroring it")
             }
         }
     }
@@ -74,12 +79,12 @@ three_start_from_the_top :: () #test {
     assert(near_point(right * 1000, V2⟨-left.x, left.y⟩ * 1000), "...alike: «right», «left»")
 }
 
-// Four players: a square X, its lines at 45 degrees, one facing each side.
+// Four players: an X between the corners, one facing each side.
 four_are_an_x :: () #test {
     layout := laid_out(4, LANDSCAPE)
     for end: layout.ends[:4] {
-        d := end - layout.centre
-        assert(Math.abs(Math.abs(d.x) - Math.abs(d.y)) < 0.5, "«end» is at 45 degrees")
+        at_corner := (Math.abs(end.x) < 0.5 or Math.abs(end.x - 2160) < 0.5) and (Math.abs(end.y) < 0.5 or Math.abs(end.y - 1440) < 0.5)
+        assert(at_corner, "«end» is a corner")
     }
     half_pi := f32'Math.PI / 2
     assert(faces(layout.seats[0], ⟨1, 0⟩, -half_pi), "right: «layout.seats[0].toward»")
@@ -138,8 +143,8 @@ life_size_follows_the_parts :: () #test {
     before := lay_out(LANDSCAPE, splits)
     step := cell_of(before) / LIFE_STEPS
     start := life_size_of(before)
-    // (the top part, one of the two smallest, squeezed to half its edge)
-    splits.move_split(0, splits.at[0] - 0.1)
+    // (the right part, one of the two smallest, squeezed to half its edge)
+    splits.move_split(0, splits.at[0] + 0.1)
     after := life_size_of(lay_out(LANDSCAPE, splits))
     assert(after < start, "a squeezed part's life is smaller: «start», then «after»")
     for size: [2] i32⟨start, after⟩ {

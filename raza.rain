@@ -3,8 +3,8 @@
 // facing them, and a damage icon toward the centre: dragged into another
 // player's part, it deals that player commander damage, more the further it
 // goes (up to 20, then a number to pick, 21 to start with). The parts start
-// regular (their lines equal turns apart), and a line between two is moved
-// by dragging its end along the edge. The capsule in the middle undoes, shows how many play (a person
+// equal in area, mirrored about the screen's upright middle, and a line
+// between two is moved by dragging its end along the edge. The capsule in the middle undoes, shows how many play (a person
 // each: touched, the other counts show above and below it, to drag to for
 // a new game), and will hold the settings; the corner button switches the
 // text between Crimson Pro and EB Garamond. The game, the font and each
