@@ -15,7 +15,7 @@ Create a seamless square game UI material texture inspired by the brown marbled 
 
 ## Five-dot icon
 
-Saved as `icons/five-colour-dots-source.png`, with transparent 48px and
+Saved as `textures/five-colour-dots-source.png`, with transparent 48px and
 96px exports for small controls. The entire cluster occupies one icon slot,
 not five slots. It is available as an asset, not assigned to an existing action.
 

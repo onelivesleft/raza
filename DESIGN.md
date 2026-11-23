@@ -1,7 +1,7 @@
 # Raza's design: the parts, the elements and the attacks
 
 What the parts' surfaces, the elements and the attacks are for, so a change
-can be checked against it. The code says how: `frames.rain` (the parts),
+can be checked against it. The code (in `src/`) says how: `frames.rain` (the parts),
 `elements.rain` (the elements and the attacks' looks), `motes.rain` (the
 motes and the volleys' timing), and the C:\rain modules they use (Draw's
 `draw_shader`, `draw_shader_image`, `add_light` and `Text_Style`, Patterns, Particles).
@@ -57,32 +57,30 @@ stays behind what's on it.
 ## The elements: each colour's damage
 
 **Goal: damage is something a player draws from their own colours and
-throws**, each colour as its own element.
+throws**, each colour as its own element, as combat damage or a spell's.
 
-- **One field per colour**, a shader each, over its whole reach, fading
-  into the part (several round the player's damage spot, smaller):
-  - white: a sun, its depths a starfield's (Star Nest, by Pablo Roman
-    Andrioli, MIT licence), a corona of rays about it;
-  - blue: a body of water, deep blue by its depth, the sky in it at a slant,
-    glints and foam on its crests;
-  - black: a nest of shadowy tendrils groping and writhing out of a roiling
-    glob of oil (lit from behind at its steep edges, a rainbow where it's
-    thin, after the liquid toy's shading);
-  - red: a flame, a teardrop rising from its root, tongues climbing, white
-    at its heart to red at its edges;
-  - green: gusts of wind, pale streaks and dapples;
+- **Two damage icons per player**, at their damage spot, side by side as
+  they see it, each on a dark round chip turned to face them: crossed swords
+  on their left for combat damage (commander damage: it takes life and
+  counts toward the 21 from that commander), a flame on their right for a
+  spell's (or an ability's, or another creature's: life alone, never
+  toward the 21, as the rules count only a commander's combat damage).
+  Both drag the same way with the same range (1 to 9 out to the life total,
+  past it the picker); the one dragged from is lit. Nothing else is drawn
+  there at rest (the resting element fields and their motes are gone).
+- **Each colour's element** is what's drawn as the damage is selected and
+  thrown (the stream and the volley, below):
+  - white: a sun's light, its depths a starfield's (Star Nest, by Pablo
+    Roman Andrioli, MIT licence);
+  - blue: water;
+  - black: shadowy tendrils out of a roiling glob of oil (lit from behind
+    at its steep edges, a rainbow where it's thin, after the liquid toy's
+    shading);
+  - red: fire and lightning;
+  - green: wind;
   - colourless: liquid metal, sky and ground reflected in each swell.
 - **Light glows.** The sun's and fire's light go into a light layer added
   with bloom (Draw's `add_light`).
-- **It reacts.** At rest it's calm; dragged from, it stirs (faster,
-  brighter); aimed at, half as much.
-- **Clear of the controls.** A field reaches no further than its damage spot
-  is from the plus in the middle, so it's smaller where that's tight (the
-  six-player top and bottom parts).
-- **Its motes come from it**, born where its own procedures say: the sun's
-  flecks orbiting in its corona, fire's sparks off its flame tips, water's
-  drops off its crests, oil's and metal's blobs budding off their edges and
-  pulled back, leaves anywhere in the wind.
 
 ## Selecting: the stream while dragging
 
@@ -106,16 +104,16 @@ The stream sheds each element's motes along it.
 ## The attack: the volley on release
 
 The game changes at release (so undo is simple); what's shown counts down as
-the attack lands. Undo, or a new game, calls attacks off. Lethal commander
-damage ends in a much bigger burst.
+the attack lands (life, and a combat attack's commander damage chip). Undo,
+or a new game, calls attacks off. Lethal commander damage ends in a much
+bigger burst. A spell's attack looks the same as combat damage's.
 
 - **Its shape is each element's** (`VOLLEY_SHAPES`): blue surges as a
   deluge, one great mass; red throws bolts of fire and white bolts of
   energy (short beams), one after another, more for more damage, all landing
   together; green a storm, a wide gust throwing off leaves and twigs as it
   flies; colourless a gob of metal. Each lands as a splash of itself.
-- **Its times**: it gathers at the player's spot (their fields swell, 0.14
-  s), flies along the stream's curve as it was let go (0.42 s), and lands,
+- **Its times**: it gathers at the player's spot (0.14 s), flies along the stream's curve as it was let go (0.42 s), and lands,
   its points coming off the life shown over 0.36 s, its splash fading
   after.
 - **Black is one strike.** Its strands shoot out of the nest one after
@@ -129,9 +127,10 @@ damage ends in a much bigger burst.
 
 ## The controls
 
-The plus in the middle: the players in its middle (touched, the column of
-counts shows over the upright arm, to drag to for a new game; left
-untouched it closes after four seconds), undo and redo on its wings, a new
+The plus in the middle: the players in its middle (touched, the plus
+morphs into the count column's groove, 0.11 s, its counts in it, the
+column following the finger; let go, that count's the game's, the same if
+it didn't move, and the groove morphs back), undo and redo on its wings, a new
 game above, the system's (settings and quitting) below, as a power button.
 The text is Crimson Pro.
 
@@ -143,7 +142,7 @@ left and warmly lit where it faces it. Drawn by a shader of its own
 (`recess_shade`) from its shape's distance, it morphs as the settings open.
 
 The power button opens the settings in the plus itself: the plus morphs into
-a rounded square (0.22 s), each arm widening so its inside corners are pushed
+a rounded square (0.11 s), each arm widening so its inside corners are pushed
 out to the square's, the screen behind darkened. The
 plus's buttons fade out over the first half, and the settings' fade in over
 the second, each at a place of a three by three grid (the plus's own
@@ -178,6 +177,11 @@ square morphing back.
   ```
 
 ## Checking it
+
+The repository: `src/` the code (and `src/icons/`, what the icons tool
+writes), `fonts/` and `textures/` the art it carries; `rain src/raza.rain`
+builds a dev build into `build/`, and `rain -release src/raza.rain` the
+tablet's into `release/` (both ignored by git).
 
 `Raza.exe -elements:folder` draws `raza_elements.png`: each element at rest,
 its stream as it selects, and its attack in flight. `Raza.exe
@@ -249,6 +253,6 @@ show all ten pairs alongside gold.
 
 ## Restrained attack effects
 
-Idle handles are compact, with no emitted motes. They enlarge when engaged; multicolour handles keep fixed positions. Green rests as a readable leaf and becomes wind when drawn out. Targeting trails are narrower, less widely braided, and emit eight motes per second across their colours. Motes are smaller and bloom is weaker and tighter. Blue uses smooth volume shading without a flat water bitmap overlay; artifact reflections are warm and softened. Blue and green attacks have smaller, shorter bodies. Black retains its strand, plunge, pulse and single-hit strike sequence. Damage timing and hit testing are unchanged.
+At rest there are no element handles: each player's damage spot is its two damage icons (combat and spell). Targeting trails are narrower, less widely braided, and emit eight motes per second across their colours. Motes are smaller and bloom is weaker and tighter. Blue uses smooth volume shading without a flat water bitmap overlay; artifact reflections are warm and softened. Blue and green attacks have smaller, shorter bodies. Black retains its strand, plunge, pulse and single-hit strike sequence. Damage timing and hit testing are unchanged.
 
-The central controls and player-count selector use textures/card-back-v1.png, a warm mottled brown card-back-inspired material. Their existing rounded geometry and recessed lighting remain. Asset prompts and the separate transparent five-colour dot icon are documented in textures/CARD-BACK-ASSETS.md.
+The central controls and player-count selector use textures/control-slate-v1.png, a dark matte slate material. Their existing rounded geometry and recessed lighting remain. The slate prompt is in textures/SLATE-PROMPT.md; the separate transparent five-colour dot icon is documented in textures/CARD-BACK-ASSETS.md.

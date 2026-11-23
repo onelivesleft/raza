@@ -1,5 +1,5 @@
 // Original material atlas: seven surfaces and one neutral turbulence tile.
-MATERIAL_BYTES :: #data "textures/materials-v1.png"
+MATERIAL_BYTES :: #data "../textures/materials-v1.png"
 material_image: Draw.Image
 
 // Inset samples keep bilinear filtering inside one atlas cell.
@@ -52,8 +52,8 @@ material_tiles_follow_identity :: () #test {
     }
 }
 
-// Card-back material, shared by the central controls and count selector.
-CONTROL_BYTES :: #data "textures/card-back-v1.png"
+// Dark slate material, shared by the central controls and count selector.
+CONTROL_BYTES :: #data "../textures/control-slate-v1.png"
 control_image: Draw.Image
 
 control_material :: (texture: Shader.Texture_2D, filtering: Shader.Sampler, uv: V2 -> V3) {

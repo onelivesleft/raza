@@ -690,12 +690,6 @@ draw_black_volley :: (canvas: *Draw.Canvas, layer: *Draw.Canvas, layout: Layout,
     paint_field(canvas, .OIL, ⟨start: base, bend: base, end: base, up: up, reach: glob_reach * swell, time: time, stir: 1, seed: f32'v.id⟩)
 }
 
-// How far one player's field reaches alone (cells), and several's, each
-// round their spot, smaller.
-ELEMENT_CELLS :: 1.5
-ELEMENT_SHARE :: 0.68
-ELEMENT_ROUND :: 0.55
-
 // How the bloom spreads (cells) and how strongly it's added.
 BLOOM_CELLS :: 0.25
 BLOOM_STRENGTH :: 0.65
@@ -730,34 +724,6 @@ stir_elements :: (elements: *Elements, layout: Layout, game: Game, screen: Scree
     }
 }
 
-// Where one of a player's fields is at rest (the i'th of n), and how far it
-// reaches: smaller where its part's damage spot is near the controls, so
-// the whole of it stays clear of them (several round the spot reach about
-// FIELDS_CELLS together).
-FIELDS_CELLS :: 1.6
-field_spot :: (layout: Layout, k: i64, i: i64, n: i64, time: f32 -> at: V2, reach: f32) #pure {
-    cell := cell_of(layout)
-    seat := layout.seats[k]
-    fit := Math.clamp((seat.clear - 0.15 * cell) / (FIELDS_CELLS * cell), 0.45, 1)
-    at = seat.icon
-    reach = ELEMENT_CELLS * cell * fit
-    if n > 1 {
-        turn := f32'i / f32'n * f32'Math.TAU
-        at = seat.icon + V2⟨Math.cos(turn), Math.sin(turn)⟩ * (ELEMENT_ROUND * cell * fit)
-        reach = ELEMENT_SHARE * ELEMENT_CELLS * cell * fit
-    }
-}
-
-// The i'th of a player's n fields at rest (k's seat), swollen by swell (a
-// volley gathering): where it is, its clock, its stir and its seed, as it's
-// drawn and its motes are born.
-rest_field :: (layout: Layout, k: i64, i: i64, n: i64, elements: Elements, swell: f32 = 0 -> Field) #pure {
-    at, full_reach := field_spot(layout, k, i, n, elements.clock[k])
-    reach := full_reach * (0.48 + 0.30 * Math.max(elements.stir[k], swell))
-    return ⟨start: at, bend: at, end: at, up: layout.seats[k].toward * -1, reach: reach * (1 + 0.2 * swell),
-            time: elements.clock[k] + f32'i * 7.3, stir: Math.max(elements.stir[k], swell), seed: f32'(k * 3 + i) * 1.7⟩
-}
-
 // A drawn-out field's curve for the i'th of n elements along a path: the
 // bend moved to one side by its place, so several braid.
 braided :: (start: V2, bend: V2, end: V2, i: i64, n: i64, cell: f32 -> V2) #pure {
@@ -767,33 +733,12 @@ braided :: (start: V2, bend: V2, end: V2, i: i64, n: i64, cell: f32 -> V2) #pure
     return bend + across * ((f32'i - f32'(n - 1) / 2) * 0.3 * cell)
 }
 
-// Each player's elements, a drag's stream, the volleys in flight and
-// landing, then the light they give added with its bloom.
+// A drag's stream, the volleys in flight and landing, then the light they
+// give added with its bloom. (At rest, a player's damage spot is its two
+// icons, draw_damage_icons'.)
 draw_elements :: (canvas: *Draw.Canvas, layer: *Draw.Canvas, layout: Layout, game: Game, screen: Screen_State, elements: Elements, volleys: Volleys) {
     cell := cell_of(layout)
     layer.clear(Draw.rgb(0x000000))
-    for k: 0 < layout.count {
-        if is_out(game, k) then continue
-        *list: [6] Element
-        n := elements_of(game.identity[k], list)
-        // (a volley of theirs gathering swells them; black's nest has gone to
-        // strike while its strike's under way)
-        *swell: f32 = 0
-        *striking := false
-        for v: volleys.list {
-            if v.from == k and v.age < VOLLEY_GATHER then swell = Math.max(swell, Math.sin(v.age / VOLLEY_GATHER * f32'Math.PI))
-            if v.from == k and v.black and v.age < volley_landing(v) then striking = true
-        }
-        for element, i: list[:n] {
-            f := rest_field(layout, k, i, n, elements, swell)
-            if element == .OIL {
-                if !striking then draw_nest(canvas, f)
-            }
-            else {
-                draw_field(canvas, layer, element, f)
-            }
-        }
-    }
     // A drag's stream: each of the dragger's elements drawn out from their
     // spot to whoever they're over (bent toward the finger), braided.
     if screen.drag.active {

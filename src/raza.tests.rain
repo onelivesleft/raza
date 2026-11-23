@@ -166,17 +166,46 @@ icons_are_in_their_parts :: () #test {
     }
 }
 
-// The column's rings are on the column wherever it's been dragged to, and
-// on the screen; beside it isn't.
-counts_are_on_the_column :: () #test {
+// Each player's two damage icons, combat's on their left and a spell's on
+// their right, are wholly in their own part and clear of the controls, for
+// every count either way up; each is found where it's drawn.
+damage_icons_are_in_their_parts :: () #test {
+    for screen: [2] V2⟨LANDSCAPE, PORTRAIT⟩ {
+        for players: 2 <= MAX_PLAYERS {
+            layout := laid_out(players, screen)
+            game := new_game(players)
+            cell := cell_of(layout)
+            for seat, k: layout.seats[:players] {
+                for combat: [2] bool⟨true, false⟩ {
+                    at := damage_icon(layout, k, combat)
+                    for i: 0 < 8 {
+                        a := f32'i / 8 * f32'Math.TAU
+                        edge := at + V2⟨Math.cos(a), Math.sin(a)⟩ * (DAMAGE_ICON_RADIUS * cell)
+                        assert(inside(edge, seat.outline[:seat.count]), "«players» players on «screen»: «k»'s «combat» icon spills out of its part")
+                        assert(!in_controls(layout, edge), "«players» players on «screen»: «k»'s «combat» icon is under the controls")
+                    }
+                    if found, which := icon_at(layout, game, at) {
+                        assert(found == k and which == combat, "«players» players: «k»'s «combat» icon found as «found»'s «which»")
+                    }
+                    else if absent { assert(false, "«players» players: «k»'s «combat» icon isn't found where it's drawn") }
+                }
+                left := local_of(seat.middle, seat.angle, damage_icon(layout, k, true)).x
+                right := local_of(seat.middle, seat.angle, damage_icon(layout, k, false)).x
+                assert(left < right, "«players» players: «k»'s combat icon on their left")
+            }
+        }
+    }
+}
+
+// The column's rings are on the screen wherever it's been dragged to (and
+// in its groove: plus_becomes_the_count_groove).
+counts_are_on_the_screen :: () #test {
     layout := laid_out(4, LANDSCAPE)
     for shown: [3] f32⟨2, 4, 5.5⟩ {
         for count: 2 <= MAX_PLAYERS {
             place := count_place(layout, shown, count)
-            assert(on_column(layout, shown, place), "«count»'s ring is on the column at «shown»")
             assert(place.y > 0 and place.y < LANDSCAPE.y, "«count»'s ring is on the screen at «shown»")
         }
-        assert(!on_column(layout, shown, layout.centre + V2⟨cell_of(layout), 0⟩), "beside it isn't")
     }
 }
 
@@ -403,24 +432,6 @@ volleys_land_apart :: () #test {
     assert(pending[0][1] == 0 and shown_game(game, pending).life[0] == 30 and volleys.list.count == 0)
 }
 
-// Each element's motes are born in its field: the sun's in its corona
-// (past its ball), fire's up its flame (not below its root), the others
-// within its reach.
-motes_are_born_in_their_fields :: () #test {
-    *random := Random.generator(seed: 9)
-    f := Field⟨start: ⟨500, 500⟩, bend: ⟨500, 500⟩, end: ⟨500, 500⟩, up: ⟨0, -1⟩, reach: 100, time: 4, seed: 2⟩
-    for _, which: STYLES {
-        for try: 0 < 40 {
-            at, outward := field_birth(random, which, f)
-            out := Math.length(at - f.start)
-            assert(out <= f.reach + 0.01, "«which»'s mote born «out» out, past its reach")
-            assert(Math.abs(Math.length(outward) - 1) < 0.01 or out < 0.01, "«which»'s outward isn't a way: «outward»")
-            if which == .SUN then assert(out >= SUN_BALL * f.reach, "a sun's fleck born «out» out, in its ball")
-            if which == .FIRE then assert(at.y <= f.start.y + 0.01, "a spark born below its fire's middle: «at»")
-        }
-    }
-}
-
 // A volley's bolts leave one after another once it's gathered, and every
 // one lands as the volley does (its points counted then); more damage, more
 // bolts, up to each element's most, and one for those that throw a mass.
@@ -497,26 +508,6 @@ chips_keep_off_the_toggles :: () #test {
     }
 }
 
-// Every player's fields at rest are clear of the controls' plus, each
-// smaller where its part's damage spot is near it, for every count of
-// players, either way up.
-fields_clear_the_controls :: () #test {
-    for screen: [2] V2⟨LANDSCAPE, ⟨LANDSCAPE.y, LANDSCAPE.x⟩⟩ {
-        for players: 2 <= MAX_PLAYERS {
-            layout := lay_out(screen, equal_splits(players, screen))
-            for k: 0 < players {
-                for n: 1 <= 3 {
-                    for i: 0 < n {
-                        at, reach := field_spot(layout, k, i, n, 0)
-                        clear := controls_clearance(layout.size, layout.centre, at)
-                        assert(clear >= reach * 0.9, "«players» players, part «k», field «i» of «n»: reaching «reach» but «clear» from the controls")
-                    }
-                }
-            }
-        }
-    }
-}
-
 // Each colour's element, in WUBRG order, and an artifact's (no colours)
 // liquid metal.
 elements_are_the_colours :: () #test {
@@ -579,52 +570,6 @@ undo_calls_off_volleys :: () #test {
     assert(pending[3][2] == 0 and volleys.list.count == 0)
 }
 
-// Each miasma stays about its player's damage spot, and a player who's out
-// has none.
-miasmas_stay_home :: () #test {
-    layout := laid_out(4, LANDSCAPE)
-    *game := new_game(4)
-    game.life[2] = 0
-    motes, _ := settled_motes(layout, game, stirring: 1)
-    cell := cell_of(layout)
-    *each: [4] i64
-    for m: motes.motes {
-        if m.tag & FIELD_MOTE == 0 then continue
-        k := i64'(m.tag & 0xFF)
-        each[k] += 1
-        assert(Math.length(m.at - layout.seats[k].icon) < 3 * cell, "«k»'s mote at «m.at» strays from «layout.seats[k].icon»")
-    }
-    assert(each[0] > 20 and each[1] > 20 and each[3] > 20 and each[2] == 0, "a miasma each but the one out's: «each»")
-}
-
-// Each colour's miasma keeps about its own number of motes alive, however
-// long its motes live; in a mix, each colour keeps about its share, so a
-// long-lived one doesn't bury a quick one.
-miasmas_are_balanced :: () #test {
-    layout := laid_out(2, LANDSCAPE)
-    for style, which: STYLES {
-        *game := new_game(2)
-        game.identity[0] = if which != .CHROME then u8'1 << u8'which else 0
-        motes, _ := settled_motes(layout, game, stirring: 1)
-        *alive: f32 = 0
-        for m: motes.motes { if m.tag & FIELD_MOTE != 0 and m.tag & 0xFF == 0 then alive += 1 }
-        want := style.alive
-        assert(alive > want * 0.6 and alive < want * 1.4, "«which» alone: «alive» alive, not about «want»")
-    }
-    // White and black, red and black: each about its share.
-    for pair: [2] [2] Element⟨⟨.SUN, .OIL⟩, ⟨.FIRE, .OIL⟩⟩ {
-        *game := new_game(2)
-        game.identity[0] = (u8'1 << u8'pair[0]) | (u8'1 << u8'pair[1])
-        motes, _ := settled_motes(layout, game, stirring: 1)
-        *each: [Element] f32
-        for m: motes.motes { if m.tag & FIELD_MOTE != 0 and m.tag & 0xFF == 0 then each[Element'((m.tag >> 8) & 0xFF)] += 1 }
-        for which: pair {
-            want := STYLES[which].alive / 2
-            assert(each[which] > want * 0.55 and each[which] < want * 1.45, "«pair»: «which» «each[which]» alive, not about «want»")
-        }
-    }
-}
-
 // Opened, the plus is the settings' square: every one of its grid's places
 // inside it, its corners filled in; part of the way, between the two.
 plus_opens_into_a_square :: () #test {
@@ -644,6 +589,23 @@ plus_opens_into_a_square :: () #test {
     // (the inside corner a third of the way out, half way through)
     assert(in_controls(layout, c + V2⟨1.0, 1.0⟩ * cell, 0.5), "half open, the inside corner's moved out")
     assert(!in_controls(layout, c + V2⟨1.6, 1.6⟩ * cell, 0.5), "half open, it's not yet square")
+}
+
+// While a count's picked, the plus becomes the count column's groove: every
+// count's ring inside it wherever the column's been dragged to, undo's arm
+// gone.
+plus_becomes_the_count_groove :: () #test {
+    layout := laid_out(4, LANDSCAPE)
+    cell := cell_of(layout)
+    for shown: [3] f32⟨2, 4, 5.5⟩ {
+        for count: 2 <= MAX_PLAYERS {
+            ring := count_place(layout, shown, count)
+            assert(in_controls(layout, ring, 0, 1, shown), "«count»'s ring in the groove, the column at «shown»")
+            assert(in_controls(layout, ring + V2⟨0.5 * cell, 0⟩, 0, 1, shown), "«count»'s ring's width in the groove, at «shown»")
+        }
+    }
+    assert(!in_controls(layout, capsule_centre(layout, .UNDO), 0, 1, 4), "undo's arm gone")
+    assert(in_controls(layout, capsule_centre(layout, .UNDO), 0, 0, 4), "undo's arm there before")
 }
 
 // The controls are a plus: the players in the middle, undo on the left
@@ -861,6 +823,47 @@ deals_commander_damage :: () #test {
     assert(poor.life[0] == 0, "no damage to oneself")
 }
 
+// A spell's damage takes life alone: however much, it's never commander
+// damage, so it's never lethal as 21 from a commander is; as a volley it
+// flies and lands as combat damage's does, the life shown counting down,
+// the commander damage shown untouched throughout.
+spells_take_life_alone :: () #test {
+    *game := new_game(4)
+    game.deal_spell(1, 0, 25)
+    assert(game.life[0] == 15 and game.commander[0][1] == 0 and !is_out(game, 0), "25 from a spell: «game.life[0]» life, «game.commander[0][1]» commander damage")
+    layout := laid_out(4, LANDSCAPE)
+    *flying := new_game(4)
+    flying.commander[0][1] = 6
+    *motes: Particles.System = ⟨flow_scale: MOTE_FLOW * cell_of(layout)⟩
+    *volleys: Volleys
+    *random := Random.generator(seed: 4)
+    *pending: [MAX_PLAYERS] [MAX_PLAYERS] i32
+    strike(flying, motes, volleys, random, layout, pending, 1, 0, 20, layout.seats[0].middle, combat: false)
+    assert(flying.life[0] == 20 and flying.commander[0][1] == 6, "dealt at once, life alone: «flying.life[0]», «flying.commander[0][1]»")
+    assert(volleys.list.count == 1 and !volleys.list[0].lethal and !volleys.list[0].combat, "a spell's volley, not lethal")
+    shown := shown_game(flying, pending, volleys)
+    assert(shown.life[0] == 40 and shown.commander[0][1] == 6, "shown undone while it flies: «shown.life[0]», «shown.commander[0][1]»")
+    steer_volleys(motes, volleys, random, layout, flying, pending, 2)
+    landed := shown_game(flying, pending, volleys)
+    assert(landed.life[0] == 20 and landed.commander[0][1] == 6, "landed: «landed.life[0]», «landed.commander[0][1]»")
+}
+
+// A combat volley's commander damage is shown only as it lands.
+combat_damage_shows_as_it_lands :: () #test {
+    layout := laid_out(4, LANDSCAPE)
+    *game := new_game(4)
+    *motes: Particles.System = ⟨flow_scale: MOTE_FLOW * cell_of(layout)⟩
+    *volleys: Volleys
+    *random := Random.generator(seed: 5)
+    *pending: [MAX_PLAYERS] [MAX_PLAYERS] i32
+    strike(game, motes, volleys, random, layout, pending, 1, 0, 8, layout.seats[0].middle)
+    flying := shown_game(game, pending, volleys)
+    assert(flying.life[0] == 40 and flying.commander[0][1] == 0, "in flight: «flying.life[0]», «flying.commander[0][1]»")
+    steer_volleys(motes, volleys, random, layout, game, pending, 2)
+    landed := shown_game(game, pending, volleys)
+    assert(landed.life[0] == 32 and landed.commander[0][1] == 8, "landed: «landed.life[0]», «landed.commander[0][1]»")
+}
+
 
 drag_damage_uses_the_entry_line :: () #test {
     assert(DEFAULT_PICKED == 10)
@@ -889,12 +892,4 @@ drag_damage_uses_the_entry_line :: () #test {
             }
         }
     }
-}
-idle_fields_emit_no_motes :: () #test {
-    layout := laid_out(6, LANDSCAPE)
-    *game := new_game(6)
-    for k: 0 < 5 { game.identity[k] = u8'1 << u8'k }
-    game.identity[5] = 0
-    motes, _ := settled_motes(layout, game)
-    assert(motes.motes.count == 0)
 }

@@ -129,11 +129,18 @@ is_out :: (game: Game, player: i64 -> bool) #pure {
     return false
 }
 
-// Commander damage from one player's commander to another: it's life lost
-// too.
+// Commander damage from one player's commander to another (its combat
+// damage, which counts toward LETHAL_COMMANDER_DAMAGE): it's life lost too.
 deal :: (game: *Game, from: i64, to: i64, amount: i32) {
     if amount <= 0 or from == to then return
     game.commander[to][from] += amount
+    game.life[to] -= amount
+}
+
+// Damage that isn't commander damage (a spell's, an ability's, another
+// creature's): life lost alone.
+deal_spell :: (game: *Game, from: i64, to: i64, amount: i32) {
+    if amount <= 0 or from == to then return
     game.life[to] -= amount
 }
 

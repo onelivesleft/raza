@@ -17,7 +17,7 @@ The image has four columns and two rows, without gutters. In row order:
 | 6 | Antique gold mineral grain | Multicolour panels; identity tint retained |
 | 7 | Neutral smoke filaments | Animated fire and wind density |
 
-`materials.rain` samples within each cell with an inset, avoiding colour bleed
+`src/materials.rain` samples within each cell with an inset, avoiding colour bleed
 from adjacent cells. Four overlapping sampling windows keep values continuous at tile joins
 without reflecting recognisable leaves;
 the artwork is not assumed to have mathematically seamless edges. The atlas

@@ -1,7 +1,7 @@
 // The icons raza.rain draws, from Iconify's sets (iconify/icon-sets
 // 2.2.560), written by
 //
-//     rain -run tools/icons/icons.rain update C:/repos/raza/raza.rain
+//     rain -run tools/icons/icons.rain update C:/repos/raza/src/raza.rain
 //
 // Run it again after naming another icon (one not copied here yet is an
 // error that says so). Don't edit this file.
@@ -13830,28 +13830,32 @@ MDI_ACCOUNT :: #data "mdi/account.svg"
 MDI_BACKUP_RESTORE :: #data "mdi/backup-restore.svg"
 MDI_CHECK :: #data "mdi/check.svg"
 MDI_CLOSE :: #data "mdi/close.svg"
+MDI_FIRE :: #data "mdi/fire.svg"
 MDI_PAUSE :: #data "mdi/pause.svg"
 MDI_POWER :: #data "mdi/power.svg"
 MDI_REDO :: #data "mdi/redo.svg"
 MDI_RESTORE :: #data "mdi/restore.svg"
+MDI_SWORD_CROSS :: #data "mdi/sword-cross.svg"
 MDI_UNDO :: #data "mdi/undo.svg"
 
 // Each icon's SVG, in the order icon(...) numbers them.
-SVGS :: [] string⟨string'MDI_ACCOUNT[:], string'MDI_BACKUP_RESTORE[:], string'MDI_CHECK[:], string'MDI_CLOSE[:], string'MDI_PAUSE[:], string'MDI_POWER[:], string'MDI_REDO[:], string'MDI_RESTORE[:], string'MDI_UNDO[:]⟩
+SVGS :: [] string⟨string'MDI_ACCOUNT[:], string'MDI_BACKUP_RESTORE[:], string'MDI_CHECK[:], string'MDI_CLOSE[:], string'MDI_FIRE[:], string'MDI_PAUSE[:], string'MDI_POWER[:], string'MDI_REDO[:], string'MDI_RESTORE[:], string'MDI_SWORD_CROSS[:], string'MDI_UNDO[:]⟩
 
 // The icon of Mdi's of that name, to draw (HOME :: icon(Mdi.HOME)).
 icon :: ($name: Mdi -> Icons.Icon) {
-    #assert(name == .ACCOUNT or name == .BACKUP_RESTORE or name == .CHECK or name == .CLOSE or name == .PAUSE or name == .POWER or name == .REDO or name == .RESTORE or name == .UNDO, "this icon of Mdi's isn't in icons/ yet: run rain -run tools/icons/icons.rain update C:/repos/raza/raza.rain, which copies each icon the program names")
+    #assert(name == .ACCOUNT or name == .BACKUP_RESTORE or name == .CHECK or name == .CLOSE or name == .FIRE or name == .PAUSE or name == .POWER or name == .REDO or name == .RESTORE or name == .SWORD_CROSS or name == .UNDO, "this icon of Mdi's isn't in icons/ yet: run rain -run tools/icons/icons.rain update C:/repos/raza/src/raza.rain, which copies each icon the program names")
     return if name is {
         case .ACCOUNT: ⟨0⟩
         case .BACKUP_RESTORE: ⟨1⟩
         case .CHECK: ⟨2⟩
         case .CLOSE: ⟨3⟩
-        case .PAUSE: ⟨4⟩
-        case .POWER: ⟨5⟩
-        case .REDO: ⟨6⟩
-        case .RESTORE: ⟨7⟩
-        case .UNDO: ⟨8⟩
+        case .FIRE: ⟨4⟩
+        case .PAUSE: ⟨5⟩
+        case .POWER: ⟨6⟩
+        case .REDO: ⟨7⟩
+        case .RESTORE: ⟨8⟩
+        case .SWORD_CROSS: ⟨9⟩
+        case .UNDO: ⟨10⟩
         case: ⟨0⟩
     }
 }
