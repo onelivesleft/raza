@@ -37,6 +37,7 @@ Raza :: program {
 #import Time
 #import Patterns
 #import Particles
+#import Shader
 #import Random
 #import Icons(SETS: .MDI)
 #import Console
@@ -46,7 +47,7 @@ Raza :: program {
 #include "game.rain"
 #include "frames.rain"
 #include "motes.rain"
-#include "tendrils.rain"
+#include "elements.rain"
 
 V2 :: #alias Math.Vector2(f32)
 
@@ -1041,7 +1042,8 @@ draw_settings :: (canvas: *Draw.Canvas, layout: Layout, fonts: Fonts, era: Era, 
     }
 }
 
-draw :: (canvas: *Draw.Canvas, layout: Layout, game: Game, fonts: Fonts, screen: Screen_State, motes: Particles.System, volleys: Volleys = ⟨⟩) {
+draw :: (canvas: *Draw.Canvas, layer: *Draw.Canvas, layout: Layout, game: Game, fonts: Fonts, screen: Screen_State, motes: Particles.System,
+         elements: Elements, volleys: Volleys = ⟨⟩) {
     cell := cell_of(layout)
     canvas.clear(BACKGROUND)
     *targeted: i64 = -1
@@ -1056,11 +1058,9 @@ draw :: (canvas: *Draw.Canvas, layout: Layout, game: Game, fonts: Fonts, screen:
         line := if moving then INK else BACKGROUND
         canvas.draw_line(layout.centre, end, width, line)
     }
-    // The motes: each miasma over its pool of shadow, a drag's stream, volleys.
-    draw_miasma_pools(canvas, layout, game)
-    draw_hearts(canvas, layout, game, motes.time, volleys)
+    // The elements (each player's, a drag's stream, volleys) and their motes.
+    draw_elements(canvas, layer, layout, game, screen, elements, volleys)
     motes.draw(canvas)
-    draw_black_attacks(canvas, layout, game, screen, volleys, motes.time)
     draw_capsule(canvas, layout, game, screen)
     draw_font_button(canvas, layout, fonts)
     if screen.counts.open or screen.counts.settling then draw_counts(canvas, layout, screen)
@@ -1096,10 +1096,14 @@ save_snapshots :: (folder: string) [failed: string] {
     sizes := [6] Wide.i32x2⟨⟨1440, 2160⟩, ⟨2160, 1440⟩, ⟨2160, 1440⟩, ⟨2160, 1440⟩, ⟨2160, 1440⟩, ⟨2160, 1440⟩⟩
     counts := [6] i64⟨2, 2, 3, 4, 5, 6⟩
     names := [6] string⟨"raza_2_portrait", "raza_2", "raza_3", "raza_4", "raza_5", "raza_6"⟩
+    elements := settled_elements()
     for size, i: sizes {
         *canvas: Draw.Canvas
         if c := Draw.create_canvas(size) { canvas = c } else if os_error { fail: failed = "no canvas: «os_error»" }
         defer canvas.destroy()
+        *layer: Draw.Canvas
+        if l := Draw.create_canvas(size) { layer = l } else if os_error { fail: failed = "no layer: «os_error»" }
+        defer layer.destroy()
         game := sample_game(counts[i])
         screen_size := V2⟨f32'size[0], f32'size[1]⟩
         layout := lay_out(screen_size, equal_splits(game.players, screen_size))
@@ -1113,24 +1117,25 @@ save_snapshots :: (folder: string) [failed: string] {
         finger := entry + target.toward * (target.reach - inner) * 0.5
         // (the eras in turn)
         era := Era'u8'(i % 3)
-        // (the second's stream to the finger, as much as the drag's worth)
-        *amount: i32 = 21
-        if _, worth := aim(layout, game, 1, finger) is not missed {
-            if worth is { case damage: amount = damage; case asked: _ }
-        }
-        streaming := settled_motes(layout, game, 1, finger, amount)
-        draw(canvas, layout, game, fonts, ⟨drag: ⟨true, 1⟩, mouse: finger, can_undo: true, era: era, fps: 60⟩, streaming)
+        // (the second's stream to the finger)
+        still, _ := settled_motes(layout, game)
+        draw(canvas, layer, layout, game, fonts, ⟨drag: ⟨true, 1⟩, mouse: finger, can_undo: true, era: era, fps: 60⟩, still, elements)
         path := `scratch "«folder»/«names[i]».png"
         if canvas.save_png(path) is os_error then fail: failed = "can't write «path»: «os_error»"
-        still := settled_motes(layout, game)
         if counts[i] == 4 {
-            // A volley of 12 from the second to the first, half a second in.
-            volley := settled_motes(layout, game, 1, finger, 0, 0, 12)
-            draw(canvas, layout, game, fonts, ⟨can_undo: true, era: era⟩, volley)
-            volley_path := `scratch "«folder»/raza_volley.png"
-            if canvas.save_png(volley_path) is os_error then fail: failed = "can't write «volley_path»: «os_error»"
+            // A volley of 12 from the second to the first, in flight, then landing.
+            for age, a: [2] f32⟨0.35, 0.72⟩ {
+                flying, volleys := settled_motes(layout, game, 1, finger, 0, 12, age)
+                *pending: [MAX_PLAYERS] [MAX_PLAYERS] i32
+                for v: volleys.list { pending[v.to][v.from] += v.amount - v.landed }
+                *dealt := game
+                dealt.deal(1, 0, 12)
+                draw(canvas, layer, layout, shown_game(dealt, pending), fonts, ⟨can_undo: true, era: era⟩, flying, elements, volleys)
+                volley_path := `scratch "«folder»/raza_volley_«a».png"
+                if canvas.save_png(volley_path) is os_error then fail: failed = "can't write «volley_path»: «os_error»"
+            }
             picker := Picker⟨true, 1, 0, DEFAULT_PICKED / 10, DEFAULT_PICKED % 10⟩
-            draw(canvas, layout, game, fonts, ⟨picker: picker, mouse: finger, can_undo: true, era: era⟩, still)
+            draw(canvas, layer, layout, game, fonts, ⟨picker: picker, mouse: finger, can_undo: true, era: era⟩, still, elements)
             grid_path := `scratch "«folder»/raza_grid.png"
             if canvas.save_png(grid_path) is os_error then fail: failed = "can't write «grid_path»: «os_error»"
             // The column dragged past five: the lines half way through
@@ -1140,32 +1145,26 @@ save_snapshots :: (folder: string) [failed: string] {
             moving := lay_out(screen_size, shown_splits(picking, none[:], screen_size))
             preview := new_game(moving.count, colours_for(game.identity, game.players, moving.count, none[:], screen_size))
             if fonts.resize_life(TEXT_FAMILIES[0], moving) is os_error then fail: failed = "no font: «os_error»"
-            draw(canvas, moving, preview, fonts, ⟨counts: picking, previewing: true, can_undo: true, era: era⟩, settled_motes(moving, preview))
+            moving_motes, _ := settled_motes(moving, preview)
+            draw(canvas, layer, moving, preview, fonts, ⟨counts: picking, previewing: true, can_undo: true, era: era⟩, moving_motes, elements)
             counts_path := `scratch "«folder»/raza_counts.png"
             if canvas.save_png(counts_path) is os_error then fail: failed = "can't write «counts_path»: «os_error»"
             // The settings.
-            draw(canvas, layout, game, fonts, ⟨settings_open: true, can_undo: true, era: era⟩, still)
+            draw(canvas, layer, layout, game, fonts, ⟨settings_open: true, can_undo: true, era: era⟩, still, elements)
             settings_path := `scratch "«folder»/raza_settings.png"
             if canvas.save_png(settings_path) is os_error then fail: failed = "can't write «settings_path»: «os_error»"
         }
     }
-    // Each heart, large, on the background, a few seconds in.
-    {
-        *canvas: Draw.Canvas
-        if c := Draw.create_canvas(⟨2400, 560⟩) { canvas = c } else if os_error { fail: failed = "no canvas: «os_error»" }
-        defer canvas.destroy()
-        canvas.clear(BACKGROUND)
-        for heart, i: [5] Heart⟨.SUN, .WATER, .OIL, .FIRE, .METAL⟩ {
-            draw_heart(canvas, heart, V2⟨240 + 480 * f32'i, 290⟩, 380, 0, 3, 1)
-        }
-        path := `scratch "«folder»/raza_hearts.png"
-        if canvas.save_png(path) is os_error then fail: failed = "can't write «path»: «os_error»"
-    }
+    // Each element, large, on the background, at rest and drawn out, a few seconds in.
+    if save_element_sheet(folder) is failed then fail: failed
     // Each era's frames: six players, each colour alone and all five (gold).
     for era: [3] Era⟨.ORIGINAL, .MODERN, .M15⟩ {
         *canvas: Draw.Canvas
         if c := Draw.create_canvas(⟨2160, 1440⟩) { canvas = c } else if os_error { fail: failed = "no canvas: «os_error»" }
         defer canvas.destroy()
+        *layer: Draw.Canvas
+        if l := Draw.create_canvas(⟨2160, 1440⟩) { layer = l } else if os_error { fail: failed = "no layer: «os_error»" }
+        defer layer.destroy()
         *game := new_game(6)
         for k: 0 < 5 { game.identity[k] = u8'1 << u8'k }
         game.identity[5] = 0x1F
@@ -1173,10 +1172,25 @@ save_snapshots :: (folder: string) [failed: string] {
         layout := lay_out(screen_size, equal_splits(6, screen_size))
         *fonts: Fonts
         if fonts.reload_fonts(TEXT_FAMILIES[0], layout) is os_error then fail: failed = "no font: «os_error»"
-        draw(canvas, layout, game, fonts, ⟨can_undo: true, era: era⟩, settled_motes(layout, game))
+        settled, _ := settled_motes(layout, game)
+        draw(canvas, layer, layout, game, fonts, ⟨can_undo: true, era: era⟩, settled, elements)
         path := `scratch "«folder»/raza_frames_«ERA_NAMES[i64'era]».png"
         if canvas.save_png(path) is os_error then fail: failed = "can't write «path»: «os_error»"
     }
+}
+
+// The element sheet (draw_element_sheet's), into folder as raza_elements.png.
+save_element_sheet :: (folder: string) [failed: string] {
+    size := Wide.i32x2⟨2400, 900⟩
+    *canvas: Draw.Canvas
+    if c := Draw.create_canvas(size) { canvas = c } else if os_error { fail: failed = "no canvas: «os_error»" }
+    defer canvas.destroy()
+    *layer: Draw.Canvas
+    if l := Draw.create_canvas(size) { layer = l } else if os_error { fail: failed = "no layer: «os_error»" }
+    defer layer.destroy()
+    draw_element_sheet(canvas, layer, 10)
+    path := `scratch "«folder»/raza_elements.png"
+    if canvas.save_png(path) is os_error then fail: failed = "can't write «path»: «os_error»"
 }
 
 ////////////////////////////////
@@ -1211,7 +1225,7 @@ redo :: (timeline: *Timeline, game: *Game -> bool) {
 }
 
 Options :: struct {
-    black_snapshot: string ⟦help: "capture black attack stages into this folder, and quit"⟧
+    elements: string ⟦help: "draw each element, at rest and drawn out, into raza_elements.png in this folder, and quit"⟧
     snapshot: string ⟦help: "draw each count of players into PNGs in this folder (raza_2.png to raza_6.png, and raza_grid.png), and quit"⟧
     quit_after: f64 = 0 ⟦help: "quit after this many seconds, as if Quit were pressed (to profile it: rain -profile raza.rain -quit_after:15)"⟧
 }
@@ -1230,8 +1244,8 @@ main :: (args: [] string) [failed: string] {
     else if bad_arguments {
         fail: failed = bad_arguments
     }
-    if options.black_snapshot != "" {
-        if save_black_snapshots(options.black_snapshot) is failed then fail: failed
+    if options.elements != "" {
+        if save_element_sheet(options.elements) is failed then fail: failed
         return
     }
     if options.snapshot != "" {
@@ -1247,6 +1261,9 @@ main :: (args: [] string) [failed: string] {
     w.set_fullscreen(true)
     *canvas: Draw.Canvas
     if c := Draw.create_canvas(w.size, w.handle) { canvas = c } else if os_error { fail: failed = "no canvas: «os_error»" }
+    // (the light the elements give, drawn each frame, then added with its bloom)
+    *layer: Draw.Canvas
+    if l := Draw.create_canvas(w.size) { layer = l } else if os_error { fail: failed = "no light layer: «os_error»" }
 
     // The game, the font and each count of players' lines (splits[n] for n
     // players), as they were left last time (Defaults': the registry's), or
@@ -1280,6 +1297,7 @@ main :: (args: [] string) [failed: string] {
     *random := Random.generator()
     *pending: [MAX_PLAYERS] [MAX_PLAYERS] i32
     *volleys: Volleys
+    *elements: Elements
 
     // (for -quit_after's report: each frame's work, from its start to its
     // present, its waits for input left out)
@@ -1299,6 +1317,7 @@ main :: (args: [] string) [failed: string] {
         size := V2⟨f32'w.size[0], f32'w.size[1]⟩
         if canvas.size != w.size {
             if canvas.resize(w.size) is os_error then fail: failed = "can't resize the canvas"
+            if layer.resize(w.size) is os_error then fail: failed = "can't resize the light layer"
         }
         // The screen laid out each frame (its lines may be moving), and its
         // fonts made again for a new size or count, or once a line's let go.
@@ -1497,23 +1516,13 @@ main :: (args: [] string) [failed: string] {
             if layout.count != game.players then shown = new_game(layout.count, colours_for(game.identity, game.players, layout.count, splits[:], size))
         }
 
-        // The motes moved on: each miasma fed, a drag's stream (as much as
-        // it's worth, 21 for the grid's), the volleys' landings; and the
-        // game shown with what's still in flight not yet done.
+        // The elements and their motes moved on: each stirred or settling,
+        // each miasma fed, the volleys' landings; and the game shown with
+        // what's still in flight not yet done.
+        stir_elements(elements, layout, game, screen, volleys, seconds)
         motes.flow_scale = MOTE_FLOW * cell
         feed_miasmas(motes, random, layout, shown, seconds)
-        if screen.drag.active {
-            *amount: i32 = 0
-            if _, worth := aim(layout, game, screen.drag.from, mouse) is not missed {
-                if worth is {
-                case damage: amount = damage
-                case asked: amount = 21
-                }
-            }
-            feed_stream(motes, random, layout, game, screen.drag.from, mouse, amount, seconds)
-        }
         motes.update(seconds)
-        if screen.drag.active then steer_stream(motes, layout, game, screen.drag.from, mouse, seconds)
         steer_volleys(motes, volleys, random, layout, game, pending, seconds)
         if !screen.previewing then shown = shown_game(game, pending)
 
@@ -1547,7 +1556,7 @@ main :: (args: [] string) [failed: string] {
         surface_time += seconds * MOTION_RATES[i64'speed]
         screen.motion = speed
         screen.surface_time = surface_time
-        draw(canvas, layout, shown, fonts, screen, motes, volleys)
+        draw(canvas, layer, layout, shown, fonts, screen, motes, elements, volleys)
         canvas.present(w.handle, vsync: true)
         worked := Time.seconds_since_start() - frame_start
         busy += worked

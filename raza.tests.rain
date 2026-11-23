@@ -339,10 +339,10 @@ settings_buttons_are_where_drawn :: () #test {
     }
 }
 
-// A strike changes the game at once but shows it undone, a mote a point
-// flying along its path; as they land the life shown ticks down, and once
-// all have, it's the game's. Lethal commander damage bursts once, only
-// when every point has landed.
+// A strike changes the game at once but shows it undone while its volley
+// gathers and flies; as it lands the life shown ticks down a point at a
+// time, and once it has, it's the game's. Lethal commander damage bursts
+// once, as it lands.
 volleys_land_a_point_at_a_time :: () #test {
     layout := laid_out(4, LANDSCAPE)
     *game := new_game(4)
@@ -354,51 +354,29 @@ volleys_land_a_point_at_a_time :: () #test {
     finger := layout.seats[0].middle + V2⟨0, 120⟩
     strike(game, motes, volleys, random, layout, pending, 1, 0, 7, finger)
     assert(game.life[0] == 33 and game.commander[0][1] == 22, "dealt at once: «game.life[0]», «game.commander[0][1]»")
-    assert(shown_game(game, pending).life[0] == 40, "shown undone while they fly")
-    *volley := 0
-    for m: motes.motes { if m.tag & VOLLEY_MOTE != 0 then volley += 1 }
-    assert(volley == 7 and volleys.list.count == 1 and volleys.list[0].lethal, "a mote a point, a lethal volley: «volley»")
+    assert(shown_game(game, pending).life[0] == 40, "shown undone while it flies")
+    assert(volleys.list.count == 1 and volleys.list[0].lethal, "a lethal volley")
+    landing: f32 = VOLLEY_GATHER + VOLLEY_TRAVEL
+    *age: f32 = 0
     *shown_before: i32 = 40
-    *ticked_down := true
+    *steps := 0
     *bursts := 0
     for _: 0 < 120 {
-        motes.update(1.0 / 60)
         burst := steer_volleys(motes, volleys, random, layout, game, pending, 1.0 / 60)
-        if burst > 0 then assert(pending[0][1] == 0, "the burst comes once all have landed: «pending[0][1]» to come")
+        age += 1.0 / 60
         bursts += burst
         now := shown_game(game, pending).life[0]
-        if now > shown_before then ticked_down = false
+        if age < landing - 0.001 then assert(now == 40, "nothing off before it lands: «now» at «age»")
+        assert(now <= shown_before and shown_before - now <= 1, "down a point at a time: «shown_before» to «now»")
+        if now < shown_before then steps += 1
         shown_before = now
     }
-    assert(ticked_down and pending[0][1] == 0 and shown_before == 33, "landed, shown as dealt: «shown_before», «pending[0][1]» pending")
-    assert(bursts == 1 and volleys.list.count == 0, "one burst, the volley settled: «bursts»")
+    assert(pending[0][1] == 0 and shown_before == 33 and steps == 7, "landed, shown as dealt: «shown_before», «pending[0][1]» pending, «steps» steps")
+    assert(bursts == 1 and volleys.list.count == 0, "one burst, the volley done: «bursts»")
 }
 
-// A volley whose motes go before they land (taken out, or out of life)
-// is still settled: what it would have done comes off what's pending, so
-// the life shown can't stay wrong.
-volleys_settle_without_their_motes :: () #test {
-    layout := laid_out(4, LANDSCAPE)
-    *game := new_game(4)
-    *motes: Particles.System
-    *volleys: Volleys
-    *random := Random.generator(seed: 4)
-    *pending: [MAX_PLAYERS] [MAX_PLAYERS] i32
-    strike(game, motes, volleys, random, layout, pending, 2, 3, 6, layout.seats[3].middle)
-    // (two land, then the rest are gone)
-    for _: 0 < 200 {
-        motes.update(1.0 / 60)
-        steer_volleys(motes, volleys, random, layout, game, pending, 1.0 / 60)
-        if pending[3][2] <= 4 then break
-    }
-    for *m: motes.motes { if m.tag & VOLLEY_MOTE != 0 then remove m }
-    steer_volleys(motes, volleys, random, layout, game, pending, 1.0 / 60)
-    assert(pending[3][2] == 0 and volleys.list.count == 0, "settled: «pending[3][2]» pending, «volleys.list.count» volleys")
-    assert(shown_game(game, pending).life[3] == game.life[3])
-}
-
-// A volley's motes follow the stream's path: half way through their flight
-// they're near its curve's middle, not the straight line.
+// A volley thrown along the stream's path bends toward where the finger
+// let go, and its splash's motes are thrown out where it lands.
 volleys_follow_the_path :: () #test {
     layout := laid_out(4, LANDSCAPE)
     *game := new_game(4)
@@ -410,20 +388,61 @@ volleys_follow_the_path :: () #test {
     finger := layout.seats[0].middle + V2⟨0, 300⟩
     strike(game, motes, volleys, random, layout, pending, 1, 0, 1, finger)
     v := volleys.list[0]
-    for _: 0 < i64'(VOLLEY_TRAVEL * 0.5 * 60) {
-        motes.update(1.0 / 60)
-        steer_volleys(motes, volleys, random, layout, game, pending, 1.0 / 60)
+    assert(near_point(v.start, layout.seats[1].icon) and near_point(v.end, layout.seats[0].middle), "from their spot to the life total")
+    middle := (v.start + v.end) / 2
+    assert(Math.dot(v.bend - middle, finger - middle) > 0, "bends toward the finger")
+    steer_volleys(motes, volleys, random, layout, game, pending, VOLLEY_GATHER + VOLLEY_TRAVEL)
+    assert(motes.motes.count > 0, "a splash where it lands")
+    for m: motes.motes { assert(near_point(m.at, v.end), "the splash at the life total: «m.at»") }
+}
+
+// Volleys from one player to another stay apart, each landing its own
+// points, a long frame landing one whole.
+volleys_land_apart :: () #test {
+    layout := laid_out(3, LANDSCAPE)
+    *game := new_game(3)
+    *motes: Particles.System
+    *volleys: Volleys
+    *random := Random.generator(seed: 23)
+    *pending: [MAX_PLAYERS] [MAX_PLAYERS] i32
+    strike(game, motes, volleys, random, layout, pending, 1, 0, 3, layout.seats[0].middle)
+    steer_volleys(motes, volleys, random, layout, game, pending, VOLLEY_GATHER + VOLLEY_TRAVEL + VOLLEY_LAND)
+    strike(game, motes, volleys, random, layout, pending, 1, 0, 7, layout.seats[0].middle)
+    steer_volleys(motes, volleys, random, layout, game, pending, 0.1)
+    assert(pending[0][1] == 7 and shown_game(game, pending).life[0] == 37, "the first landed, the second in flight: «pending[0][1]»")
+    steer_volleys(motes, volleys, random, layout, game, pending, 2)
+    assert(pending[0][1] == 0 and shown_game(game, pending).life[0] == 30 and volleys.list.count == 0)
+}
+
+// Each colour's element, in WUBRG order, and an artifact's (no colours)
+// liquid metal.
+elements_are_the_colours :: () #test {
+    *list: [6] Element
+    n := elements_of((u8'1 << u8'Mana.RED) | (u8'1 << u8'Mana.WHITE), list)
+    assert(n == 2 and list[0] == .SUN and list[1] == .FIRE, "white and red: «list[:n]»")
+    m := elements_of(0, list)
+    assert(m == 1 and list[0] == .CHROME)
+    all := elements_of(0x1F, list)
+    assert(all == 5 and list[2] == .OIL and list[4] == .WIND)
+}
+
+// A field's rectangle holds its reach about each point of what's covered
+// of its curve.
+fields_are_inside_their_box :: () #test {
+    f := Field⟨start: ⟨100, 400⟩, bend: ⟨300, 700⟩, end: ⟨500, 200⟩, up: ⟨0, -1⟩, reach: 40, width_from: 0.5, width_to: 1, from: 0.2, to: 0.7⟩
+    at, size := field_box(f)
+    for i: 0 <= 10 {
+        p := curve_at(f.start, f.bend, f.end, Math.mix(f.from, f.to, f32'i / 10))
+        assert(p.x - 40 >= at.x - 0.01 and p.y - 40 >= at.y - 0.01 and p.x + 40 <= at.x + size.x + 0.01 and p.y + 40 <= at.y + size.y + 0.01, "«p» in «at» «size»")
     }
-    *at := V2⟨0, 0⟩
-    for m: motes.motes { if m.tag & VOLLEY_MOTE != 0 then at = m.at }
-    curve := curve_at(v.start, v.bend, v.end, 0.5)
-    straight := (v.start + v.end) / 2
-    assert(Math.length(at - curve) < Math.length(at - straight), "half way at «at»: the curve's «curve», the line's «straight»")
+    still := Field⟨start: ⟨50, 60⟩, bend: ⟨50, 60⟩, end: ⟨50, 60⟩, up: ⟨0, -1⟩, reach: 30⟩
+    sat, ssize := field_box(still)
+    assert(near_point(sat, V2⟨20, 30⟩) and near_point(ssize, V2⟨60, 60⟩), "at rest, its reach about it: «sat» «ssize»")
 }
 
 // The stream always ends at the life total of whoever the finger's over,
 // wherever over them it is, bending toward the finger; over no one, it
-// ends at the finger. Its motes leave the miasma and arrive at that end.
+// ends at the finger.
 streams_end_at_the_life_total :: () #test {
     layout := laid_out(4, LANDSCAPE)
     game := new_game(4)
@@ -440,23 +459,9 @@ streams_end_at_the_life_total :: () #test {
     }
     _, _, loose := stream_path(layout, game, 1, layout.centre + V2⟨0, 40⟩)
     assert(near_point(loose, layout.centre + V2⟨0, 40⟩), "over no one, to the finger: «loose»")
-    // (motes steered along it: at their start at the miasma, at their end at the life total)
-    // (a mote's time along it in home.x; its life longer, so it's bright to
-    // the end, where it's taken out)
-    *motes: Particles.System
-    finger := target.middle + V2⟨0, 80⟩
-    motes.add(⟨at: layout.seats[1].icon, life: 1.6, age: 0, home: ⟨1, 0⟩, tag: STREAM_MOTE, seed: 3⟩)
-    motes.add(⟨at: layout.seats[1].icon, life: 1.6, age: 0.999, home: ⟨1, 0⟩, tag: STREAM_MOTE, seed: 5⟩)
-    motes.add(⟨at: layout.seats[1].icon, life: 1.6, age: 1.01, home: ⟨1, 0⟩, tag: STREAM_MOTE, seed: 7⟩)
-    steer_stream(motes, layout, game, 1, finger, 1.0 / 60)
-    assert(motes.motes.count == 2, "the one past the end's taken out")
-    assert(near_point(motes.motes[0].at, layout.seats[1].icon), "leaves the miasma: «motes.motes[0].at»")
-    assert(Math.length(motes.motes[1].at - target.middle) < 3, "comes to the life total: «motes.motes[1].at»")
-    _, near_end, _ := Particles.look_of(motes.motes[1], 0)
-    assert(near_end.a > 0.5, "still bright there: «near_end»")
 }
 
-// An undo (or a new game) calls volleys off: their motes gone, nothing pending.
+// An undo (or a new game) calls volleys off: their splashes gone, nothing pending.
 undo_calls_off_volleys :: () #test {
     layout := laid_out(4, LANDSCAPE)
     *game := new_game(4)
@@ -465,8 +470,9 @@ undo_calls_off_volleys :: () #test {
     *random := Random.generator(seed: 3)
     *pending: [MAX_PLAYERS] [MAX_PLAYERS] i32
     strike(game, motes, volleys, random, layout, pending, 2, 3, 5, layout.seats[3].middle)
+    steer_volleys(motes, volleys, random, layout, game, pending, VOLLEY_GATHER + VOLLEY_TRAVEL + 0.01)
     call_off_volleys(motes, volleys, pending)
-    for m: motes.motes { assert(m.tag & VOLLEY_MOTE == 0, "no volley's mote left") }
+    for m: motes.motes { assert(m.tag & SPLASH_MOTE == 0, "no splash's mote left") }
     assert(pending[3][2] == 0 and volleys.list.count == 0)
 }
 
@@ -476,7 +482,7 @@ miasmas_stay_home :: () #test {
     layout := laid_out(4, LANDSCAPE)
     *game := new_game(4)
     game.life[2] = 0
-    motes := settled_motes(layout, game)
+    motes, _ := settled_motes(layout, game)
     cell := cell_of(layout)
     *each: [4] i64
     for m: motes.motes {
@@ -496,7 +502,7 @@ miasmas_are_balanced :: () #test {
     for which: 0 < 6 {
         *game := new_game(2)
         game.identity[0] = if which < 5 then u8'1 << u8'which else 0
-        motes := settled_motes(layout, game)
+        motes, _ := settled_motes(layout, game)
         *alive: f32 = 0
         for m: motes.motes { if m.tag & MIASMA_MOTE != 0 and m.tag & 0xFF == 0 then alive += 1 }
         want := STYLES[which].alive
@@ -506,7 +512,7 @@ miasmas_are_balanced :: () #test {
     for pair: [2] [2] i64⟨⟨0, 2⟩, ⟨3, 2⟩⟩ {
         *game := new_game(2)
         game.identity[0] = (u8'1 << u8'pair[0]) | (u8'1 << u8'pair[1])
-        motes := settled_motes(layout, game)
+        motes, _ := settled_motes(layout, game)
         *each: [6] f32
         for m: motes.motes { if m.tag & MIASMA_MOTE != 0 and m.tag & 0xFF == 0 then each[i64'((m.tag >> 8) & 0xFF)] += 1 }
         for which: pair {
@@ -746,67 +752,3 @@ deals_commander_damage :: () #test {
     assert(poor.life[0] == 0, "no damage to oneself")
 }
 
-// Black's tendrils and glob deliver a single hit, not a point per strand.
-black_lands_once :: () #test {
-    layout := laid_out(2, LANDSCAPE)
-    for amount: [3] i32⟨1, 18, 99⟩ {
-        #with scratch.rewind()
-        `scratch {
-            *game := new_game(2)
-            game.identity[1] = u8'1 << u8'Mana.BLACK
-            *motes: Particles.System
-            *volleys: Volleys
-            *random := Random.generator(seed: 21)
-            *pending: [MAX_PLAYERS] [MAX_PLAYERS] i32
-            strike(game, motes, volleys, random, layout, pending, 1, 0, amount, layout.seats[0].middle)
-            assert(volleys.list.count == 1 and motes.motes.count == 0)
-            *bursts: i64 = 0
-            for _: 0 < 120 {
-                bursts += steer_volleys(motes, volleys, random, layout, game, pending, 1.0 / 60)
-                shown := shown_game(game, pending).life[0]
-                assert(shown == 40 or shown == 40 - amount, "black never ticks down part of its hit: «shown»")
-            }
-            assert(pending[0][1] == 0 and volleys.list.count == 0)
-            expected := if amount >= 21 then 1 else 0
-            assert(bursts == expected)
-        }
-    }
-}
-
-// Particle loss cannot prematurely land a black attack; undo cancels it.
-black_waits_and_cancels :: () #test {
-    layout := laid_out(2, LANDSCAPE)
-    *game := new_game(2)
-    game.identity[1] = (u8'1 << u8'Mana.BLACK) | (u8'1 << u8'Mana.WHITE)
-    *motes: Particles.System
-    *volleys: Volleys
-    *random := Random.generator(seed: 22)
-    *pending: [MAX_PLAYERS] [MAX_PLAYERS] i32
-    strike(game, motes, volleys, random, layout, pending, 1, 0, 12, layout.seats[0].middle)
-    motes.motes.clear()
-    steer_volleys(motes, volleys, random, layout, game, pending, BLACK_REACH + BLACK_PULSE)
-    assert(pending[0][1] == 12 and volleys.list.count == 1, "strands plunge and pulse before the glob lands")
-    call_off_volleys(motes, volleys, pending)
-    assert(steer_volleys(motes, volleys, random, layout, game, pending, 2) == 0)
-    assert(pending[0][1] == 0 and volleys.list.count == 0 and motes.motes.count == 0)
-}
-
-// Independent attacks remain independent, including a long frame at impact.
-black_overlapping_hits :: () #test {
-    layout := laid_out(3, LANDSCAPE)
-    *game := new_game(3)
-    game.identity[1] = u8'1 << u8'Mana.BLACK
-    *motes: Particles.System
-    *volleys: Volleys
-    *random := Random.generator(seed: 23)
-    *pending: [MAX_PLAYERS] [MAX_PLAYERS] i32
-    strike(game, motes, volleys, random, layout, pending, 1, 0, 3, layout.seats[0].middle)
-    steer_volleys(motes, volleys, random, layout, game, pending, 0.5)
-    strike(game, motes, volleys, random, layout, pending, 1, 0, 7, layout.seats[0].middle)
-    steer_volleys(motes, volleys, random, layout, game, pending, 0.4)
-    assert(pending[0][1] == 7 and shown_game(game, pending).life[0] == 37)
-    steer_volleys(motes, volleys, random, layout, game, pending, 2)
-    assert(pending[0][1] == 0 and shown_game(game, pending).life[0] == 30)
-    assert(black_strands(18) > black_strands(1) and black_size(18) > black_size(1))
-    assert(black_strands(99999) <= 24 and black_size(99999) <= 3.1, "large damage has bounded rendering cost")
-}

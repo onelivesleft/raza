@@ -1,0 +1,620 @@
+// The elements: each colour's damage drawn as its own element, one field of
+// it over its whole reach fading softly into its player's part: white's
+// sun, blue's water, black's oil, red's fire, green's wind, an artifact's
+// liquid metal. Each is a shader of its own (Draw's draw_shader) given
+// where its field is: at rest, a point and how far it reaches; drawn out, a
+// curve and the part of it covered (a drag's stream, the element along it
+// to whoever it's aimed at; a volley, a gob of it thrown along it), with
+// the element along its spine. Each paints its matter, then what of it
+// gives light is drawn again into the light layer, which add_light adds
+// with its bloom. The same element procedures run on the CPU, for where
+// its motes are born.
+
+V3 :: #alias Math.Vector3(f32)
+V4 :: #alias Math.Vector4(f32)
+
+Element :: enum u8 {
+    SUN       // white's
+    WATER     // blue's
+    OIL       // black's
+    FIRE      // red's
+    WIND      // green's
+    CHROME    // an artifact's (no colours)
+}
+
+// A player's elements, in WUBRG order (Element's first five are the
+// colours', in Mana's order), or chrome with none (into; how many).
+elements_of :: (identity: Identity, into: [] *Element -> count: i64) #pure {
+    count = 0
+    for colour, i: [5] Mana⟨.WHITE, .BLUE, .BLACK, .RED, .GREEN⟩ {
+        if has_colour(identity, colour) {
+            into[count] = Element'u8'i
+            count += 1
+        }
+    }
+    if count == 0 {
+        into[0] = .CHROME
+        count = 1
+    }
+}
+
+// Where a field is, for its shader. Its spine is a curve from start, bent
+// toward bend, to end (at rest all three its middle), of which from to to
+// is covered (shares of the way along); up is the way up its player's
+// frame (away from them), reach how far it goes from its spine (pixels),
+// times width_from at the start of what's covered and width_to at its end.
+// Then its time (its own clock: how far its features have moved), how
+// stirred it is (0 at rest, 1 touched), its seed, how much of it shows
+// (fade), and whether this is its light, for the light layer (glow 1), or
+// its matter (0).
+Field :: struct {
+    start:      V2
+    bend:       V2
+    end:        V2
+    up:         V2
+    reach:      f32
+    width_from: f32 = 1
+    width_to:   f32 = 1
+    from:       f32 = 0
+    to:         f32 = 1
+    time:       f32 = 0
+    stir:       f32 = 0
+    seed:       f32 = 0
+    fade:       f32 = 1
+    glow:       f32 = 0
+    _:          [2] u32
+}
+
+// How finely a drawn-out field's curve is followed (steps along it).
+STREAM_STEPS :: 16
+
+// Where a pixel is in a field: q, in the field's own frame in reaches (x
+// to its player's right and y up, at rest; drawn out, x across the curve
+// and y back along it, so what rises trails behind), out, the way out of
+// the field from its spine as long as how far out it is (0 at the spine, 1
+// at its reach), and drawn (1 drawn out, 0 at rest). (The field's parts,
+// as a helper takes its stage's Uniforms' values.)
+field_place :: (pixel: V2, start: V2, bend: V2, end: V2, up: V2, reach: f32, width_from: f32, width_to: f32, from: f32, to: f32
+                -> q: V2, out: V2, drawn: f32) {
+    right := V2⟨0 - up.y, up.x⟩
+    span := Math.length(end - start) + Math.length(bend - start)
+    if span < 0.5 {
+        d := pixel - start
+        q = V2⟨Math.dot(d, right), Math.dot(d, up)⟩ / reach
+        out = q / width_from
+        drawn = 0
+    }
+    else {
+        // (the nearest point of the curve: its distance, its share of the
+        // way along what's covered, which side the pixel's on, and how far
+        // along it is)
+        *best: f32 = 1000000
+        *best_u: f32 = 0
+        *best_side: f32 = 1
+        *best_along: f32 = 0
+        *walked: f32 = 0
+        *a := curve_at(start, bend, end, from)
+        for i: 1 <= STREAM_STEPS {
+            u := f32'i / f32'STREAM_STEPS
+            b := curve_at(start, bend, end, Math.mix(from, to, u))
+            ab := b - a
+            long := Math.max(Math.length(ab), 0.0001)
+            h := Math.clamp(Math.dot(pixel - a, ab) / (long * long), 0, 1)
+            off := pixel - (a + ab * h)
+            d := Math.length(off)
+            if d < best {
+                best = d
+                best_u = (f32'(i - 1) + h) / f32'STREAM_STEPS
+                best_side = if ab.x * off.y - ab.y * off.x < 0 then -1.0 else 1.0
+                best_along = walked + h * long
+            }
+            walked += long
+            a = b
+        }
+        width := Math.mix(width_from, width_to, best_u)
+        q = V2⟨best_side * best, 0 - best_along⟩ / reach
+        out = V2⟨best_side * best / (reach * width), 0⟩
+        drawn = 1
+    }
+}
+
+// A field's colour, of its matter (premultiplied: its light added past
+// what it covers) or, for the light layer, its light alone (alpha 0).
+field_colour :: (paint: V4, light: V3, fade: f32, glow: f32 -> V4) {
+    if glow > 0.5 then return V4⟨light.x * fade, light.y * fade, light.z * fade, 0⟩
+    return paint * fade
+}
+
+////////////////////////////////
+// White's sun
+
+// The ball's radius, of the field's reach; how bright its depths are.
+SUN_BALL :: 0.46
+SUN_NEST :: 9.0               // (Star Nest gives about 0.07 to 0.11, its stars up to 3)
+
+// Star Nest by Pablo Roman Andrioli, License: MIT. Its volumetric fractal
+// (fewer steps), looking along dir from from: how bright the depths are.
+star_nest :: (dir: V3, from: V3 -> f32) {
+    *s: f32 = 0.1
+    *fade: f32 = 1
+    *v := V3⟨0, 0, 0⟩
+    for r: 0 < 8 {
+        *p := from + dir * (s * 0.5)
+        // (the tiling fold)
+        m := p - Math.floor(p / 1.7) * 1.7
+        p = Math.abs(V3⟨0.85, 0.85, 0.85⟩ - m)
+        *pa: f32 = 0
+        *a: f32 = 0
+        for i: 0 < 11 {
+            p = Math.abs(p) / Math.dot(p, p) - V3⟨0.53, 0.53, 0.53⟩
+            l := Math.length(p)
+            a += Math.abs(l - pa)
+            pa = l
+        }
+        // (dark matter, not near)
+        dm := Math.max(0.3 - a * a * 0.001, 0)
+        a = a * a * a
+        if r > 4 then fade *= 1 - dm
+        v = v + V3⟨fade, fade, fade⟩ + V3⟨s, s * s, s * s * s * s⟩ * (a * 0.0015 * fade)
+        fade *= 0.73
+        s += 0.1
+    }
+    return Math.length(v) * 0.01
+}
+
+// The sun: a ball whose depths are a starfield's (Star Nest's, seen through
+// its round surface, drifting), white-hot to gold, darker at its limb; its
+// corona about it, rays streaming out and flickering, fading out to its
+// reach. Stirred, it burns brighter and its corona reaches further.
+sun_at :: (q: V2, out: V2, drawn: f32, time: f32, seed: f32, stir: f32 -> paint: V4, light: V3) {
+    r := Math.length(out)
+    b := r / SUN_BALL
+    way := q / Math.max(Math.length(q), 0.0001)
+    rays := Patterns.layered(way * 3.2 + V2⟨1, 0.6⟩ * (r * 2 - time * 0.3) + V2⟨seed, seed * 1.3⟩, 4)
+    past := Math.max(r - SUN_BALL, 0)
+    corona := Math.exp(0 - past * (7 - 2.5 * stir)) * (0.35 + 1.1 * rays * rays) * Math.smoothstep(1.0, 0.55, r) *
+              Math.smoothstep(SUN_BALL - 0.06, SUN_BALL + 0.01, r)
+    *ball := V3⟨0, 0, 0⟩
+    *cover: f32 = 0
+    if b < 1 {
+        z := Math.sqrt(1 - b * b)
+        n := V3⟨out.x / SUN_BALL, out.y / SUN_BALL, z⟩
+        dir := Math.normalize(V3⟨n.x * 0.9, n.y * 0.9, 1⟩)
+        from := V3⟨1 + time * 0.02 + seed, 0.5 + time * 0.01, -1.5⟩
+        heat := Math.clamp((star_nest(dir, from) - 0.055) * SUN_NEST * (1 + 0.4 * stir), 0, 1.3)
+        limb := 0.35 + 0.65 * z
+        hot := Math.mix(V3⟨1.0, 0.6, 0.2⟩, V3⟨1.0, 0.96, 0.85⟩, Math.clamp(heat * 0.7 + z * 0.4 - 0.1, 0, 1))
+        ball = hot * (limb * (0.75 + 0.55 * heat))
+        cover = Math.smoothstep(1.0, 0.9, b)
+    }
+    glow := V3⟨1.0, 0.7, 0.35⟩ * (corona * 0.6)
+    paint = V4⟨ball.x * cover + glow.x, ball.y * cover + glow.y, ball.z * cover + glow.z, cover * 0.95 + Math.min(corona, 1) * 0.25⟩
+    light = ball * (cover * 0.25) + glow * 0.6
+}
+
+////////////////////////////////
+// Red's fire
+
+// Fire: at rest a flame rising from its root (toward its player) to its
+// tip, tongues of it climbing (layered noise, pushed about by more noise),
+// white-hot at its heart to orange and red at its edges; drawn out, flames
+// licking out from its spine. Stirred, it climbs faster and burns wider.
+fire_at :: (q: V2, out: V2, drawn: f32, time: f32, seed: f32, stir: f32 -> paint: V4, light: V3) {
+    r := Math.length(out)
+    rise := time * (1 + 0.6 * stir)
+    *h := (q.y + 0.8) / 1.7
+    // (a teardrop: round at its root, narrowing to its tip)
+    hw := Math.clamp(h, 0, 1)
+    width := 0.6 * Math.pow(1 - hw, 0.75) * Math.sqrt(Math.clamp(h * 6 + 0.15, 0, 1)) * (1 + 0.25 * stir)
+    *fuel := Math.clamp(1 - Math.abs(q.x) / width, 0, 1)
+    *at := q
+    if drawn > 0.5 {
+        h = r
+        fuel = 1 - 0.3 * r
+        at = V2⟨q.y, r * 1.5⟩
+    }
+    push := V2⟨Patterns.noise(at * 2.2 + V2⟨seed, 0 - rise * 0.5⟩), Patterns.noise(at * 2.2 + V2⟨seed + 5.2, 1.3 - rise * 0.5⟩)⟩
+    n := Patterns.layered(V2⟨at.x * 2.4, at.y * 1.3 - rise * 1.6⟩ + push * 0.6 + V2⟨seed * 3.1, 0⟩, 4)
+    // (its heat: most at its root's middle, less up it and out to its
+    // sides, the climbing noise eating into it, more so toward its tip, so
+    // it breaks into tongues there)
+    hc := Math.clamp(h, 0, 1)
+    heat := Math.pow(fuel, 0.8) * (1 - Math.pow(hc, 1.3)) - (n - 0.4) * (0.5 + 1.2 * hc)
+    *f := Math.clamp(heat * 1.35, 0, 1)
+    f = f * Math.smoothstep(-0.06, 0.08, h) * Math.smoothstep(1.0, 0.7, r)
+    ff := f * f * f
+    fire := V3⟨f, ff, ff * ff⟩ * 1.5
+    cover := Math.clamp(f * 1.3, 0, 1) * 0.8
+    paint = V4⟨Math.min(fire.x, 1.2), Math.min(fire.y, 1.2), Math.min(fire.z, 1.2), cover⟩
+    light = fire * 0.7
+}
+
+////////////////////////////////
+// Blue's water
+
+// How far the body of water goes, of the field's reach.
+WATER_BODY :: 0.9
+
+// Water: a body of it, its edge rippling, thickest in the middle; what's
+// seen through it taken by its depth as Beer's law has it (deep blue,
+// cyan where it's thin), its surface waves streaming toward its player, the
+// sky in it at a slant (Fresnel's), a sun's glint and foam on its crests.
+water_at :: (q: V2, out: V2, drawn: f32, time: f32, seed: f32, stir: f32 -> paint: V4, light: V3) {
+    r := Math.length(out)
+    flow := V2⟨0, time * (0.45 + 0.5 * stir)⟩
+    edge := r + (Patterns.noise(q * 2.1 + V2⟨seed, time * 0.4⟩) - 0.5) * 0.16
+    body := Math.clamp((WATER_BODY - edge) / 0.1, 0, 1)
+    across := edge / WATER_BODY
+    dome := Math.sqrt(Math.max(1 - across * across, 0))
+    w1 := Patterns.layered_slope(q * 2.3 + V2⟨seed, 0⟩ + flow, 4)
+    w2 := Patterns.layered_slope(V2⟨q.y, 0 - q.x⟩ * 3.4 + V2⟨0, seed⟩ + flow * 1.6, 3)
+    height := w1.x * 0.62 + w2.x * 0.38
+    slope := V2⟨w1.y, w1.z⟩ * (2.3 * 0.62) + V2⟨0 - w2.z, w2.y⟩ * (3.4 * 0.38)
+    tilt := out / WATER_BODY
+    n := Math.normalize(V3⟨tilt.x * 0.9 - slope.x * 0.12, tilt.y * 0.9 - slope.y * 0.12, dome + 0.15⟩)
+    depth := dome * (1.8 + 0.6 * height)
+    through := Math.exp(V3⟨0.915, 0.36, 0.235⟩ * (0 - depth))
+    seen := (through.x + through.y + through.z) / 3
+    deep := Math.mix(V3⟨0.02, 0.18, 0.42⟩, V3⟨0.25, 0.75, 0.9⟩, seen)
+    fresnel := 0.02 + 0.98 * Math.pow(1 - Math.clamp(n.z, 0, 1), 5)
+    sky := Math.mix(V3⟨0.55, 0.75, 0.92⟩, V3⟨0.95, 0.98, 1⟩, Math.clamp(n.y * 0.8 + 0.5, 0, 1))
+    half := Math.normalize(V3⟨-0.35, 0.55, 0.76⟩ + V3⟨0, 0, 1⟩)
+    glint := Math.pow(Math.max(Math.dot(n, half), 0), 90) * 2.5
+    foam := Math.smoothstep(0.66, 0.8, height) * (0.35 + 0.65 * Math.smoothstep(0.45, 0.85, edge))
+    a := body * Math.clamp(1 - seen * 0.55 + fresnel + foam, 0, 1)
+    seen_colour := Math.mix(deep, sky, fresnel) * a
+    bright := (glint + foam * 0.85) * body
+    paint = V4⟨seen_colour.x + bright, seen_colour.y + bright, seen_colour.z + bright, a⟩
+    light = V3⟨1, 1, 1⟩ * (glint * body * 0.7 + foam * body * 0.1)
+}
+
+////////////////////////////////
+// Black's oil
+
+// Oil: a slick of it, its surface a height that flows (noise pushed about
+// by noise, slowly), thickest in the middle, its edge where the height
+// runs out; nearly black, lit from behind at its steep edges, a sharp
+// highlight on its slopes and a rainbow where it runs thin.
+oil_at :: (q: V2, out: V2, drawn: f32, time: f32, seed: f32, stir: f32 -> paint: V4, light: V3) {
+    r := Math.length(out)
+    slow := time * (0.12 + 0.25 * stir)
+    p := q * 1.7 + V2⟨seed * 1.3, seed * 0.7⟩
+    push := V2⟨Patterns.noise(p * 0.8 + V2⟨slow, 0⟩), Patterns.noise(V2⟨p.y, p.x⟩ * 0.8 + V2⟨0, 0 - slow⟩)⟩ - V2⟨0.5, 0.5⟩
+    s := Patterns.layered_slope(p + push * 1.4 + V2⟨0, slow * 0.4⟩, 4)
+    dome := 1 - r * r
+    bulk := 0.3 + 0.95 * s.x
+    thick := dome * bulk - 0.22
+    grad := out * (-2.0 * bulk) + V2⟨s.y, s.z⟩ * (dome * 0.95 * 1.7)
+    n := Math.normalize(V3⟨0 - grad.x * 0.25, 0 - grad.y * 0.25, Math.max(thick, 0) * 1.2 + 0.04⟩)
+    lamp := Math.normalize(V3⟨-0.2, 0.6, 0.9⟩)
+    rim := 0.32 * (1 - Math.abs(n.z))
+    shine := Math.pow(Math.dot(n, lamp) * 0.5 + 0.5, 22)
+    spec := 0.55 * Math.smoothstep(0.25, 1, shine)
+    film := Math.smoothstep(0.16, 0.0, thick)
+    rainbow := V3⟨0.5, 0.5, 0.5⟩ + Math.cos(V3⟨0, 2.1, 4.2⟩ + V3⟨1, 1, 1⟩ * (Math.dot(n, lamp) * 4.5 - q.y * 1.3 + slow * 2)) * 0.5
+    rgb := V3⟨0.025, 0.02, 0.035⟩ + V3⟨rim, rim, rim * 1.1⟩ + V3⟨spec, spec, spec⟩ + rainbow * (film * 0.75)
+    cover := Math.smoothstep(0.0, 0.08, thick) * Math.smoothstep(1.0, 0.85, r)
+    paint = V4⟨rgb.x * cover, rgb.y * cover, rgb.z * cover, cover⟩
+    light = V3⟨spec, spec, spec⟩ * (cover * 0.5)
+}
+
+////////////////////////////////
+// An artifact's liquid metal
+
+// Liquid metal: a heavy blob of it, its surface swelling slowly, each
+// swell a mirror: the sky's brightness above its horizon and the dark
+// ground below (up its player's frame), a lamp's glint, and a faint tint
+// of bismuth where it turns away.
+chrome_at :: (q: V2, out: V2, drawn: f32, time: f32, seed: f32, stir: f32 -> paint: V4, light: V3) {
+    r := Math.length(out)
+    slow := time * (0.06 + 0.2 * stir)
+    p := q * 1.3 + V2⟨seed * 0.9, seed * 1.7⟩
+    push := V2⟨Patterns.noise(p + V2⟨slow, 0.3⟩), Patterns.noise(V2⟨p.y, p.x⟩ + V2⟨2.1, 0 - slow⟩)⟩ - V2⟨0.5, 0.5⟩
+    s := Patterns.layered_slope(p + push * 0.9, 3)
+    dome := 1 - r * r
+    bulk := 0.45 + 0.8 * s.x
+    thick := dome * bulk - 0.2
+    grad := out * (-1.0 * bulk) + V2⟨s.y, s.z⟩ * (dome * 1.6 * 1.3)
+    n := Math.normalize(V3⟨0 - grad.x * 0.4, 0 - grad.y * 0.4, Math.max(thick, 0) * 0.9 + 0.12⟩)
+    // (the view's ray, straight in, reflected about the surface)
+    reflected := V3⟨2 * n.z * n.x, 2 * n.z * n.y, 2 * n.z * n.z - 1⟩
+    up := reflected.y
+    sky := Math.mix(V3⟨0.62, 0.7, 0.8⟩, V3⟨0.98, 0.99, 1.0⟩, Math.sqrt(Math.clamp(up, 0, 1)))
+    ground := Math.mix(V3⟨0.42, 0.4, 0.38⟩, V3⟨0.16, 0.16, 0.18⟩, Math.sqrt(Math.clamp(0 - up, 0, 1)))
+    env := Math.mix(ground, sky, Math.smoothstep(-0.03, 0.03, up))
+    lamp := Math.normalize(V3⟨-0.3, 0.5, 0.8⟩)
+    glint := Math.pow(Math.max(Math.dot(reflected, lamp), 0), 60) * 1.6
+    tint := (V3⟨0.5, 0.5, 0.5⟩ + Math.cos(V3⟨0, 2.1, 4.2⟩ + V3⟨1, 1, 1⟩ * (n.z * 5 + slow)) * 0.5) * ((1 - n.z) * 0.18)
+    rgb := env * V3⟨0.93, 0.95, 0.98⟩ + tint + V3⟨glint, glint, glint⟩
+    cover := Math.smoothstep(0.0, 0.05, thick) * Math.smoothstep(1.0, 0.85, r)
+    paint = V4⟨rgb.x * cover, rgb.y * cover, rgb.z * cover, cover⟩
+    light = V3⟨glint, glint, glint⟩ * (cover * 0.6)
+}
+
+////////////////////////////////
+// Green's wind
+
+// Wind: gusts streaming to its player's right, curling, pale streaks of
+// them and dapples of light through leaves, faint, fading out to its reach.
+wind_at :: (q: V2, out: V2, drawn: f32, time: f32, seed: f32, stir: f32 -> paint: V4, light: V3) {
+    r := Math.length(out)
+    blow := time * (0.5 + 0.8 * stir)
+    curl := Patterns.noise(q * 1.4 + V2⟨0 - blow * 0.4, seed⟩)
+    v := Patterns.layered(V2⟨q.x * 0.35 - blow, q.y * 4.5 + curl * 1.2⟩ + V2⟨seed * 2.3, 0⟩, 3)
+    // (thin bands where the noise crosses a level, long across the wind's
+    // way, broken into gusts)
+    gust := Math.smoothstep(0.42, 0.7, Patterns.noise(q * 1.6 + V2⟨0 - blow * 1.3, seed * 1.9⟩))
+    streak := Math.clamp(1 - Math.abs(v - 0.55) / 0.03, 0, 1) * gust
+    dapple := Math.smoothstep(0.62, 0.85, Patterns.layered(q * 2.4 + V2⟨0 - blow * 0.25, seed⟩, 3))
+    fade := Math.smoothstep(1.0, 0.35, r)
+    leaf := V3⟨0.78, 0.96, 0.58⟩
+    haze := Patterns.layered(q * 1.2 + V2⟨0 - blow * 0.5, seed * 0.7⟩, 3)
+    a := (streak * 0.85 + dapple * 0.18 + haze * 0.14) * fade * (1 + 0.5 * stir)
+    paint = V4⟨leaf.x * a, leaf.y * a, leaf.z * a, a * 0.8⟩
+    light = leaf * (streak * fade * 0.25)
+}
+
+////////////////////////////////
+// The shaders
+
+Sun_Field :: shader { vertex: Draw.quad_place; fragment: sun_shade }
+Fire_Field :: shader { vertex: Draw.quad_place; fragment: fire_shade }
+Water_Field :: shader { vertex: Draw.quad_place; fragment: water_shade }
+Oil_Field :: shader { vertex: Draw.quad_place; fragment: oil_shade }
+Chrome_Field :: shader { vertex: Draw.quad_place; fragment: chrome_shade }
+Wind_Field :: shader { vertex: Draw.quad_place; fragment: wind_shade }
+
+sun_shade :: (from: Draw.Quad_Between, field: Shader.Uniforms(Field) -> colour: V4) {
+    q, out, drawn := field_place(from.pixel, field.start, field.bend, field.end, field.up, field.reach, field.width_from, field.width_to, field.from, field.to)
+    if Math.length(out) >= 1 then return ⟨0, 0, 0, 0⟩
+    paint, light := sun_at(q, out, drawn, field.time, field.seed, field.stir)
+    colour = field_colour(paint, light, field.fade, field.glow)
+}
+
+fire_shade :: (from: Draw.Quad_Between, field: Shader.Uniforms(Field) -> colour: V4) {
+    q, out, drawn := field_place(from.pixel, field.start, field.bend, field.end, field.up, field.reach, field.width_from, field.width_to, field.from, field.to)
+    if Math.length(out) >= 1 then return ⟨0, 0, 0, 0⟩
+    paint, light := fire_at(q, out, drawn, field.time, field.seed, field.stir)
+    colour = field_colour(paint, light, field.fade, field.glow)
+}
+
+water_shade :: (from: Draw.Quad_Between, field: Shader.Uniforms(Field) -> colour: V4) {
+    q, out, drawn := field_place(from.pixel, field.start, field.bend, field.end, field.up, field.reach, field.width_from, field.width_to, field.from, field.to)
+    if Math.length(out) >= 1 then return ⟨0, 0, 0, 0⟩
+    paint, light := water_at(q, out, drawn, field.time, field.seed, field.stir)
+    colour = field_colour(paint, light, field.fade, field.glow)
+}
+
+oil_shade :: (from: Draw.Quad_Between, field: Shader.Uniforms(Field) -> colour: V4) {
+    q, out, drawn := field_place(from.pixel, field.start, field.bend, field.end, field.up, field.reach, field.width_from, field.width_to, field.from, field.to)
+    if Math.length(out) >= 1 then return ⟨0, 0, 0, 0⟩
+    paint, light := oil_at(q, out, drawn, field.time, field.seed, field.stir)
+    colour = field_colour(paint, light, field.fade, field.glow)
+}
+
+chrome_shade :: (from: Draw.Quad_Between, field: Shader.Uniforms(Field) -> colour: V4) {
+    q, out, drawn := field_place(from.pixel, field.start, field.bend, field.end, field.up, field.reach, field.width_from, field.width_to, field.from, field.to)
+    if Math.length(out) >= 1 then return ⟨0, 0, 0, 0⟩
+    paint, light := chrome_at(q, out, drawn, field.time, field.seed, field.stir)
+    colour = field_colour(paint, light, field.fade, field.glow)
+}
+
+wind_shade :: (from: Draw.Quad_Between, field: Shader.Uniforms(Field) -> colour: V4) {
+    q, out, drawn := field_place(from.pixel, field.start, field.bend, field.end, field.up, field.reach, field.width_from, field.width_to, field.from, field.to)
+    if Math.length(out) >= 1 then return ⟨0, 0, 0, 0⟩
+    paint, light := wind_at(q, out, drawn, field.time, field.seed, field.stir)
+    colour = field_colour(paint, light, field.fade, field.glow)
+}
+
+SUN_FIELD :: Sun_Field(Draw.SHADER_TARGET)
+FIRE_FIELD :: Fire_Field(Draw.SHADER_TARGET)
+WATER_FIELD :: Water_Field(Draw.SHADER_TARGET)
+OIL_FIELD :: Oil_Field(Draw.SHADER_TARGET)
+CHROME_FIELD :: Chrome_Field(Draw.SHADER_TARGET)
+WIND_FIELD :: Wind_Field(Draw.SHADER_TARGET)
+
+////////////////////////////////
+// Drawing them
+
+// The rectangle a field covers: what's covered of its curve, and its reach
+// about that.
+field_box :: (f: Field -> at: V2, size: V2) #pure {
+    pad := f.reach * Math.max(f.width_from, f.width_to)
+    *low := f.start
+    *high := f.start
+    for i: 0 <= STREAM_STEPS {
+        p := curve_at(f.start, f.bend, f.end, Math.mix(f.from, f.to, f32'i / f32'STREAM_STEPS))
+        if i == 0 {
+            low = p
+            high = p
+        }
+        low = Math.min(low, p)
+        high = Math.max(high, p)
+    }
+    at = low - V2⟨pad, pad⟩
+    size = high - low + V2⟨pad * 2, pad * 2⟩
+}
+
+// A field of an element drawn by its shader into a canvas.
+paint_field :: (canvas: *Draw.Canvas, element: Element, f: Field) {
+    at, size := field_box(f)
+    if element is {
+    case .SUN: canvas.draw_shader(at, size, SUN_FIELD.code, SUN_FIELD.bindings.field, f)
+    case .WATER: canvas.draw_shader(at, size, WATER_FIELD.code, WATER_FIELD.bindings.field, f)
+    case .OIL: canvas.draw_shader(at, size, OIL_FIELD.code, OIL_FIELD.bindings.field, f)
+    case .FIRE: canvas.draw_shader(at, size, FIRE_FIELD.code, FIRE_FIELD.bindings.field, f)
+    case .WIND: canvas.draw_shader(at, size, WIND_FIELD.code, WIND_FIELD.bindings.field, f)
+    case .CHROME: canvas.draw_shader(at, size, CHROME_FIELD.code, CHROME_FIELD.bindings.field, f)
+    }
+}
+
+// A field drawn: its matter onto the canvas, and a sun's or a fire's light
+// into the light layer too (each pass works its shader out again, over the
+// whole field: the others' glints are small, and go without their bloom).
+draw_field :: (canvas: *Draw.Canvas, layer: *Draw.Canvas, element: Element, f: Field) {
+    paint_field(canvas, element, f)
+    if element == .SUN or element == .FIRE {
+        *lit := f
+        lit.glow = 1
+        paint_field(layer, element, lit)
+    }
+}
+
+// How far one player's field reaches alone (cells), and several's, each
+// round their spot, smaller.
+ELEMENT_CELLS :: 1.5
+ELEMENT_SHARE :: 0.68
+ELEMENT_ROUND :: 0.55
+
+// How the bloom spreads (cells) and how strongly it's added.
+BLOOM_CELLS :: 0.45
+BLOOM_STRENGTH :: 1.4
+
+// Each player's elements' own clocks (how far their features have moved:
+// faster when stirred) and how stirred each is (0 at rest, 1 touched, easing).
+Elements :: struct {
+    clock: [MAX_PLAYERS] f32
+    stir:  [MAX_PLAYERS] f32
+}
+
+// The elements as they'd be some seconds in (for snapshots).
+settled_elements :: (-> elements: Elements) #pure {
+    elements = ⟨⟩
+    for *c, k: elements.clock { c = 10 + f32'k * 3.7 }
+}
+
+// The elements moved on a frame: each eases toward stirred while its player
+// drags from it or a volley of theirs gathers, half while it's aimed at.
+stir_elements :: (elements: *Elements, layout: Layout, game: Game, screen: Screen_State, volleys: Volleys, seconds: f32) {
+    *aimed: i64 = -1
+    if screen.drag.active {
+        if to, _ := aim(layout, game, screen.drag.from, screen.mouse) is not missed then aimed = to
+    }
+    for k: 0 < MAX_PLAYERS {
+        *target: f32 = 0
+        if screen.drag.active and screen.drag.from == k then target = 1
+        else if k == aimed then target = 0.5
+        for v: volleys.list { if v.from == k and v.age < VOLLEY_GATHER + VOLLEY_TRAVEL then target = 1 }
+        elements.stir[k] += (target - elements.stir[k]) * Math.min(seconds * 6, 1)
+        elements.clock[k] += seconds * (1 + 1.2 * elements.stir[k])
+    }
+}
+
+// Where one of a player's fields is at rest (the i'th of n), and how far it reaches.
+field_spot :: (layout: Layout, k: i64, i: i64, n: i64, time: f32 -> at: V2, reach: f32) #pure {
+    cell := cell_of(layout)
+    seat := layout.seats[k]
+    at = seat.icon
+    reach = ELEMENT_CELLS * cell
+    if n > 1 {
+        turn := f32'i / f32'n * f32'Math.TAU + time * 0.03
+        at = seat.icon + V2⟨Math.cos(turn), Math.sin(turn)⟩ * (ELEMENT_ROUND * cell)
+        reach = ELEMENT_SHARE * ELEMENT_CELLS * cell
+    }
+}
+
+// A drawn-out field's curve for the i'th of n elements along a path: the
+// bend moved to one side by its place, so several braid.
+braided :: (start: V2, bend: V2, end: V2, i: i64, n: i64, cell: f32 -> V2) #pure {
+    along := end - start
+    *across := V2⟨0, 0⟩
+    if Math.length(along) > 0.001 then across = V2⟨0 - along.y, along.x⟩ / Math.length(along)
+    return bend + across * ((f32'i - f32'(n - 1) / 2) * 0.7 * cell)
+}
+
+// Each player's elements, a drag's stream, the volleys in flight and
+// landing, then the light they give added with its bloom.
+draw_elements :: (canvas: *Draw.Canvas, layer: *Draw.Canvas, layout: Layout, game: Game, screen: Screen_State, elements: Elements, volleys: Volleys) {
+    cell := cell_of(layout)
+    layer.clear(Draw.rgb(0x000000))
+    for seat, k: layout.seats[:layout.count] {
+        if is_out(game, k) then continue
+        *list: [6] Element
+        n := elements_of(game.identity[k], list)
+        // (a volley of theirs gathering swells them)
+        *swell: f32 = 0
+        for v: volleys.list {
+            if v.from == k and v.age < VOLLEY_GATHER then swell = Math.max(swell, Math.sin(v.age / VOLLEY_GATHER * f32'Math.PI))
+        }
+        for element, i: list[:n] {
+            at, reach := field_spot(layout, k, i, n, elements.clock[k])
+            f := Field⟨start: at, bend: at, end: at, up: seat.toward * -1, reach: reach * (1 + 0.2 * swell),
+                       time: elements.clock[k] + f32'i * 7.3, stir: Math.max(elements.stir[k], swell), seed: f32'(k * 3 + i) * 1.7⟩
+            draw_field(canvas, layer, element, f)
+        }
+    }
+    // A drag's stream: each of the dragger's elements drawn out from their
+    // spot to whoever they're over (bent toward the finger), braided.
+    if screen.drag.active {
+        from := screen.drag.from
+        seat := layout.seats[from]
+        if Math.length(screen.mouse - seat.icon) >= 0.5 * cell {
+            start, bend, end := stream_path(layout, game, from, screen.mouse)
+            *list: [6] Element
+            n := elements_of(game.identity[from], list)
+            for element, i: list[:n] {
+                f := Field⟨start: start, bend: braided(start, bend, end, i, n, cell), end: end, up: seat.toward * -1, reach: STREAM_CELLS * cell,
+                           width_from: 0.55, width_to: 0.3, time: elements.clock[from] + f32'i * 7.3, stir: 1, seed: f32'(from * 3 + i) * 1.7⟩
+                draw_field(canvas, layer, element, f)
+            }
+        }
+    }
+    for v: volleys.list { draw_volley(canvas, layer, layout, game, elements, v) }
+    canvas.add_light(layer, BLOOM_CELLS * cell, BLOOM_STRENGTH)
+}
+
+// How far a stream reaches from its spine (cells, at its widest).
+STREAM_CELLS :: 0.9
+
+// How big a volley's gob is (cells): bigger for more, within reason.
+volley_cells :: (amount: i32 -> f32) #pure {
+    return Math.min(0.5 + 0.1 * Math.sqrt(f32'Math.max(amount, 1)), 1.2)
+}
+
+// A volley: gathering at its player's spot (their fields swell, drawn
+// there), then a gob of each element thrown along its path, its head
+// biggest, its tail trailing; then landing, a splash of it spreading at
+// whoever it hit and fading (bigger for a lethal one).
+draw_volley :: (canvas: *Draw.Canvas, layer: *Draw.Canvas, layout: Layout, game: Game, elements: Elements, v: Volley) {
+    if v.age < VOLLEY_GATHER then return
+    cell := cell_of(layout)
+    *list: [6] Element
+    n := elements_of(game.identity[v.from], list)
+    size := volley_cells(v.amount) * cell
+    time := elements.clock[v.from]
+    landing: f32 = VOLLEY_GATHER + VOLLEY_TRAVEL
+    for element, i: list[:n] {
+        seed := f32'(v.from * 3 + i) * 1.7 + f32'v.id
+        if v.age < landing {
+            t := (v.age - VOLLEY_GATHER) / VOLLEY_TRAVEL
+            p := t * t * (3 - 2 * t)
+            f := Field⟨start: v.start, bend: braided(v.start, v.bend, v.end, i, n, cell), end: v.end, up: layout.seats[v.from].toward * -1,
+                       reach: size, from: Math.max(p - 0.28, 0), to: p, width_from: 0.25, width_to: 1, time: time + f32'i * 7.3, stir: 1, seed: seed⟩
+            draw_field(canvas, layer, element, f)
+        }
+        else {
+            l := Math.clamp((v.age - landing) / (VOLLEY_LAND + VOLLEY_LINGER), 0, 1)
+            grow: f32 = if v.lethal then 2.6 else 1.3
+            f := Field⟨start: v.end, bend: v.end, end: v.end, up: layout.seats[v.to].toward * -1,
+                       reach: size * (1 + grow * Math.sqrt(l)), time: time + f32'i * 7.3 + l * 2, stir: 1, seed: seed, fade: (1 - l) * (1 - l)⟩
+            draw_field(canvas, layer, element, f)
+        }
+    }
+}
+
+// The elements large on the background, at rest and drawn out (a sheet to
+// look at each as it's worked on).
+draw_element_sheet :: (canvas: *Draw.Canvas, layer: *Draw.Canvas, time: f32) {
+    canvas.clear(BACKGROUND)
+    layer.clear(Draw.rgb(0x000000))
+    for element, i: [6] Element⟨.SUN, .WATER, .OIL, .FIRE, .WIND, .CHROME⟩ {
+        x := 220 + 400 * f32'i
+        at := V2⟨x, 260⟩
+        draw_field(canvas, layer, element, ⟨start: at, bend: at, end: at, up: ⟨0, -1⟩, reach: 180, time: time + f32'i * 7.3, seed: f32'i * 1.7⟩)
+        start := V2⟨x - 150, 700⟩
+        end := V2⟨x + 150, 560⟩
+        draw_field(canvas, layer, element, ⟨start: start, bend: V2⟨x, 760⟩, end: end, up: ⟨0, -1⟩, reach: 90, width_from: 0.55, width_to: 0.3,
+                                            time: time + f32'i * 7.3, stir: 1, seed: f32'i * 1.7⟩)
+    }
+    canvas.add_light(layer, 40, BLOOM_STRENGTH)
+}
