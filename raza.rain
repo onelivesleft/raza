@@ -7,9 +7,9 @@
 // screen's upright middle, and a line between two is moved by dragging its
 // end along the edge. The capsule in the middle undoes, shows how many play (a person
 // each: touched, the other counts show above and below it, to drag to for
-// a new game), and will hold the settings; the corner button switches the
-// text between Crimson Pro and EB Garamond. The game, the font and each
-// count's lines are kept from one run to the next (Defaults', the registry's).
+// a new game), and holds the settings. The text is Crimson Pro's. The game
+// and each count's lines are kept from one run to the next (Defaults', the
+// registry's).
 //
 //     rain -run raza.rain
 //
@@ -54,10 +54,9 @@ V2 :: #alias Math.Vector2(f32)
 // The fonts, carried in the program.
 MANA        :: #data "fonts/mana/mana.ttf"
 CRIMSON_PRO :: #data "fonts/crimson_pro/CrimsonPro[wght].ttf"
-EB_GARAMOND :: #data "fonts/eb_garamond/EBGaramond[wght].ttf"
 
-TEXT_FAMILIES :: [2] string⟨"Crimson Pro", "EB Garamond"⟩
-ICON_FAMILY   :: "Mana"          // Magic's own symbols (the colours'); other icons are the Icons module's
+TEXT_FAMILY :: "Crimson Pro"
+ICON_FAMILY :: "Mana"            // Magic's own symbols (the colours'); other icons are the Icons module's
 
 // Each colour's symbol (Mana's ms-w to ms-g), in WUBRG order; its circle's
 // colour (Magic's own, as the cards' mana symbols are printed); and the
@@ -177,7 +176,7 @@ row_fits :: (layout: Layout, seat: Seat, points: [] V2, x: f32, y: f32 -> bool) 
     first := placed(seat.middle, seat.angle, ⟨x, y⟩)
     if !inside(first, points) or clearance(first, points) < r + gap - 0.5 then return false
     row := toggle_row(seat, x, y, cell)
-    return toggles_fit(points, row, r + 0.5 * gap) and clear_of_font_button(layout, row, r + 0.5 * gap)
+    return toggles_fit(points, row, r + 0.5 * gap)
 }
 
 // A row of toggles in a part's player's frame, the first at x, y.
@@ -195,17 +194,6 @@ clearance :: (p: V2, points: [] V2 -> f32) #pure {
     *least: f32 = 1e30
     for a, i: points { least = Math.min(least, distance_to_segment(p, a, points[(i + 1) % points.count])) }
     return least
-}
-
-// Whether circles of radius r at the places are clear of the font button.
-clear_of_font_button :: (layout: Layout, places: [5] V2, r: f32 -> bool) #pure {
-    at, size := font_button(layout)
-    for c: places {
-        dx := Math.max(Math.max(at.x - c.x, c.x - (at.x + size.x)), 0)
-        dy := Math.max(Math.max(at.y - c.y, c.y - (at.y + size.y)), 0)
-        if dx * dx + dy * dy < r * r then return false
-    }
-    return true
 }
 
 // The damage icon at a point, of a player who isn't out: its player; or absent.
@@ -323,7 +311,7 @@ load_fonts :: (family: string, layout: Layout -> fonts: Fonts) [os_error: Draw.D
     if mana := Draw.load_font(ICON_FAMILY, i32'(cell * TOGGLE_RADIUS * 1.25)) { fonts.mana = mana } else if os_error { fail: os_error }
 }
 
-// The fonts made again, for a new layout or family.
+// The fonts made again, for a new layout.
 reload_fonts :: (fonts: *Fonts, family: string, layout: Layout) [os_error: Draw.Draw_Error] {
     fonts.life.destroy()
     fonts.small.destroy()
@@ -684,17 +672,6 @@ on_column :: (layout: Layout, shown: f32, p: V2 -> bool) #pure {
     return Math.abs(p.x - layout.centre.x) <= 0.6 * cell and p.y >= top and p.y <= bottom
 }
 
-font_button :: (layout: Layout -> at: V2, size: V2) #pure {
-    cell := cell_of(layout)
-    size = ⟨cell, cell⟩
-    at = layout.size - V2⟨1.25 * cell, 1.25 * cell⟩
-}
-
-in_font_button :: (layout: Layout, p: V2 -> bool) #pure {
-    at, size := font_button(layout)
-    return p.x >= at.x and p.y >= at.y and p.x < at.x + size.x and p.y < at.y + size.y
-}
-
 ////////////////////////////////
 // Drawing
 
@@ -947,12 +924,6 @@ draw_capsule :: (canvas: *Draw.Canvas, layout: Layout, game: Game, screen: Scree
     draw_icon_at(canvas, SYSTEM_ICON, capsule_centre(layout, .SYSTEM), 0.62 * cell, system_ink)
 }
 
-draw_font_button :: (canvas: *Draw.Canvas, layout: Layout, fonts: Fonts) {
-    at, size := font_button(layout)
-    canvas.fill_rounded_rect(at, size, 0.2 * size.x, CAPSULE)
-    draw_centred(canvas, fonts.label, at + size / 2, 0, "Aa", INK)
-}
-
 // The column of counts, each a ring of people, moving through the button:
 // the one nearest it bright, the rest fading with their distance from it.
 draw_counts :: (canvas: *Draw.Canvas, layout: Layout, screen: Screen_State) {
@@ -1143,7 +1114,6 @@ draw :: (canvas: *Draw.Canvas, layer: *Draw.Canvas, layout: Layout, game: Game, 
     draw_elements(canvas, layer, layout, game, screen, elements, volleys)
     motes.draw(canvas)
     draw_capsule(canvas, layout, game, screen)
-    draw_font_button(canvas, layout, fonts)
     if screen.counts.open or screen.counts.settling then draw_counts(canvas, layout, screen)
     if screen.drag.active then draw_drag(canvas, layout, game, fonts, screen.drag, screen.mouse, artifact_of(screen.era), motes.time)
     if screen.picker.open then draw_picker(canvas, layout, fonts, screen.picker, game, artifact_of(screen.era))
@@ -1189,7 +1159,7 @@ save_snapshots :: (folder: string) [failed: string] {
         screen_size := V2⟨f32'size[0], f32'size[1]⟩
         layout := lay_out(screen_size, equal_splits(game.players, screen_size))
         *fonts: Fonts
-        if fonts.reload_fonts(TEXT_FAMILIES[i % 2], layout) is os_error then fail: failed = "no font: «os_error»"
+        if fonts.reload_fonts(TEXT_FAMILY, layout) is os_error then fail: failed = "no font: «os_error»"
         // Half way from where the line comes into the first's part to its
         // far edge.
         target := layout.seats[0]
@@ -1237,7 +1207,7 @@ save_snapshots :: (folder: string) [failed: string] {
             picking := Count_Picker⟨open: true, held: true, shown: 5.2, laid: 4, toward: 5, progress: 0.5⟩
             moving := lay_out(screen_size, shown_splits(picking, none[:], screen_size))
             preview := new_game(moving.count, colours_for(game.identity, game.players, moving.count, none[:], screen_size))
-            if fonts.resize_life(TEXT_FAMILIES[0], moving) is os_error then fail: failed = "no font: «os_error»"
+            if fonts.resize_life(TEXT_FAMILY, moving) is os_error then fail: failed = "no font: «os_error»"
             moving_motes, _ := settled_motes(moving, preview)
             draw(canvas, layer, moving, preview, fonts, ⟨counts: picking, previewing: true, can_undo: true, era: era⟩, moving_motes, elements)
             counts_path := `scratch "«folder»/raza_counts.png"
@@ -1264,7 +1234,7 @@ save_snapshots :: (folder: string) [failed: string] {
         screen_size := V2⟨2160, 1440⟩
         layout := lay_out(screen_size, equal_splits(6, screen_size))
         *fonts: Fonts
-        if fonts.reload_fonts(TEXT_FAMILIES[0], layout) is os_error then fail: failed = "no font: «os_error»"
+        if fonts.reload_fonts(TEXT_FAMILY, layout) is os_error then fail: failed = "no font: «os_error»"
         settled, _ := settled_motes(layout, game)
         draw(canvas, layer, layout, game, fonts, ⟨can_undo: true, era: era⟩, settled, elements)
         path := `scratch "«folder»/raza_frames_«ERA_NAMES[era]».png"
@@ -1326,7 +1296,6 @@ Options :: struct {
 main :: (args: [] string) [failed: string] {
     if Draw.add_font(MANA) is bad_font then fail: failed = "Mana isn't a font Draw can read"
     if Draw.add_font(CRIMSON_PRO) is bad_font then fail: failed = "Crimson Pro isn't a font Draw can read"
-    if Draw.add_font(EB_GARAMOND) is bad_font then fail: failed = "EB Garamond isn't a font Draw can read"
     *options: Options
     if parsed := args.parse(Options, about: "Raza: a damage tracker for Commander, for a tablet in the middle of the table.") {
         options = parsed
@@ -1358,13 +1327,14 @@ main :: (args: [] string) [failed: string] {
     *layer: Draw.Canvas
     if l := Draw.create_canvas(w.size) { layer = l } else if os_error { fail: failed = "no light layer: «os_error»" }
 
-    // The game, the font and each count of players' lines (splits[n] for n
-    // players), as they were left last time (Defaults': the registry's), or
-    // a new game of four, Crimson Pro, and lines as equal_splits starts them.
+    // The game and each count of players' lines (splits[n] for n players),
+    // as they were left last time (Defaults': the registry's), or a new game
+    // of four and lines as equal_splits starts them. (The font was a setting
+    // once: what was kept of it goes.)
     *game := Defaults.get("game", new_game(4))
     if game.players < 2 or game.players > MAX_PLAYERS then game = new_game(4)
     *timeline: Timeline
-    *family := Math.clamp(Defaults.get("font", i64'0), 0, 1)
+    if Defaults.remove("font") is { case absent, os_error: _ }
     *splits: [MAX_PLAYERS + 1] Splits
     for n: 2 <= MAX_PLAYERS { splits[n] = Defaults.get(`scratch "splits.«n»", Splits⟨⟩) }
     *frames := Defaults.get("era", Era.ORIGINAL)
@@ -1373,7 +1343,6 @@ main :: (args: [] string) [failed: string] {
     *surface_time: f32 = 0
     // (what was last stored, to store again only what's changed)
     *stored_game := game
-    *stored_family := family
     *stored_frames := frames
     *stored_speed := speed
     *last_frame := Time.seconds_since_start()
@@ -1417,7 +1386,7 @@ main :: (args: [] string) [failed: string] {
         if !splits_fit(splits[game.players], game.players) then splits[game.players] = equal_splits(game.players, size)
         layout = lay_out(size, splits[game.players])
         if size != fonts_for or game.players != fonts_players {
-            if fonts.reload_fonts(TEXT_FAMILIES[family], layout) is os_error then fail: failed = "no font: «os_error»"
+            if fonts.reload_fonts(TEXT_FAMILY, layout) is os_error then fail: failed = "no font: «os_error»"
             fonts_for = size
             fonts_players = game.players
         }
@@ -1469,10 +1438,6 @@ main :: (args: [] string) [failed: string] {
                 else {
                     screen.counts.open = false
                 }
-            }
-            else if in_font_button(layout, mouse) {
-                family = 1 - family
-                if fonts.reload_fonts(TEXT_FAMILIES[family], layout) is os_error then fail: failed = "no font: «os_error»"
             }
             else if screen.settings_open {
                 setting := settings_part_at(layout, mouse)
@@ -1637,10 +1602,6 @@ main :: (args: [] string) [failed: string] {
             if Defaults.set("game", game) is os_error { }
             stored_game = game
         }
-        if family != stored_family {
-            if Defaults.set("font", family) is os_error { }
-            stored_family = family
-        }
         if frames != stored_frames {
             if Defaults.set("era", frames) is os_error { }
             stored_frames = frames
@@ -1653,7 +1614,7 @@ main :: (args: [] string) [failed: string] {
         // The life totals sized for the parts drawn, whatever moved them
         // (a dragged line, lines settling on a count, a reset); the font's
         // made again only when the size changes.
-        if fonts.resize_life(TEXT_FAMILIES[family], layout) is os_error then fail: failed = "no font: «os_error»"
+        if fonts.resize_life(TEXT_FAMILY, layout) is os_error then fail: failed = "no font: «os_error»"
 
         screen.can_undo = timeline.past.count > 0
         screen.can_redo = timeline.future.count > 0

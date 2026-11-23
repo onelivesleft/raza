@@ -206,24 +206,20 @@ lines_morph_between_counts :: () #test {
 }
 
 // Each part's colour toggles are inside it, and its nearest is as far from
-// the part's divider as the row is from the screen's edge (where the font
-// button hasn't pushed the row along).
+// the part's divider as the row is from the screen's edge.
 toggles_keep_their_gap :: () #test {
     for players: 2 <= MAX_PLAYERS {
         for size: [2] V2⟨LANDSCAPE, PORTRAIT⟩ {
             layout := laid_out(players, size)
             cell := cell_of(layout)
             want := (TOGGLE_RADIUS + TOGGLE_GAP) * cell
-            at, button := font_button(layout)
             for seat, k: layout.seats[:players] {
                 points := seat.outline[:seat.count]
                 places := toggle_places(layout, seat)
                 for p: places { assert(inside(p, points), "«players» on «size»: part «k»'s toggles are inside it") }
                 gap := clearance(places[0], points)
                 assert(gap >= want - 1, "«players» on «size»: part «k»'s nearest toggle is «gap» from its sides, under «want»")
-                if Math.length(places[0] - (at + button / 2)) > 4 * cell {
-                    assert(gap <= want + 1, "«players» on «size»: part «k»'s nearest toggle is «gap» from its divider, not «want»")
-                }
+                assert(gap <= want + 1, "«players» on «size»: part «k»'s nearest toggle is «gap» from its divider, not «want»")
             }
         }
     }
