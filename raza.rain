@@ -2,7 +2,7 @@
 // table. Each player has a part of the screen, their life total in it
 // facing them, and a damage icon toward the centre: dragged into another
 // player's part, it deals that player commander damage, more the further it
-// goes (up to 20, then a number to pick, 21 to start with). The parts start
+// goes (1 to 9 out to the life total, then a picker starting at 10). The parts start
 // as wide as each other across their life totals, mirrored about the
 // screen's upright middle, and a line between two is moved by dragging its
 // end along the edge. The capsule in the middle undoes, shows how many play (a person
@@ -46,6 +46,7 @@ Raza :: program {
 #include "layout.rain"
 #include "game.rain"
 #include "frames.rain"
+#include "materials.rain"
 #include "motes.rain"
 #include "elements.rain"
 
@@ -352,23 +353,22 @@ entry_point :: (from: V2, to: V2, points: [] V2 -> V2) #pure {
 }
 
 // What a drag from a player's icon to a point does: the player whose part
-// it's in, and how much, by how far toward that player it's come since it
-// came in. Missed if it's in no other player's part, or one who's out.
+// it's in, and how far along the source-to-life line, starting at its
+// crossing into the target. Sideways motion does not change the damage.
 aim :: (layout: Layout, game: Game, from: i64, at: V2 -> to: i64, amount: Drag_Amount) [missed] {
     to = -1
     amount = Drag_Amount.damage(1)
     if target := seat_at(layout, at) is absent then fail: missed
     if target == from or is_out(game, target) then fail: missed
     seat := layout.seats[target]
-    entry := entry_point(layout.seats[from].icon, at, seat.outline[:seat.count])
-    inner := Math.dot(entry - layout.centre, seat.toward)
-    depth := Math.dot(at - layout.centre, seat.toward)
-    share := if seat.reach - inner > 1 then (depth - inner) / (seat.reach - inner) else 1
+    entry := entry_point(layout.seats[from].icon, seat.middle, seat.outline[:seat.count])
+    axis := seat.middle - entry
+    share := Math.dot(at - entry, axis) / Math.max(Math.dot(axis, axis), 1)
     to = target
     amount = amount_for(share)
 }
 
-// The number grid, asked for by a drag to the far edge: tens, then units,
+// The number grid, asked for by a drag past the life total along the aim line: tens, then units,
 // then a tick or a cross. It faces the player who dragged.
 Picker :: struct {
     open:  bool
@@ -378,7 +378,7 @@ Picker :: struct {
     units: i32
 }
 
-DEFAULT_PICKED :: 21
+DEFAULT_PICKED :: 10
 
 // The parts of the number grid, in its own frame (centred on the screen,
 // x along its text), in cells.
@@ -514,41 +514,102 @@ capsule_part_at :: (layout: Layout, at: V2 -> Capsule_Part) [absent] {
     fail: absent
 }
 
-// How many points each quarter of the plus's outline has: an arm's rounded
-// end, then the rounded inside corner to the next arm.
-PLUS_CAP_POINTS    :: 11
-PLUS_CORNER_POINTS :: 5
-PLUS_POINTS        :: 4 * (PLUS_CAP_POINTS + PLUS_CORNER_POINTS)
+// The controls are cut into the parts' surface as the channels between them
+// are: a recess, its floor the surface darkened, its walls the channels'
+// cosine bowl, each lit or shaded as it faces the light (PART_LIGHT) or
+// away. Its shape is a plus, arms reaching CAPSULE_REACH, CAPSULE_HALF wide
+// each, their ends round, their inside corners rounded by PLUS_CORNER;
+// opened (as the settings open, eased), it's part of the way to a square
+// CAPSULE_REACH out each way, its corners rounded by SETTINGS_ROUND: each
+// arm widening, so each inside corner is pushed out to the square's corner.
+// All in cells.
+PLUS_CORNER :: 0.25
+RECESS_WALL :: 0.12             // how wide its walls are, from the surface to its floor
 
-// The plus's outline about a point: arms reaching out reach, half wide
-// each, their ends round, their inside corners rounded by corner. A
-// quarter's points (the right arm's end, the corner below it), then each
-// next quarter turned a quarter clockwise.
-plus_outline :: (centre: V2, reach: f32, half: f32, corner: f32 -> [PLUS_POINTS] V2) #pure {
-    *quarter: [PLUS_CAP_POINTS + PLUS_CORNER_POINTS] V2
-    *n: i64 = 0
-    end := V2⟨reach - half, 0⟩
-    for i: 0 < PLUS_CAP_POINTS {
-        a := f32'Math.PI * (f32'i / f32'(PLUS_CAP_POINTS - 1) - 0.5)
-        quarter[n] = end + V2⟨Math.cos(a), Math.sin(a)⟩ * half
-        n += 1
-    }
-    nook := V2⟨half + corner, half + corner⟩
-    for i: 0 < PLUS_CORNER_POINTS {
-        a := f32'Math.PI * (1.5 - 0.5 * f32'i / f32'(PLUS_CORNER_POINTS - 1))
-        quarter[n] = nook + V2⟨Math.cos(a), Math.sin(a)⟩ * corner
-        n += 1
-    }
-    *outline: [PLUS_POINTS] V2
-    for k: 0 < 4 {
-        for p, i: quarter {
-            // (turned k quarters clockwise, y down: x, y to -y, x)
-            *q := p
-            for _: 0 < k { q = V2⟨0 - q.y, q.x⟩ }
-            outline[k * quarter.count + i] = centre + q
-        }
-    }
-    return outline
+// How far a point is outside a box about 0, half its size each way, its
+// corners rounded by radius (negative inside).
+round_box_distance :: (p: V2, half: V2, radius: f32 -> f32) #pure {
+    q := Math.abs(p) - half + V2⟨radius, radius⟩
+    return Math.length(Math.max(q, 0.0)) + Math.min(Math.max(q.x, q.y), 0) - radius
+}
+
+// How far a point (from the controls' middle) is outside the recess
+// (negative inside), its shape as recess_shape gives it.
+recess_distance :: (p: V2, shape: V4, more: V4 -> f32) #pure {
+    reach := shape.z
+    t := more.z
+    across := Math.mix(shape.w, reach, t)
+    radius := Math.mix(shape.w, more.y, t)
+    wide := round_box_distance(p, V2⟨reach, across⟩, radius)
+    tall := round_box_distance(p, V2⟨across, reach⟩, radius)
+    // (the two arms joined smoothly, so the inside corners are rounded;
+    // not at all once square)
+    k := Math.max(more.x * (1 - t), 0.0001)
+    h := Math.clamp(0.5 + 0.5 * (tall - wide) / k, 0, 1)
+    return Math.mix(tall, wide, h) - k * h * (1 - h)
+}
+
+// The recess's shape, in pixels, open a share of the way into the
+// settings' square: its middle and its arms' reach and half width (shape),
+// and its inside corners' rounding, the square's corners', how far it's
+// open (eased in and out), and its walls' width (more).
+recess_shape :: (layout: Layout, open: f32 -> shape: V4, more: V4) #pure {
+    cell := cell_of(layout)
+    opened := Math.clamp(open, 0, 1)
+    t := opened * opened * (3 - 2 * opened)
+    shape = ⟨layout.centre.x, layout.centre.y, CAPSULE_REACH * cell, CAPSULE_HALF * cell⟩
+    more = ⟨PLUS_CORNER * cell, SETTINGS_ROUND * cell, t, RECESS_WALL * cell⟩
+}
+
+// Whether a point is in the controls' recess, open a share of the way.
+in_controls :: (layout: Layout, p: V2, open: f32 = 0 -> bool) #pure {
+    shape, more := recess_shape(layout, open)
+    return recess_distance(p - shape.xy, shape, more) < 0
+}
+
+Recess_Params :: struct {
+    shape: V4
+    more:  V4
+    floor: V4     // its floor's colour (opaque: the controls' own, not the surface's)
+}
+
+// The recess over the surface: its walls going down from the surface to
+// its floor, of a colour of its own (the capsule's), each wall shaded where
+// it faces away from the light and warmly lit where it faces it, given as
+// what to lay over the surface (its colour premultiplied).
+recess_shade :: (from: Draw.Quad_Between, recess: Shader.Uniforms(Recess_Params) -> colour: V4) {
+    p := from.pixel - recess.shape.xy
+    d := recess_distance(p, recess.shape, recess.more)
+    if d > 1 then return ⟨0, 0, 0, 0⟩
+    coverage := Math.clamp(0.5 - d, 0, 1)
+    // (the way out of it, toward the surface: its distance's slope)
+    gx := recess_distance(p + V2⟨0.5, 0⟩, recess.shape, recess.more) - recess_distance(p - V2⟨0.5, 0⟩, recess.shape, recess.more)
+    gy := recess_distance(p + V2⟨0, 0.5⟩, recess.shape, recess.more) - recess_distance(p - V2⟨0, 0.5⟩, recess.shape, recess.more)
+    outward := Math.normalize(V2⟨gx, gy⟩ + V2⟨0.00001, 0⟩)
+    // (as the channels are: across 0 on its floor, 1 at the surface)
+    across := Math.clamp(1 + d / Math.max(recess.more.w, 1), 0, 1)
+    wall := Math.sin(across * f32'Math.PI)
+    facing := Math.dot(outward * -1.0, PART_LIGHT)
+    // (the surface giving way to the floor down the wall, then the wall's
+    // shade, then its light, each laid over the last)
+    down := (1 + Math.cos(across * f32'Math.PI)) * 0.5
+    shade := Math.max(0 - facing, 0) * wall * 0.48
+    light := Math.max(facing, 0) * wall * 0.38
+    kept := (1 - shade) * (1 - light)
+    rgb := recess.floor.xyz * (down * kept) + PART_WARM * light
+    alpha := 1 - (1 - down) * kept
+    colour = V4⟨rgb.x, rgb.y, rgb.z, alpha⟩ * coverage
+}
+
+Recess :: shader { vertex: Draw.quad_place; fragment: recess_shade }
+RECESS :: Recess(Draw.SHADER_TARGET)
+
+// The controls' recess drawn, open a share of the way into the settings' square.
+draw_recess :: (canvas: *Draw.Canvas, layout: Layout, open: f32) {
+    shape, more := recess_shape(layout, open)
+    margin := shape.z + 2
+    floor := V4⟨CAPSULE.r, CAPSULE.g, CAPSULE.b, 1⟩
+    canvas.draw_shader(shape.xy - V2⟨margin, margin⟩, V2⟨margin, margin⟩ * 2, RECESS.code, RECESS.bindings.recess, Recess_Params⟨shape, more, floor⟩)
 }
 
 // The count of players, picked by dragging: touched, the players' button
@@ -693,17 +754,17 @@ fill_turned_box :: (canvas: *Draw.Canvas, origin: V2, angle: f32, at: V2, size: 
     canvas.fill_rounded_rect(low, high - low, radius, colour)
 }
 
-draw_seat :: (canvas: *Draw.Canvas, layout: Layout, game: Game, fonts: Fonts, k: i64, targeted: bool, era: Era, time: f32) {
+draw_seat :: (canvas: *Draw.Canvas, layout: Layout, game: Game, fonts: Fonts, k: i64, targeted: bool, time: f32) {
     seat := layout.seats[k]
     cell := cell_of(layout)
     out := is_out(game, k)
     points := seat.outline[:seat.count]
-    artifact := artifact_of(era)
+    artifact := ARTIFACT
     // Its frame: its colours' gradient, across it as its player sees it
-    // (left to right), with its era's surface over it.
+    // (left to right), with its surface over it.
     *colours: [Draw.MAX_GRADIENT_COLOURS] Draw.RGBA
-    n, pattern, surface := part_fill(era, game.identity[k], cell, k, time, seat.angle, colours)
-    draw_part(canvas, layout, k, colours[:n], pattern, surface, out, targeted)
+    n, pattern, surface := part_fill(game.identity[k], cell, k, time, seat.angle, colours)
+    draw_part(canvas, layout, k, colours[:n], pattern, surface, game.identity[k], out, targeted)
     // (a part too thin for its displays, as it opens or closes, is its colour alone)
     if seat.room < 0.6 * cell then return
     // (dark ink where its colours are light at its middle, where its life is)
@@ -909,8 +970,22 @@ draw_people :: (canvas: *Draw.Canvas, centre: V2, count: i64, cell: f32, colour:
 
 draw_capsule :: (canvas: *Draw.Canvas, layout: Layout, game: Game, screen: Screen_State) {
     cell := cell_of(layout)
-    outline := plus_outline(layout.centre, CAPSULE_REACH * cell, CAPSULE_HALF * cell, 0.25 * cell)
-    canvas.fill_polygon(outline[:], CAPSULE)
+    // (opening into the settings' square: the screen behind it darkened as
+    // it opens, the plus's buttons fading out over the first half, the
+    // settings' fading in over the second)
+    open := Math.clamp(screen.settings_shown, 0, 1)
+    if open > 0 then canvas.fill_rect(⟨0, 0⟩, layout.size, Draw.rgba(0x000000, 0.35 * open))
+    draw_recess(canvas, layout, open)
+    plus_shows := Math.clamp(1 - 2 * open, 0, 1)
+    settings_show := Math.clamp(2 * open - 1, 0, 1)
+    // The system's button, the power icon, stays where it is throughout:
+    // opened, it's Quit, on red.
+    system := capsule_centre(layout, .SYSTEM)
+    if open > 0 then canvas.fill_circle(system, 0.48 * cell, faded(QUIT_RED, settings_show))
+    system_ink := Math.mix(lighter(CAPSULE, 0.75), INK, open)
+    if !screen.counts.open and !screen.counts.settling then draw_icon_at(canvas, SYSTEM_ICON, system, 0.62 * cell, system_ink)
+    if settings_show > 0 then draw_settings(canvas, layout, screen.motion, settings_show)
+    if plus_shows <= 0 then return
     // The players: a ring of a person each (or, while a count's picked, the
     // column's, drawn after).
     p := capsule_centre(layout, .PLAYERS)
@@ -918,19 +993,21 @@ draw_capsule :: (canvas: *Draw.Canvas, layout: Layout, game: Game, screen: Scree
         canvas.fill_circle(p, 0.52 * cell, lighter(CAPSULE, 0.1))
     }
     else {
-        draw_people(canvas, p, game.players, cell, INK)
+        draw_people(canvas, p, game.players, cell, faded(INK, plus_shows))
     }
-    // Undo and redo (each dim with nothing to undo or redo), a new game, and
-    // the system's button (bright while its panel's open).
+    // Undo and redo (each dim with nothing to undo or redo), and a new game.
     undo_ink := if screen.can_undo then INK else lighter(CAPSULE, 0.25)
-    draw_icon_at(canvas, UNDO_ICON, capsule_centre(layout, .UNDO), 0.62 * cell, undo_ink)
+    draw_icon_at(canvas, UNDO_ICON, capsule_centre(layout, .UNDO), 0.62 * cell, faded(undo_ink, plus_shows))
     redo_ink := if screen.can_redo then INK else lighter(CAPSULE, 0.25)
-    draw_icon_at(canvas, REDO_ICON, capsule_centre(layout, .REDO), 0.62 * cell, redo_ink)
+    draw_icon_at(canvas, REDO_ICON, capsule_centre(layout, .REDO), 0.62 * cell, faded(redo_ink, plus_shows))
     // (the column of counts, while it shows, is over the upright arm in their place)
     if screen.counts.open or screen.counts.settling then return
-    draw_icon_at(canvas, RESTART_ICON, capsule_centre(layout, .RESTART), 0.62 * cell, lighter(CAPSULE, 0.75))
-    system_ink := if screen.settings_open then INK else lighter(CAPSULE, 0.75)
-    draw_icon_at(canvas, SYSTEM_ICON, capsule_centre(layout, .SYSTEM), 0.62 * cell, system_ink)
+    draw_icon_at(canvas, RESTART_ICON, capsule_centre(layout, .RESTART), 0.62 * cell, faded(lighter(CAPSULE, 0.75), plus_shows))
+}
+
+// A colour, a share as opaque.
+faded :: (colour: Draw.RGBA, share: f32 -> Draw.RGBA) #pure {
+    return ⟨colour.r, colour.g, colour.b, colour.a * share⟩
 }
 
 // The column of counts, each a ring of people, moving through the button:
@@ -964,7 +1041,7 @@ Screen_State :: struct {
     can_redo:      bool
     previewing:    bool          // the lines are another count's, or moving to one
     settings_open: bool
-    era:           Era           // which era's frames the parts are like
+    settings_shown: f32          // how far the plus has opened into the settings' square, 0 to 1
     motion:        Motion        // how fast their surfaces move
     surface_time:  f32           // how far they've moved, in features
     fps:           f32           // frames a second, over the last half second (0: none yet, not shown)
@@ -993,113 +1070,96 @@ draw_fps :: (canvas: *Draw.Canvas, layout: Layout, fonts: Fonts, fps: f32) {
 }
 
 ////////////////////////////////
-// Settings: a panel over the middle of the screen: which era's frames the
-// parts are like, how fast their surfaces move, putting every count's lines
-// back as they start, and quitting. Its rows, each a name at LABEL_X and
-// its buttons from BUTTONS_LEFT to BUTTONS_RIGHT.
+// Settings: the system's button opens the plus into a square (its inside
+// corners pushed out to the square's, recess_shape's), a button at each of
+// the plus's places in a three by three grid, CAPSULE_ARM apart: top left,
+// Reset (every count's lines back where they start, each seat its starting
+// colours, the motion slow); top right, the surfaces' motion, one button
+// going round paused, slow, medium and fast; and bottom middle, where the
+// system's button was, Quit. Anywhere else, in the square or out of it,
+// closes it again.
 
-SETTINGS_HALF :: V2⟨4.9, 2.75⟩     // in cells
-LABEL_X       :: -3.45             // the rows' names' middles
-BUTTONS_LEFT  :: -2.1
-BUTTONS_RIGHT :: 4.7
-TITLE_Y       :: -2.1
-FRAMES_Y      :: -0.8              // each row's middle
-MOTION_Y      :: 0.5
-LINES_Y       :: 1.8
+// The square's corners' radius, in cells, and the seconds it takes to open
+// (or close).
+SETTINGS_ROUND :: 0.5
+SETTINGS_TIME  :: 0.22
 
-// The button i of n in a row (its middle at y), in cells from the
-// screen's centre: from its low corner to its high.
-row_button :: (i: i64, n: i64, y: f32 -> low: V2, high: V2) #pure {
-    gap: f32 = 0.15
-    width := (BUTTONS_RIGHT - BUTTONS_LEFT - gap * f32'(n - 1)) / f32'n
-    left := BUTTONS_LEFT + f32'i * (width + gap)
-    low = ⟨left, y - 0.5⟩
-    high = ⟨left + width, y + 0.5⟩
-}
+QUIT_RED :: Draw.rgb(0x8A3030)
 
-era_button :: (era: Era -> low: V2, high: V2) #pure {
-    l, h := row_button(i64'era, 3, FRAMES_Y)
-    low = l
-    high = h
-}
-
-motion_button :: (motion: Motion -> low: V2, high: V2) #pure {
-    l, h := row_button(i64'motion, 4, MOTION_Y)
-    low = l
-    high = h
-}
-
-// The Quit button, in cells from the screen's centre, across from the
-// panel's title.
-QUIT_LOW  :: V2⟨3.1, TITLE_Y - 0.4⟩
-QUIT_HIGH :: V2⟨BUTTONS_RIGHT, TITLE_Y + 0.4⟩
-QUIT_RED  :: Draw.rgb(0x8A3030)
-
-// The Reset button, the last row: every count's lines back where they
-// start (equal_splits'), and each seat its starting colours.
-RESET_LOW  :: V2⟨BUTTONS_LEFT, LINES_Y - 0.5⟩
-RESET_HIGH :: V2⟨BUTTONS_RIGHT, LINES_Y + 0.5⟩
+PAUSE_ICON :: icon(Mdi.PAUSE)
+RESET_ICON :: icon(Mdi.BACKUP_RESTORE)
 
 Settings_Part :: union {
-    era: Era
-    motion: Motion
+    animation           // the motion on to its next setting
     reset
     quit
-    panel
-    outside
+    close               // anywhere else
+}
+
+// The motion the button goes to from one: paused, slow, medium, fast, and
+// round to paused again.
+next_motion :: (motion: Motion -> Motion) #pure {
+    return if motion is {
+        case .OFF: .SLOW
+        case .SLOW: .MEDIUM
+        case .MEDIUM: .FAST
+        case .FAST: .OFF
+    }
 }
 
 in_box :: (p: V2, low: V2, high: V2 -> bool) #pure {
     return p.x >= low.x and p.x <= high.x and p.y >= low.y and p.y <= high.y
 }
 
+// Where each of the settings' buttons is, in grid places from the screen's
+// centre (a place CAPSULE_ARM cells).
+RESET_PLACE     :: V2⟨-1, -1⟩
+ANIMATION_PLACE :: V2⟨1, -1⟩
+QUIT_PLACE      :: V2⟨0, 1⟩
+
 settings_part_at :: (layout: Layout, p: V2 -> Settings_Part) #pure {
-    local := (p - layout.centre) / cell_of(layout)
-    if Math.abs(local.x) > SETTINGS_HALF.x or Math.abs(local.y) > SETTINGS_HALF.y then return Settings_Part.outside
-    if in_box(local, QUIT_LOW, QUIT_HIGH) then return Settings_Part.quit
-    if in_box(local, RESET_LOW, RESET_HIGH) then return Settings_Part.reset
-    for era: [3] Era⟨.ORIGINAL, .MODERN, .M15⟩ {
-        low, high := era_button(era)
-        if in_box(local, low, high) then return Settings_Part.era(era)
+    local := (p - layout.centre) / (cell_of(layout) * CAPSULE_ARM)
+    on :: (q: V2, place: V2 -> bool) #pure {
+        // (a button's half a place across, less a little)
+        return Math.abs(q.x - place.x) <= 0.45 and Math.abs(q.y - place.y) <= 0.45
     }
-    for motion: [4] Motion⟨.OFF, .SLOW, .MEDIUM, .FAST⟩ {
-        low, high := motion_button(motion)
-        if in_box(local, low, high) then return Settings_Part.motion(motion)
-    }
-    return Settings_Part.panel
+    if on(local, ANIMATION_PLACE) then return Settings_Part.animation
+    if on(local, RESET_PLACE) then return Settings_Part.reset
+    if on(local, QUIT_PLACE) then return Settings_Part.quit
+    return Settings_Part.close
 }
 
-// A row's button: its colour, ringed when it's the one chosen, its name.
-draw_choice :: (canvas: *Draw.Canvas, fonts: Fonts, c: V2, cell: f32, low: V2, high: V2, colour: Draw.RGBA, chosen: bool, name: string) {
-    if chosen {
-        canvas.fill_rounded_rect(c + (low - V2⟨0.06, 0.06⟩) * cell, (high - low + V2⟨0.12, 0.12⟩) * cell, 0.2 * cell, INK)
-    }
-    canvas.fill_rounded_rect(c + low * cell, (high - low) * cell, 0.16 * cell, colour)
-    draw_centred(canvas, fonts.label, c + (low + high) / 2 * cell, 0, name, ink_on(colour))
-}
-
-draw_settings :: (canvas: *Draw.Canvas, layout: Layout, fonts: Fonts, era: Era, motion: Motion) {
+// The settings' buttons in the opened square (the Quit button's red and
+// its icon drawn with the plus's), shown a share of the way in.
+draw_settings :: (canvas: *Draw.Canvas, layout: Layout, motion: Motion, shown: f32) {
     cell := cell_of(layout)
+    pitch := CAPSULE_ARM * cell
     c := layout.centre
-    label := lighter(CAPSULE, 0.6)
-    canvas.fill_rect(⟨0, 0⟩, layout.size, Draw.rgba(0x000000, 0.45))
-    canvas.fill_rounded_rect(c - SETTINGS_HALF * cell, SETTINGS_HALF * 2 * cell, 0.3 * cell, CAPSULE)
-    draw_centred(canvas, fonts.label, c + V2⟨LABEL_X, TITLE_Y⟩ * cell, 0, "Settings", INK)
-    canvas.fill_rounded_rect(c + QUIT_LOW * cell, (QUIT_HIGH - QUIT_LOW) * cell, 0.16 * cell, QUIT_RED)
-    draw_centred(canvas, fonts.label, c + (QUIT_LOW + QUIT_HIGH) / 2 * cell, 0, "Quit", INK)
-    draw_centred(canvas, fonts.label, c + V2⟨LABEL_X, FRAMES_Y⟩ * cell, 0, "Frames", label)
-    draw_centred(canvas, fonts.label, c + V2⟨LABEL_X, MOTION_Y⟩ * cell, 0, "Motion", label)
-    draw_centred(canvas, fonts.label, c + V2⟨LABEL_X, LINES_Y⟩ * cell, 0, "Lines", label)
-    canvas.fill_rounded_rect(c + RESET_LOW * cell, (RESET_HIGH - RESET_LOW) * cell, 0.16 * cell, lighter(CAPSULE, 0.25))
-    draw_centred(canvas, fonts.label, c + (RESET_LOW + RESET_HIGH) / 2 * cell, 0, "Reset", INK)
-    // (each era's button in its gold; the speeds in the capsule's colour)
-    for choice: [3] Era⟨.ORIGINAL, .MODERN, .M15⟩ {
-        low, high := era_button(choice)
-        draw_choice(canvas, fonts, c, cell, low, high, LOOKS[choice].gold.ground, choice == era, ERA_NAMES[choice])
+    size := 0.62 * cell
+    ink := faded(INK, shown)
+    // (the motion as it is: paused, or its speed's triangles)
+    at := c + ANIMATION_PLACE * pitch
+    if motion is {
+        case .OFF: draw_icon_at(canvas, PAUSE_ICON, at, size, ink)
+        case .SLOW: draw_play(canvas, at, 1, size, ink)
+        case .MEDIUM: draw_play(canvas, at, 2, size, ink)
+        case .FAST: draw_play(canvas, at, 3, size, ink)
     }
-    for choice: [4] Motion⟨.OFF, .SLOW, .MEDIUM, .FAST⟩ {
-        low, high := motion_button(choice)
-        draw_choice(canvas, fonts, c, cell, low, high, lighter(CAPSULE, 0.25), choice == motion, MOTION_NAMES[choice])
+    draw_icon_at(canvas, RESET_ICON, c + RESET_PLACE * pitch, size, ink)
+}
+
+// A speed's icon, play's triangles (one for slow, two, fast-forward's, for
+// medium, three for fast), a count of them in a row centred on a point, an
+// icon's size: each triangle as fast-forward's (mdi's: 8.5 of its 24 wide,
+// 12 high, each against the next).
+draw_play :: (canvas: *Draw.Canvas, middle: V2, count: i64, size: f32, colour: Draw.RGBA) {
+    width := size * 8.5 / 24
+    height := size * 12 / 24
+    *left := middle.x - width * f32'count / 2
+    for _: 0 < count {
+        points := [3] V2⟨⟨left, middle.y - height / 2⟩, ⟨left + width, middle.y⟩, ⟨left, middle.y + height / 2⟩⟩
+        canvas.fill_polygon(points[:], colour)
+        left += width
     }
 }
 
@@ -1111,22 +1171,20 @@ draw :: (canvas: *Draw.Canvas, layer: *Draw.Canvas, layout: Layout, game: Game, 
     if screen.drag.active {
         if to, _ := aim(layout, game, screen.drag.from, screen.mouse) is not missed then targeted = to
     }
-    for k: 0 < layout.count { draw_seat(canvas, layout, game, fonts, k, k == targeted, screen.era, screen.surface_time) }
-    // The lines between the parts (the one being moved lit).
+    for k: 0 < layout.count { draw_seat(canvas, layout, game, fonts, k, k == targeted, screen.surface_time) }
+    // The surfaces form the grooves; a thin light marks the one being moved.
     for end, k: layout.ends[:layout.count] {
-        moving := k == screen.moving_end
-        width: f32 = if moving then 9 else 5
-        line := if moving then INK else BACKGROUND
-        canvas.draw_line(layout.centre, end, width, line)
+        if k == screen.moving_end {
+            canvas.draw_line(layout.centre, end, Math.max(cell * 0.025, 1.5), INK)
+        }
     }
     // The elements (each player's, a drag's stream, volleys) and their motes.
     draw_elements(canvas, layer, layout, game, screen, elements, volleys)
     motes.draw(canvas)
     draw_capsule(canvas, layout, game, screen)
     if screen.counts.open or screen.counts.settling then draw_counts(canvas, layout, screen)
-    if screen.drag.active then draw_drag(canvas, layout, game, fonts, screen.drag, screen.mouse, artifact_of(screen.era), motes.time)
-    if screen.picker.open then draw_picker(canvas, layout, fonts, screen.picker, game, artifact_of(screen.era))
-    if screen.settings_open then draw_settings(canvas, layout, fonts, screen.era, screen.motion)
+    if screen.drag.active then draw_drag(canvas, layout, game, fonts, screen.drag, screen.mouse, ARTIFACT, motes.time)
+    if screen.picker.open then draw_picker(canvas, layout, fonts, screen.picker, game, ARTIFACT)
     draw_fps(canvas, layout, fonts, screen.fps)
 }
 
@@ -1175,11 +1233,9 @@ save_snapshots :: (folder: string) [failed: string] {
         entry := entry_point(layout.seats[1].icon, target.middle, target.outline[:target.count])
         inner := Math.dot(entry - layout.centre, target.toward)
         finger := entry + target.toward * (target.reach - inner) * 0.5
-        // (the eras in turn)
-        era := Era'u8'(i % 3)
         // (the second's stream to the finger)
         still, _ := settled_motes(layout, game)
-        draw(canvas, layer, layout, game, fonts, ⟨drag: ⟨true, 1⟩, mouse: finger, can_undo: true, era: era, fps: 60⟩, still, elements)
+        draw(canvas, layer, layout, game, fonts, ⟨drag: ⟨true, 1⟩, mouse: finger, can_undo: true, fps: 60⟩, still, elements)
         path := `scratch "«folder»/«names[i]».png"
         if canvas.save_png(path) is os_error then fail: failed = "can't write «path»: «os_error»"
         if counts[i] == 4 {
@@ -1190,7 +1246,7 @@ save_snapshots :: (folder: string) [failed: string] {
                 for v: volleys.list { pending[v.to][v.from] += v.amount - v.landed }
                 *dealt := game
                 dealt.deal(1, 0, 12)
-                draw(canvas, layer, layout, shown_game(dealt, pending), fonts, ⟨can_undo: true, era: era⟩, flying, elements, volleys)
+                draw(canvas, layer, layout, shown_game(dealt, pending), fonts, ⟨can_undo: true⟩, flying, elements, volleys)
                 volley_path := `scratch "«folder»/raza_volley_«a».png"
                 if canvas.save_png(volley_path) is os_error then fail: failed = "can't write «volley_path»: «os_error»"
             }
@@ -1202,12 +1258,12 @@ save_snapshots :: (folder: string) [failed: string] {
                 for v: volleys.list { pending[v.to][v.from] += v.amount - v.landed }
                 *dealt := game
                 dealt.deal(2, 0, 12)
-                draw(canvas, layer, layout, shown_game(dealt, pending), fonts, ⟨can_undo: true, era: era⟩, striking, elements, volleys)
+                draw(canvas, layer, layout, shown_game(dealt, pending), fonts, ⟨can_undo: true⟩, striking, elements, volleys)
                 black_path := `scratch "«folder»/raza_black_«a».png"
                 if canvas.save_png(black_path) is os_error then fail: failed = "can't write «black_path»: «os_error»"
             }
             picker := Picker⟨true, 1, 0, DEFAULT_PICKED / 10, DEFAULT_PICKED % 10⟩
-            draw(canvas, layer, layout, game, fonts, ⟨picker: picker, mouse: finger, can_undo: true, era: era⟩, still, elements)
+            draw(canvas, layer, layout, game, fonts, ⟨picker: picker, mouse: finger, can_undo: true⟩, still, elements)
             grid_path := `scratch "«folder»/raza_grid.png"
             if canvas.save_png(grid_path) is os_error then fail: failed = "can't write «grid_path»: «os_error»"
             // The column dragged past five: the lines half way through
@@ -1218,19 +1274,21 @@ save_snapshots :: (folder: string) [failed: string] {
             preview := new_game(moving.count, colours_for(game.identity, game.players, moving.count, none[:], screen_size))
             if fonts.resize_life(TEXT_FAMILY, moving) is os_error then fail: failed = "no font: «os_error»"
             moving_motes, _ := settled_motes(moving, preview)
-            draw(canvas, layer, moving, preview, fonts, ⟨counts: picking, previewing: true, can_undo: true, era: era⟩, moving_motes, elements)
+            draw(canvas, layer, moving, preview, fonts, ⟨counts: picking, previewing: true, can_undo: true⟩, moving_motes, elements)
             counts_path := `scratch "«folder»/raza_counts.png"
             if canvas.save_png(counts_path) is os_error then fail: failed = "can't write «counts_path»: «os_error»"
-            // The settings.
-            draw(canvas, layer, layout, game, fonts, ⟨settings_open: true, can_undo: true, era: era⟩, still, elements)
-            settings_path := `scratch "«folder»/raza_settings.png"
-            if canvas.save_png(settings_path) is os_error then fail: failed = "can't write «settings_path»: «os_error»"
+            // The settings: the plus part of the way to its square, then open.
+            for shown, s: [2] f32⟨0.4, 1⟩ {
+                draw(canvas, layer, layout, game, fonts, ⟨settings_open: true, settings_shown: shown, motion: .SLOW, can_undo: true⟩, still, elements)
+                settings_path := `scratch "«folder»/raza_settings_«s».png"
+                if canvas.save_png(settings_path) is os_error then fail: failed = "can't write «settings_path»: «os_error»"
+            }
         }
     }
     // Each element, large, on the background, at rest and drawn out, a few seconds in.
     if save_element_sheet(folder) is failed then fail: failed
-    // Each era's frames: six players, each colour alone and all five (gold).
-    for era: [3] Era⟨.ORIGINAL, .MODERN, .M15⟩ {
+    // The frames: six players, each colour alone and all five (gold).
+    {
         *canvas: Draw.Canvas
         if c := Draw.create_canvas(⟨2160, 1440⟩) { canvas = c } else if os_error { fail: failed = "no canvas: «os_error»" }
         defer canvas.destroy()
@@ -1245,9 +1303,27 @@ save_snapshots :: (folder: string) [failed: string] {
         *fonts: Fonts
         if fonts.reload_fonts(TEXT_FAMILY, layout) is os_error then fail: failed = "no font: «os_error»"
         settled, _ := settled_motes(layout, game)
-        draw(canvas, layer, layout, game, fonts, ⟨can_undo: true, era: era⟩, settled, elements)
-        path := `scratch "«folder»/raza_frames_«ERA_NAMES[era]».png"
+        draw(canvas, layer, layout, game, fonts, ⟨can_undo: true⟩, settled, elements)
+        path := `scratch "«folder»/raza_frames.png"
         if canvas.save_png(path) is os_error then fail: failed = "can't write «path»: «os_error»"
+        // All ten hybrid pairs, plus gold for comparison on each sheet.
+        hybrids := [10] Identity⟨3, 5, 9, 17, 6, 10, 18, 12, 20, 24⟩
+        for page: 0 < 2 {
+            for k: 0 < 5 { game.identity[k] = hybrids[page * 5 + k] }
+            game.identity[5] = 0x1F
+            hybrid_motes, _ := settled_motes(layout, game)
+            draw(canvas, layer, layout, game, fonts, ⟨surface_time: 2⟩, hybrid_motes, elements)
+            hybrid_path := `scratch "«folder»/raza_hybrids_«page».png"
+            if canvas.save_png(hybrid_path) is os_error then fail: failed = "can't write «hybrid_path»: «os_error»"
+        }
+        for k: 0 < 5 { game.identity[k] = u8'1 << u8'k }
+        // Fixed particles and two surface times isolate material animation.
+        game.identity[5] = 0
+        for moment: [2] f32⟨0, 2⟩ {
+            draw(canvas, layer, layout, game, fonts, ⟨surface_time: moment⟩, settled, elements)
+            material_path := `scratch "«folder»/raza_materials_«i32'moment».png"
+            if canvas.save_png(material_path) is os_error then fail: failed = "can't write «material_path»: «os_error»"
+        }
     }
 }
 
@@ -1315,6 +1391,9 @@ main :: (args: [] string) [failed: string] {
     else if bad_arguments {
         fail: failed = bad_arguments
     }
+    if loaded := Draw.image_from_bytes(MATERIAL_BYTES[:]) { material_image = loaded }
+    else if bad_image { fail: failed = "cannot load textures/materials-v1.png" }
+    defer material_image.destroy()
     if options.elements != "" {
         if save_element_sheet(options.elements) is failed then fail: failed
         return
@@ -1338,21 +1417,20 @@ main :: (args: [] string) [failed: string] {
 
     // The game and each count of players' lines (splits[n] for n players),
     // as they were left last time (Defaults': the registry's), or a new game
-    // of four and lines as equal_splits starts them. (The font was a setting
-    // once: what was kept of it goes.)
+    // of four and lines as equal_splits starts them. (The font and the
+    // frames' era were settings once: what was kept of them goes.)
     *game := Defaults.get("game", new_game(4))
     if game.players < 2 or game.players > MAX_PLAYERS then game = new_game(4)
     *timeline: Timeline
     if Defaults.remove("font") is { case absent, os_error: _ }
+    if Defaults.remove("era") is { case absent, os_error: _ }
     *splits: [MAX_PLAYERS + 1] Splits
     for n: 2 <= MAX_PLAYERS { splits[n] = Defaults.get(`scratch "splits.«n»", Splits⟨⟩) }
-    *frames := Defaults.get("era", Era.ORIGINAL)
     *speed := Defaults.get("motion", Motion.SLOW)
     // (how far the surfaces have moved, in their features)
     *surface_time: f32 = 0
     // (what was last stored, to store again only what's changed)
     *stored_game := game
-    *stored_frames := frames
     *stored_speed := speed
     *last_frame := Time.seconds_since_start()
     *fps_since := last_frame
@@ -1451,8 +1529,7 @@ main :: (args: [] string) [failed: string] {
             else if screen.settings_open {
                 setting := settings_part_at(layout, mouse)
                 if setting is {
-                case era: frames = era
-                case motion: speed = motion
+                case animation: speed = next_motion(speed)
                 case reset:
                     // Every count's lines forgotten, here and stored: a count
                     // whose lines don't fit is laid out as equal_splits starts it.
@@ -1470,8 +1547,7 @@ main :: (args: [] string) [failed: string] {
                     // (what's changed is already stored, each frame's as it's made)
                     w.destroy()
                     break
-                case outside: screen.settings_open = false
-                case panel: _
+                case close: screen.settings_open = false
                 }
             }
             else if part := capsule_part_at(layout, mouse) is not absent {
@@ -1613,10 +1689,6 @@ main :: (args: [] string) [failed: string] {
             if Defaults.set("game", game) is os_error { }
             stored_game = game
         }
-        if frames != stored_frames {
-            if Defaults.set("era", frames) is os_error { }
-            stored_frames = frames
-        }
         if speed != stored_speed {
             if Defaults.set("motion", speed) is os_error { }
             stored_speed = speed
@@ -1629,7 +1701,9 @@ main :: (args: [] string) [failed: string] {
 
         screen.can_undo = timeline.past.count > 0
         screen.can_redo = timeline.future.count > 0
-        screen.era = frames
+        // (the plus opening into the settings' square, or closing back)
+        opening: f32 = if screen.settings_open then 1 else -1
+        screen.settings_shown = Math.clamp(screen.settings_shown + opening * seconds / SETTINGS_TIME, 0, 1)
         // (the surfaces moved on by the frame's time at the chosen speed)
         surface_time += seconds * MOTION_RATES[speed]
         screen.motion = speed

@@ -246,10 +246,10 @@ fire_at :: (q: V2, out: V2, drawn: f32, time: f32, seed: f32, stir: f32 -> paint
     *f := Math.clamp(heat * 1.35, 0, 1)
     f = f * Math.smoothstep(-0.06, 0.08, h) * Math.smoothstep(1.0, 0.7, r)
     ff := f * f * f
-    fire := V3⟨f, ff, ff * ff⟩ * 1.5
+    fire := V3⟨f * 1.15, ff * 0.78, ff * ff * 0.38⟩
     cover := Math.clamp(f * 1.3, 0, 1) * 0.8
     paint = V4⟨Math.min(fire.x, 1.2), Math.min(fire.y, 1.2), Math.min(fire.z, 1.2), cover⟩
-    light = fire * 0.7
+    light = fire * 0.4
 }
 
 // Red's stream as it selects: crackling lightning, a jagged bolt about its
@@ -317,7 +317,7 @@ water_at :: (q: V2, out: V2, drawn: f32, time: f32, seed: f32, stir: f32 -> pain
     fresnel := 0.02 + 0.98 * Math.pow(1 - Math.clamp(n.z, 0, 1), 5)
     sky := Math.mix(V3⟨0.55, 0.75, 0.92⟩, V3⟨0.95, 0.98, 1⟩, Math.clamp(n.y * 0.8 + 0.5, 0, 1))
     half := Math.normalize(V3⟨-0.35, 0.55, 0.76⟩ + V3⟨0, 0, 1⟩)
-    glint := Math.pow(Math.max(Math.dot(n, half), 0), 90) * 2.5
+    glint := Math.pow(Math.max(Math.dot(n, half), 0), 140) * 0.85
     foam := Math.smoothstep(0.66, 0.8, height) * (0.35 + 0.65 * Math.smoothstep(0.45, 0.85, edge))
     a := body * Math.clamp(1 - seen * 0.55 + fresnel + foam, 0, 1)
     seen_colour := Math.mix(deep, sky, fresnel) * a
@@ -377,7 +377,7 @@ tendril_at :: (q: V2, u: f32, time: f32, seed: f32, stir: f32, form: f32 -> pain
     flow := Patterns.noise(V2⟨along * 4 - time * 2, (q.x - w) / half * 2 + seed⟩)
     sheen := Math.pow(1 - z, 3) * (0.5 + 0.7 * flow)
     glint := Math.pow(Math.clamp(z * flow, 0, 1), 10) * 0.5
-    rgb := V3⟨0.02, 0.015, 0.03⟩ + V3⟨0.34, 0.2, 0.48⟩ * sheen + V3⟨0.45, 0.45, 0.55⟩ * glint
+    rgb := V3⟨0.045, 0.035, 0.065⟩ + V3⟨0.44, 0.32, 0.58⟩ * sheen + V3⟨0.45, 0.45, 0.55⟩ * glint
     // (smoke about it, dark and thin, curling)
     smoke := Math.exp(0 - Math.max(d - 1, 0) * 0.8) * 0.5 * (0.5 + 0.5 * Patterns.noise(V2⟨along * 2 - time * 0.7, q.x * 3 + seed⟩))
     a := body + smoke * (1 - body)
@@ -408,11 +408,11 @@ chrome_at :: (q: V2, out: V2, drawn: f32, time: f32, seed: f32, stir: f32 -> pai
     up := reflected.y
     sky := Math.mix(V3⟨0.62, 0.7, 0.8⟩, V3⟨0.98, 0.99, 1.0⟩, Math.sqrt(Math.clamp(up, 0, 1)))
     ground := Math.mix(V3⟨0.42, 0.4, 0.38⟩, V3⟨0.16, 0.16, 0.18⟩, Math.sqrt(Math.clamp(0 - up, 0, 1)))
-    env := Math.mix(ground, sky, Math.smoothstep(-0.03, 0.03, up))
+    env := Math.mix(ground, sky, Math.smoothstep(-0.35, 0.35, up))
     lamp := Math.normalize(V3⟨-0.3, 0.5, 0.8⟩)
     glint := Math.pow(Math.max(Math.dot(reflected, lamp), 0), 60) * 1.6
     tint := (V3⟨0.5, 0.5, 0.5⟩ + Math.cos(V3⟨0, 2.1, 4.2⟩ + V3⟨1, 1, 1⟩ * (n.z * 5 + slow)) * 0.5) * ((1 - n.z) * 0.18)
-    rgb := env * V3⟨0.93, 0.95, 0.98⟩ + tint + V3⟨glint, glint, glint⟩
+    rgb := env * V3⟨0.70, 0.63, 0.52⟩ + tint * 0.2 + V3⟨glint, glint, glint⟩ * 0.35
     cover := Math.smoothstep(0.0, 0.05, thick) * Math.smoothstep(1.0, 0.85, r)
     paint = V4⟨rgb.x * cover, rgb.y * cover, rgb.z * cover, cover⟩
     light = V3⟨glint, glint, glint⟩ * (cover * 0.6)
@@ -425,6 +425,19 @@ chrome_at :: (q: V2, out: V2, drawn: f32, time: f32, seed: f32, stir: f32 -> pai
 // them and dapples of light through leaves, faint, fading out to its reach.
 wind_at :: (q: V2, out: V2, drawn: f32, time: f32, seed: f32, stir: f32 -> paint: V4, light: V3) {
     r := Math.length(out)
+    // A quiet, readable leaf handle; wind appears when drawn out.
+    if drawn < 0.5 and stir < 0.95 {
+        bend := q.x + 0.10 * Math.sin(q.y * 2 + time * 0.3)
+        t := q.y / 0.75
+        width := 0.38 * Math.max(1 - t * t, 0)
+        mask := (1 - Math.smoothstep(width - 0.015, width + 0.015, Math.abs(bend))) * (1 - Math.smoothstep(0.95, 1, Math.abs(t)))
+        rib := 1 - Math.smoothstep(0.012, 0.035, Math.abs(bend))
+        edge := Math.smoothstep(width * 0.7, Math.max(width, 0.01), Math.abs(bend))
+        rgb := Math.mix(V3⟨0.15, 0.30, 0.055⟩, V3⟨0.50, 0.65, 0.21⟩, edge * 0.7 + rib * 0.3)
+        paint = V4⟨rgb.x * mask, rgb.y * mask, rgb.z * mask, mask⟩
+        light = V3⟨0, 0, 0⟩
+        return
+    }
     // (at rest, blowing to its player's right; drawn out, along its curve,
     // toward its end, faster)
     p := if drawn > 0.5 then V2⟨0 - q.y, q.x⟩ else q
@@ -476,7 +489,7 @@ sun_shade :: (from: Draw.Quad_Between, field: Shader.Uniforms(Field) -> colour: 
     colour = field_colour(paint, light, field.fade, field.glow)
 }
 
-fire_shade :: (from: Draw.Quad_Between, field: Shader.Uniforms(Field) -> colour: V4) {
+fire_shade :: (from: Draw.Quad_Between, field: Shader.Uniforms(Field), atlas: Shader.Texture_2D, filtering: Shader.Sampler -> colour: V4) {
     q, out, drawn, _ := field_place(from.pixel, field.start, field.bend, field.end, field.up, field.reach, field.width_from, field.width_to, field.from, field.to)
     if Math.length(out) >= 1 then return ⟨0, 0, 0, 0⟩
     if field.form > 0.5 {
@@ -484,14 +497,19 @@ fire_shade :: (from: Draw.Quad_Between, field: Shader.Uniforms(Field) -> colour:
         return field_colour(bolt, bolt_light, field.fade, field.glow)
     }
     paint, light := fire_at(q, out, drawn, field.time, field.seed, field.stir)
-    colour = field_colour(paint, light, field.fade, field.glow)
+    detail := material_flow(atlas, filtering, V2⟨q.x * 1.5, q.y * 0.7⟩, field.time * 3, field.seed)
+    fuel := 0.3 + detail * 1.3
+    colour = field_colour(paint * fuel, light * fuel * 0.8, field.fade, field.glow)
 }
 
-water_shade :: (from: Draw.Quad_Between, field: Shader.Uniforms(Field) -> colour: V4) {
+water_shade :: (from: Draw.Quad_Between, field: Shader.Uniforms(Field), atlas: Shader.Texture_2D, filtering: Shader.Sampler -> colour: V4) {
     q, out, drawn, _ := field_place(from.pixel, field.start, field.bend, field.end, field.up, field.reach, field.width_from, field.width_to, field.from, field.to)
     if Math.length(out) >= 1 then return ⟨0, 0, 0, 0⟩
     paint, light := water_at(q, out, drawn * (1 + field.form), field.time, field.seed, field.stir)
-    colour = field_colour(paint, light, field.fade, field.glow)
+    ripple := V3⟨0.4, 0.4, 0.4⟩ // Smooth volume; no flat water photograph over the surface.
+    detail := Math.clamp(Math.dot(ripple, V3⟨0.2, 0.55, 0.25⟩) * 2.5, 0, 1)
+    rgb := paint.xyz * (0.68 + detail * 0.5) + V3⟨0.03, 0.15, 0.21⟩ * (detail * paint.a)
+    colour = field_colour(V4⟨rgb.x, rgb.y, rgb.z, paint.a⟩, light, field.fade, field.glow)
 }
 
 oil_shade :: (from: Draw.Quad_Between, field: Shader.Uniforms(Field) -> colour: V4) {
@@ -508,11 +526,12 @@ chrome_shade :: (from: Draw.Quad_Between, field: Shader.Uniforms(Field) -> colou
     colour = field_colour(paint, light, field.fade, field.glow)
 }
 
-wind_shade :: (from: Draw.Quad_Between, field: Shader.Uniforms(Field) -> colour: V4) {
+wind_shade :: (from: Draw.Quad_Between, field: Shader.Uniforms(Field), atlas: Shader.Texture_2D, filtering: Shader.Sampler -> colour: V4) {
     q, out, drawn, _ := field_place(from.pixel, field.start, field.bend, field.end, field.up, field.reach, field.width_from, field.width_to, field.from, field.to)
     if Math.length(out) >= 1 then return ⟨0, 0, 0, 0⟩
     paint, light := wind_at(q, out, drawn * (1 + field.form), field.time, field.seed, field.stir)
-    colour = field_colour(paint, light, field.fade, field.glow)
+    detail := material_flow(atlas, filtering, V2⟨q.x, q.y * 0.35⟩, field.time * 2, field.seed)
+    colour = field_colour(paint * (0.65 + detail * 0.65), light, field.fade, field.glow)
 }
 
 SUN_FIELD :: Sun_Field(Draw.SHADER_TARGET)
@@ -550,10 +569,10 @@ paint_field :: (canvas: *Draw.Canvas, element: Element, f: Field) {
     at, size := field_box(f)
     if element is {
     case .SUN: canvas.draw_shader(at, size, SUN_FIELD.code, SUN_FIELD.bindings.field, f)
-    case .WATER: canvas.draw_shader(at, size, WATER_FIELD.code, WATER_FIELD.bindings.field, f)
+    case .WATER: canvas.draw_shader_image(at, size, WATER_FIELD.code, WATER_FIELD.bindings.field, f, material_image, WATER_FIELD.bindings.atlas, WATER_FIELD.bindings.filtering)
     case .OIL: canvas.draw_shader(at, size, OIL_FIELD.code, OIL_FIELD.bindings.field, f)
-    case .FIRE: canvas.draw_shader(at, size, FIRE_FIELD.code, FIRE_FIELD.bindings.field, f)
-    case .WIND: canvas.draw_shader(at, size, WIND_FIELD.code, WIND_FIELD.bindings.field, f)
+    case .FIRE: canvas.draw_shader_image(at, size, FIRE_FIELD.code, FIRE_FIELD.bindings.field, f, material_image, FIRE_FIELD.bindings.atlas, FIRE_FIELD.bindings.filtering)
+    case .WIND: canvas.draw_shader_image(at, size, WIND_FIELD.code, WIND_FIELD.bindings.field, f, material_image, WIND_FIELD.bindings.atlas, WIND_FIELD.bindings.filtering)
     case .CHROME: canvas.draw_shader(at, size, CHROME_FIELD.code, CHROME_FIELD.bindings.field, f)
     }
 }
@@ -672,8 +691,8 @@ ELEMENT_SHARE :: 0.68
 ELEMENT_ROUND :: 0.55
 
 // How the bloom spreads (cells) and how strongly it's added.
-BLOOM_CELLS :: 0.45
-BLOOM_STRENGTH :: 1.4
+BLOOM_CELLS :: 0.25
+BLOOM_STRENGTH :: 0.65
 
 // Each player's elements' own clocks (how far their features have moved:
 // faster when stirred) and how stirred each is (0 at rest, 1 touched, easing).
@@ -717,7 +736,7 @@ field_spot :: (layout: Layout, k: i64, i: i64, n: i64, time: f32 -> at: V2, reac
     at = seat.icon
     reach = ELEMENT_CELLS * cell * fit
     if n > 1 {
-        turn := f32'i / f32'n * f32'Math.TAU + time * 0.03
+        turn := f32'i / f32'n * f32'Math.TAU
         at = seat.icon + V2⟨Math.cos(turn), Math.sin(turn)⟩ * (ELEMENT_ROUND * cell * fit)
         reach = ELEMENT_SHARE * ELEMENT_CELLS * cell * fit
     }
@@ -727,7 +746,8 @@ field_spot :: (layout: Layout, k: i64, i: i64, n: i64, time: f32 -> at: V2, reac
 // volley gathering): where it is, its clock, its stir and its seed, as it's
 // drawn and its motes are born.
 rest_field :: (layout: Layout, k: i64, i: i64, n: i64, elements: Elements, swell: f32 = 0 -> Field) #pure {
-    at, reach := field_spot(layout, k, i, n, elements.clock[k])
+    at, full_reach := field_spot(layout, k, i, n, elements.clock[k])
+    reach := full_reach * (0.48 + 0.30 * Math.max(elements.stir[k], swell))
     return ⟨start: at, bend: at, end: at, up: layout.seats[k].toward * -1, reach: reach * (1 + 0.2 * swell),
             time: elements.clock[k] + f32'i * 7.3, stir: Math.max(elements.stir[k], swell), seed: f32'(k * 3 + i) * 1.7⟩
 }
@@ -738,7 +758,7 @@ braided :: (start: V2, bend: V2, end: V2, i: i64, n: i64, cell: f32 -> V2) #pure
     along := end - start
     *across := V2⟨0, 0⟩
     if Math.length(along) > 0.001 then across = V2⟨0 - along.y, along.x⟩ / Math.length(along)
-    return bend + across * ((f32'i - f32'(n - 1) / 2) * 0.7 * cell)
+    return bend + across * ((f32'i - f32'(n - 1) / 2) * 0.3 * cell)
 }
 
 // Each player's elements, a drag's stream, the volleys in flight and
@@ -786,7 +806,7 @@ draw_elements :: (canvas: *Draw.Canvas, layer: *Draw.Canvas, layout: Layout, gam
                     continue
                 }
                 shape := STREAM_SHAPES[element]
-                f := Field⟨start: start, bend: braided(start, bend, end, i, n, cell), end: end, up: seat.toward * -1, reach: shape.reach * cell,
+                f := Field⟨start: start, bend: braided(start, bend, end, i, n, cell), end: end, up: seat.toward * -1, reach: shape.reach * cell * 0.55,
                            width_from: shape.width_from, width_to: shape.width_to, time: elements.clock[from] + f32'i * 7.3, stir: 1,
                            seed: f32'(from * 3 + i) * 1.7, form: shape.form⟩
                 draw_field(canvas, layer, element, f)
@@ -840,10 +860,10 @@ Volley_Shape :: struct {
 
 VOLLEY_SHAPES :: [Element] Volley_Shape⟨
     SUN:    ⟨bolts: 5, reach: 0.45, length: 0.16, width_from: 0.25, width_to: 1, apart: 0.5, splash: 1.0, form: 1⟩,
-    WATER:  ⟨bolts: 1, reach: 2.0, length: 0.6, width_from: 0.5, width_to: 1, apart: 0, splash: 2.2⟩,
+    WATER:  ⟨bolts: 1, reach: 0.85, length: 0.30, width_from: 0.5, width_to: 1, apart: 0, splash: 2.2⟩,
     OIL:    ⟨bolts: 1, reach: 1, length: 0.28, width_from: 0.25, width_to: 1, apart: 0, splash: 1.3⟩,
     FIRE:   ⟨bolts: 4, reach: 0.6, length: 0.22, width_from: 0.25, width_to: 1, apart: 0.6, splash: 1.4⟩,
-    WIND:   ⟨bolts: 1, reach: 2.2, length: 0.55, width_from: 0.6, width_to: 1, apart: 0, splash: 1.8⟩,
+    WIND:   ⟨bolts: 1, reach: 0.95, length: 0.30, width_from: 0.6, width_to: 1, apart: 0, splash: 1.8⟩,
     CHROME: ⟨bolts: 1, reach: 1, length: 0.28, width_from: 0.25, width_to: 1, apart: 0, splash: 1.3⟩
 ⟩
 

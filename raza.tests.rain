@@ -291,47 +291,40 @@ dragged_lines_pass_under_the_finger :: () #test {
     if aimed := share_through(layout, layout.centre) is not absent then assert(false, "the centre aims nowhere, not «aimed»")
 }
 
-// The settings panel's buttons are each where they're drawn, inside the
-// panel and apart; the rest of the panel is its own, and past it is outside.
+// The settings' buttons are each at its place in the square's grid: Reset
+// top left, the motion's button top right, Quit where the system's button
+// is; a blank place in the square, or past it, closes it.
 settings_buttons_are_where_drawn :: () #test {
     layout := laid_out(4, LANDSCAPE)
-    at :: (layout: Layout, local: V2 -> Settings_Part) { return settings_part_at(layout, layout.centre + local * cell_of(layout)) }
-    middle :: (low: V2, high: V2 -> V2) { return (low + high) / 2 }
-    for corner: [4] V2⟨QUIT_LOW, QUIT_HIGH, RESET_LOW, RESET_HIGH⟩ {
-        assert(Math.abs(corner.x) < SETTINGS_HALF.x and Math.abs(corner.y) < SETTINGS_HALF.y, "«corner» is inside the panel")
+    pitch := CAPSULE_ARM * cell_of(layout)
+    at :: (layout: Layout, place: V2, pitch: f32 -> Settings_Part) { return settings_part_at(layout, layout.centre + place * pitch) }
+    if at(layout, V2⟨1, -1⟩, pitch) is {
+    case animation: _
+    case reset, quit, close: assert(false, "top right moves the motion on")
     }
-    if at(layout, middle(RESET_LOW, RESET_HIGH)) is {
+    if at(layout, V2⟨-1, -1⟩, pitch) is {
     case reset: _
-    case era, motion, quit, panel, outside: assert(false, "Reset's middle resets the lines and colours")
+    case animation, quit, close: assert(false, "top left resets")
     }
-    if at(layout, middle(QUIT_LOW, QUIT_HIGH)) is {
+    if settings_part_at(layout, capsule_centre(layout, .SYSTEM)) is {
     case quit: _
-    case era, motion, reset, panel, outside: assert(false, "Quit's middle quits")
+    case animation, reset, close: assert(false, "the system's button's place quits")
     }
-    for look: [3] Era⟨.ORIGINAL, .MODERN, .M15⟩ {
-        low, high := era_button(look)
-        assert(!in_box(low, RESET_LOW, RESET_HIGH) and !in_box(high, RESET_LOW, RESET_HIGH),"«look»'s button is apart from Reset")
-        assert(high.x < SETTINGS_HALF.x and low.x > -SETTINGS_HALF.x, "«look»'s button is inside the panel")
-        if at(layout, middle(low, high)) is {
-        case era: assert(era == look, "«look»'s middle picks «era»")
-        case motion, reset, quit, panel, outside: assert(false, "«look»'s middle picks it")
+    blanks := [7] V2⟨⟨0, -1⟩, ⟨-1, 0⟩, ⟨0, 0⟩, ⟨1, 0⟩, ⟨-1, 1⟩, ⟨1, 1⟩, ⟨0, 3⟩⟩
+    for blank: blanks {
+        if at(layout, blank, pitch) is {
+        case close: _
+        case animation, reset, quit: assert(false, "«blank» closes the settings")
         }
     }
-    for speed: [4] Motion⟨.OFF, .SLOW, .MEDIUM, .FAST⟩ {
-        low, high := motion_button(speed)
-        assert(high.x < SETTINGS_HALF.x and low.x > -SETTINGS_HALF.x and high.y < SETTINGS_HALF.y, "«speed»'s button is inside the panel")
-        if at(layout, middle(low, high)) is {
-        case motion: assert(motion == speed, "«speed»'s middle picks «motion»")
-        case era, reset, quit, panel, outside: assert(false, "«speed»'s middle picks it")
-        }
-    }
-    if at(layout, V2⟨-4.5, 2.5⟩) is {
-    case panel: _
-    case era, motion, reset, quit, outside: assert(false, "the panel's corner is the panel's")
-    }
-    if at(layout, V2⟨0, SETTINGS_HALF.y + 0.5⟩) is {
-    case outside: _
-    case era, motion, reset, quit, panel: assert(false, "below the panel is outside it")
+}
+
+// The motion's button goes round: paused, slow, medium, fast, paused.
+motion_button_goes_round :: () #test {
+    *motion := Motion.OFF
+    for expected: [4] Motion⟨.SLOW, .MEDIUM, .FAST, .OFF⟩ {
+        motion = next_motion(motion)
+        assert(motion == expected, "after one tap: «motion», not «expected»")
     }
 }
 
@@ -592,7 +585,7 @@ miasmas_stay_home :: () #test {
     layout := laid_out(4, LANDSCAPE)
     *game := new_game(4)
     game.life[2] = 0
-    motes, _ := settled_motes(layout, game)
+    motes, _ := settled_motes(layout, game, stirring: 1)
     cell := cell_of(layout)
     *each: [4] i64
     for m: motes.motes {
@@ -612,7 +605,7 @@ miasmas_are_balanced :: () #test {
     for style, which: STYLES {
         *game := new_game(2)
         game.identity[0] = if which != .CHROME then u8'1 << u8'which else 0
-        motes, _ := settled_motes(layout, game)
+        motes, _ := settled_motes(layout, game, stirring: 1)
         *alive: f32 = 0
         for m: motes.motes { if m.tag & FIELD_MOTE != 0 and m.tag & 0xFF == 0 then alive += 1 }
         want := style.alive
@@ -622,7 +615,7 @@ miasmas_are_balanced :: () #test {
     for pair: [2] [2] Element⟨⟨.SUN, .OIL⟩, ⟨.FIRE, .OIL⟩⟩ {
         *game := new_game(2)
         game.identity[0] = (u8'1 << u8'pair[0]) | (u8'1 << u8'pair[1])
-        motes, _ := settled_motes(layout, game)
+        motes, _ := settled_motes(layout, game, stirring: 1)
         *each: [Element] f32
         for m: motes.motes { if m.tag & FIELD_MOTE != 0 and m.tag & 0xFF == 0 then each[Element'((m.tag >> 8) & 0xFF)] += 1 }
         for which: pair {
@@ -632,24 +625,25 @@ miasmas_are_balanced :: () #test {
     }
 }
 
-// Each era is finer and quieter than the one before: every look's features
-// no bigger, its contrast no higher, and the era's broad variation less.
-eras_get_finer :: () #test {
-    for now, era: LOOKS {
-        if era == .ORIGINAL then continue
-        earlier := Era'(i64'era - 1)
-        before := LOOKS[earlier]
-        finer(era, "the artifact's", before.artifact, now.artifact)
-        finer(era, "gold's", before.gold, now.gold)
-        for look, colour: now.colours { finer(era, "«colour»'s", before.colours[colour], look) }
-        assert(ERA_FEELS[era].broad < ERA_FEELS[earlier].broad, "«era»'s broad variation is less")
+// Opened, the plus is the settings' square: every one of its grid's places
+// inside it, its corners filled in; part of the way, between the two.
+plus_opens_into_a_square :: () #test {
+    layout := laid_out(4, LANDSCAPE)
+    cell := cell_of(layout)
+    c := layout.centre
+    for row: -1 <= 1 {
+        for column: -1 <= 1 {
+            place := c + V2⟨f32'column, f32'row⟩ * (CAPSULE_ARM * cell)
+            for k: 0 < 8 {
+                a := f32'k / 8 * f32'Math.TAU
+                assert(in_controls(layout, place + V2⟨Math.cos(a), Math.sin(a)⟩ * (0.5 * cell), 1), "«column», «row»'s button inside the square")
+            }
+        }
     }
-}
-
-// A look no bigger, and its contrast no higher, than the one before's.
-finer :: (era: Era, which: string, before: Look, now: Look) {
-    assert(now.scale <= before.scale, "«era», «which» look: «now.scale» features, bigger than «before.scale»")
-    assert(now.strength <= before.strength, "«era», «which» look: «now.strength» contrast, more than «before.strength»")
+    assert(!in_controls(layout, c + V2⟨CAPSULE_REACH + 0.1, 0⟩ * cell, 1), "the square reaches as far as the plus")
+    // (the inside corner a third of the way out, half way through)
+    assert(in_controls(layout, c + V2⟨1.0, 1.0⟩ * cell, 0.5), "half open, the inside corner's moved out")
+    assert(!in_controls(layout, c + V2⟨1.6, 1.6⟩ * cell, 0.5), "half open, it's not yet square")
 }
 
 // The controls are a plus: the players in the middle, undo on the left
@@ -660,7 +654,6 @@ capsule_buttons_make_a_plus :: () #test {
     layout := laid_out(4, LANDSCAPE)
     cell := cell_of(layout)
     c := layout.centre
-    outline := plus_outline(c, CAPSULE_REACH * cell, CAPSULE_HALF * cell, 0.25 * cell)
     for part: CAPSULE_PARTS {
         middle := capsule_centre(layout, part)
         if found := capsule_part_at(layout, middle) { assert(found == part, "«part»'s middle is «found»") }
@@ -668,7 +661,7 @@ capsule_buttons_make_a_plus :: () #test {
         // (a button's round, its icon 0.62 cells across: points round it half a cell out)
         for k: 0 < 8 {
             a := f32'k / 8 * f32'Math.TAU
-            assert(inside(middle + V2⟨Math.cos(a), Math.sin(a)⟩ * (0.5 * cell), outline[:]), "«part»'s button inside the plus")
+            assert(in_controls(layout, middle + V2⟨Math.cos(a), Math.sin(a)⟩ * (0.5 * cell)), "«part»'s button inside the plus")
         }
         if part != .PLAYERS {
             between := (capsule_centre(layout, .PLAYERS) + middle) / 2
@@ -677,7 +670,7 @@ capsule_buttons_make_a_plus :: () #test {
     }
     assert(capsule_centre(layout, .UNDO).x < c.x and capsule_centre(layout, .REDO).x > c.x, "undo left, redo right")
     assert(capsule_centre(layout, .RESTART).y < c.y and capsule_centre(layout, .SYSTEM).y > c.y, "a new game above, the system's below")
-    assert(!inside(c + V2⟨1.2, 1.2⟩ * cell, outline[:]), "the plus's corners are open")
+    assert(!in_controls(layout, c + V2⟨1.2, 1.2⟩ * cell), "the plus's corners are open")
 }
 
 // Undo goes back a game and redo forward again; doing something new
@@ -714,12 +707,12 @@ damage_of :: (amount: Drag_Amount -> i32) {
     return if amount is { case damage: damage; case asked: 0 }
 }
 
-// A drag's damage grows from 1 to 20 across a part, then asks.
+// Nine bands along the aim line reach the life total; beyond it the drag asks.
 drags_grow_then_ask :: () #test {
     assert(damage_of(amount_for(0)) == 1 and damage_of(amount_for(-1)) == 1, "1 at the edge, and before it")
     assert(damage_of(amount_for(QUESTION_FROM / 2)) > 1, "more further in")
-    assert(damage_of(amount_for(QUESTION_FROM - 0.001)) == MOST_BY_DRAG, "20 at the last")
-    assert(damage_of(amount_for(QUESTION_FROM)) == 0 and damage_of(amount_for(1.5)) == 0, "then it asks")
+    assert(damage_of(amount_for(QUESTION_FROM - 0.001)) == MOST_BY_DRAG, "9 at the last")
+    assert(damage_of(amount_for(QUESTION_FROM)) == 9 and damage_of(amount_for(1.5)) == 0, "then it asks")
 }
 
 // A drag aimed half way into another part does some damage there; one
@@ -868,3 +861,40 @@ deals_commander_damage :: () #test {
     assert(poor.life[0] == 0, "no damage to oneself")
 }
 
+
+drag_damage_uses_the_entry_line :: () #test {
+    assert(DEFAULT_PICKED == 10)
+    for i: 0 < 9 {
+        assert(damage_of(amount_for((f32'i + 0.5) / 9)) == i32'i + 1)
+    }
+    assert(damage_of(amount_for(1.001)) == 0)
+    for size: [2] V2⟨LANDSCAPE, PORTRAIT⟩ {
+        for count: 2 <= 6 {
+            layout := laid_out(count, size)
+            game := new_game(count)
+            for target: 0 < count {
+                seat := layout.seats[target]
+                for source: 0 < count {
+                    if source == target then continue
+                    entry := entry_point(layout.seats[source].icon, seat.middle, seat.outline[:seat.count])
+                    for radius: [4] f32⟨0.05, 0.5, 0.99, 1.01⟩ {
+                        finger := entry + (seat.middle - entry) * radius
+                        if to, amount := aim(layout, game, source, finger) {
+                            assert(to == target)
+                            assert(damage_of(amount) == damage_of(amount_for(radius)))
+                        }
+                        else if missed { assert(false, "a point in the target's part must hit") }
+                    }
+                }
+            }
+        }
+    }
+}
+idle_fields_emit_no_motes :: () #test {
+    layout := laid_out(6, LANDSCAPE)
+    *game := new_game(6)
+    for k: 0 < 5 { game.identity[k] = u8'1 << u8'k }
+    game.identity[5] = 0
+    motes, _ := settled_motes(layout, game)
+    assert(motes.motes.count == 0)
+}

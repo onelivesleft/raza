@@ -164,7 +164,7 @@ save_black_snapshots :: (folder: string) [failed: string] {
                 steer_volleys(motes, volleys, random, layout, game, pending, delta)
                 previous = age
             }
-            screen := Screen_State⟨drag: ⟨i == 1, 1⟩, mouse: finger, era: .M15⟩
+            screen := Screen_State⟨drag: ⟨i == 1, 1⟩, mouse: finger⟩
             draw(canvas, layout, shown_game(game, pending), fonts, screen, motes, volleys)
             path := `scratch "«folder»/black_«i».png"
             if canvas.save_png(path) is os_error then fail: failed = "cannot write black snapshot PNG"

@@ -137,11 +137,10 @@ deal :: (game: *Game, from: i64, to: i64, amount: i32) {
     game.life[to] -= amount
 }
 
-// What a drag that's reached a share of the way across a player's part
-// does: 1 just inside, up to 20 near its far edge, and in the last strip a
-// number to pick (asked).
-QUESTION_FROM :: 0.88
-MOST_BY_DRAG :: 20
+// Progress from the region entry to the life total along the source-to-life
+// line: nine equal bands, then a number to pick (asked).
+QUESTION_FROM :: 1.0
+MOST_BY_DRAG :: 9
 
 Drag_Amount :: union {
     damage: i32
@@ -149,7 +148,7 @@ Drag_Amount :: union {
 }
 
 amount_for :: (share: f32 -> Drag_Amount) #pure {
-    if share >= QUESTION_FROM then return Drag_Amount.asked
+    if share > QUESTION_FROM then return Drag_Amount.asked
     steps := i32'Math.floor(Math.max(share, 0) / QUESTION_FROM * f32'MOST_BY_DRAG)
     return Drag_Amount.damage(Math.clamp(steps + 1, 1, MOST_BY_DRAG))
 }
