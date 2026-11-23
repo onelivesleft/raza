@@ -105,9 +105,33 @@ throws**, in place of an icon and an arrow.
   cheap; because the miasmas always move, Raza redraws about 30 times a
   second when idle (more battery than a still screen, accepted).
 
+## Ideas kept for later
+
+- **Foil.** A shader the user noted for foil effects: the plane warped by
+  stacked waves (each step a tan of y nudging x and a cos of x nudging y,
+  finer and weaker each time, all moving with time), then coloured in
+  rainbow bands of the warped place that brighten sharply where a cosine of
+  the diagonal nears zero, so streaks of light sweep across as on a foil
+  card. As it was given:
+
+  ```glsl
+  void mainImage( out vec4 fragColor, in vec2 fragCoord ){
+      vec2 uv =  (2.0 * fragCoord - iResolution.xy) / min(iResolution.x, iResolution.y);
+
+      for(float i = 1.0; i < 10.0; i++){
+          uv.x += 0.009 / i * tan(i * 2.5* uv.y + iTime);
+          uv.y += 0.9 / i *cos(i * 1.5 * uv.x + iTime);
+      }
+      vec3 col = 0.5 + 0.5*sin(iTime+uv.xyx+vec3(0,2,4));
+      fragColor = vec4(col/(2.1*abs(cos(iTime-uv.y-uv.x))),1.0);
+
+  }
+  ```
+
 ## Checking it
 
-`Raza.exe -snapshot:folder` draws, among others, `raza_frames_Original.png`
+`Raza.exe -snapshot:folder` draws, among others, `raza_hearts.png` (each
+heart large), `raza_frames_Original.png`
 (`_Modern`, `_M15`: each colour alone and all five as gold),
 `raza_3.png` (a drag's stream to a life total) and `raza_volley.png`. The
 tests check the parts that can be checked without looking: the stream's end,
