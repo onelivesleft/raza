@@ -176,6 +176,14 @@ clear_of_font_button :: (layout: Layout, places: [5] V2, r: f32 -> bool) #pure {
     return true
 }
 
+// The damage icon at a point, of a player who isn't out: its player; or absent.
+icon_at :: (layout: Layout, game: Game, p: V2 -> i64) [absent] {
+    for seat, k: layout.seats[:layout.count] {
+        if !is_out(game, k) and Math.length(p - seat.icon) <= 0.5 * cell_of(layout) then return k
+    }
+    fail: absent
+}
+
 // The colour toggle at a point: its part, and which colour; or absent.
 toggle_at :: (layout: Layout, p: V2 -> seat: i64, colour: i64) [absent] {
     seat = 0
@@ -1069,21 +1077,18 @@ main :: (args: [] string) [failed: string] {
                 was := game.identity[seat]
                 game.identity[seat] = if was & bit != 0 then was & ~bit else was | bit
             }
+            else if icon := icon_at(layout, game, mouse) is not absent {
+                screen.drag = ⟨true, icon⟩
+            }
             else if line := line_at(layout, mouse, 0.5 * cell) is not absent {
                 screen.moving_end = line
             }
-            else {
-                for k: 0 < layout.count {
-                    if !is_out(game, k) and Math.length(mouse - layout.seats[k].icon) <= 0.5 * cell {
-                        screen.drag = ⟨true, k⟩
-                    }
-                }
-            }
         }
-        // A line's end follows the finger along the edge, kept between its
+        // A dragged line follows the finger: its end goes where a line from
+        // the centre through the finger meets the edge, kept between its
         // neighbours.
         if screen.moving_end >= 0 {
-            splits[game.players].move_split(screen.moving_end, share_at(size, mouse))
+            if aimed := share_through(layout, mouse) is not absent then splits[game.players].move_split(screen.moving_end, aimed)
             layout = lay_out(size, splits[game.players])
             // (the life totals sized to the parts as they move)
             if fonts.resize_life(TEXT_FAMILIES[family], layout) is os_error then fail: failed = "no font: «os_error»"

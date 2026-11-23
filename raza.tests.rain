@@ -211,17 +211,37 @@ lines_step_toward_a_count :: () #test {
     assert(!lines_moving(Count_Picker⟨laid: 4, toward: 4⟩, 4) and lines_moving(halfway, 4))
 }
 
-// A line is grabbed by its outer part, at the edge, not near the centre.
-lines_are_grabbed_at_the_edge :: () #test {
+// A line is grabbed anywhere along it (the nearest line, where two are
+// close), and not far from it.
+lines_are_grabbed_anywhere :: () #test {
     layout := laid_out(4, LANDSCAPE)
-    reach := 0.5 * cell_of(layout)
+    cell := cell_of(layout)
+    reach := 0.5 * cell
     for end, k: layout.ends[:4] {
-        outer := end + (layout.centre - end) * 0.1
-        inner := end + (layout.centre - end) * 0.5
-        if line := line_at(layout, outer, reach) { assert(line == k, "line «k»'s outer part is line «line»'s") }
-        else if absent { assert(false, "line «k»'s outer part grabs it") }
-        if middle := line_at(layout, inner, reach) is not absent then assert(false, "line «k»'s middle grabs line «middle»")
+        for along: [3] f32⟨0.1, 0.5, 0.8⟩ {
+            p := end + (layout.centre - end) * along
+            if line := line_at(layout, p, reach) { assert(line == k, "line «k», «along» of the way in, is line «line»'s") }
+            else if absent { assert(false, "line «k», «along» of the way in, grabs it") }
+        }
     }
+    // (the middle of a part is no line's)
+    if line := line_at(layout, layout.seats[0].middle, reach) is not absent then assert(false, "a part's middle grabs line «line»")
+}
+
+// A dragged line goes through the finger: its end is where a line from the
+// centre through the finger meets the edge, wherever the finger is along it.
+dragged_lines_pass_under_the_finger :: () #test {
+    layout := laid_out(4, LANDSCAPE)
+    for finger: [4] V2⟨⟨1500, 300⟩, ⟨1200, 650⟩, ⟨300, 1300⟩, ⟨2000, 900⟩⟩ {
+        if share := share_through(layout, finger) {
+            end := edge_at(LANDSCAPE, share)
+            assert(distance_to_segment(finger, layout.centre, end) < 0.5, "the line to «end» passes under «finger»")
+        }
+        else if absent {
+            assert(false, "«finger» aims somewhere")
+        }
+    }
+    if aimed := share_through(layout, layout.centre) is not absent then assert(false, "the centre aims nowhere, not «aimed»")
 }
 
 // A turn there and back is where it began.

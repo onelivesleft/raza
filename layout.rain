@@ -394,17 +394,29 @@ seat_at :: (layout: Layout, p: V2 -> i64) [absent] {
     fail: absent
 }
 
-// How much of a line, from its end at the edge inward, is grabbed to move it.
-GRABBED_SHARE :: 0.2
-
-// The line whose outer part (GRABBED_SHARE of it, at the edge) is within
-// reach of a point, or absent.
+// The line nearest a point, if it's within reach (anywhere along it), or
+// absent.
 line_at :: (layout: Layout, p: V2, reach: f32 -> i64) [absent] {
+    *nearest: i64 = -1
+    *least := reach
     for end, k: layout.ends[:layout.count] {
-        inner := end + (layout.centre - end) * GRABBED_SHARE
-        if distance_to_segment(p, inner, end) <= reach then return k
+        d := distance_to_segment(p, layout.centre, end)
+        if d <= least {
+            least = d
+            nearest = k
+        }
     }
-    fail: absent
+    if nearest < 0 then fail: absent
+    return nearest
+}
+
+// Where a line from the centre through a point meets the screen's edge, as
+// a share of the way round: where a dragged line's end goes, so the line
+// passes under the finger. Absent at the centre itself (no way to aim).
+share_through :: (layout: Layout, p: V2 -> f32) [absent] {
+    d := p - layout.centre
+    if Math.length(d) < 1 then fail: absent
+    return share_at(layout.size, edge_point(layout.centre, layout.size / 2, Math.atan2(d.y, d.x)))
 }
 
 // A point of a frame turned angle about origin (x along its text, y down
