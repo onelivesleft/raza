@@ -45,6 +45,7 @@ Raza :: program {
 #import Random
 #import Icons(SETS: .MDI)
 #import Console
+#import Image_Files
 #include "icons/icons.rain"
 
 #include "layout.rain"
@@ -758,13 +759,15 @@ Pointer :: struct {
     released: bool        // this frame (it's gone the next)
 }
 
-// The mouse's id among the fingers'.
+// The mouse's id among the fingers'; and -busy's made-up fingers' first.
 MOUSE_POINTER :: u32'0xFFFF_FFFF
+BUSY_POINTER :: u32'0xFFFF_FF00
 
 // The window's fingers this frame, and its mouse while its left button's down
 // (or let go this frame).
-pointers_of :: (w: ^Window -> list: [] Pointer) {
+pointers_of :: (w: ^Window, made_up: [] Pointer = ⟨⟩ -> list: [] Pointer) {
     *found: [..] Pointer
+    for p: made_up { found.add(p) }
     for t: w.touches { found.add(⟨t.id, V2⟨t.position[0], t.position[1]⟩, t.state.PRESSED, t.state.RELEASED⟩) }
     left := w.mouse.buttons[.LEFT]
     if left.HELD or left.PRESSED or left.RELEASED {
@@ -2513,8 +2516,12 @@ draw_player_ui :: (canvas: *Draw.Canvas, layer: *Draw.Canvas, layout: Layout, ga
                    motes: Particles.System, elements: Elements, volleys: Volleys, targeted: i64) {
     cell := cell_of(layout)
     for k: 0 < layout.count {
-        recoil, turn := life_recoil(volleys, k, cell)
-        draw_seat(canvas, layer, layout, game, fonts, k, k == targeted, screen.surface_time, screen.toggles.shown[k], screen.drums[k], true, recoil, turn)
+        // (the life jolted as bolts land, but not turned: text at a new angle
+        // is new glyphs, outlines and shadows, made and kept, every frame of a
+        // recoil, which filled the glyph atlas over and over; moved, it's the
+        // same glyphs)
+        recoil, _ := life_recoil(volleys, k, cell)
+        draw_seat(canvas, layer, layout, game, fonts, k, k == targeted, screen.surface_time, screen.toggles.shown[k], screen.drums[k], true, recoil, 0)
         history := screen.history_changes[k]
         shows := change_showing(history, k)
         if shows > 0 and !drum_showing(screen.drums[k], k) {
@@ -2848,6 +2855,7 @@ Options :: struct {
     elements: string ⟦help: "draw each element, at rest and drawn out, into raza_elements.png in this folder, and quit"⟧
     snapshot: string ⟦help: "draw each count of players into PNGs in this folder (raza_2.png to raza_6.png, and raza_grid.png), and quit"⟧
     quit_after: f64 = 0 ⟦help: "quit after this many seconds, as if Quit were pressed (to profile it: rain -profile raza.rain -quit_after:15)"⟧
+    busy: bool ⟦help: "a busy table, to measure: a strike between two players every half second and two players dragging, nothing stored (with -quit_after)"⟧
 }
 
 // Display the original operation on undo (crossed out), the applied delta on redo.
@@ -2879,23 +2887,21 @@ main :: (args: [] string) [failed: string] {
         fail: failed = bad_arguments
     }
     tuning_loaded := load_gold_tuning(options.background_tuning)
-    if loaded := Draw.image_from_bytes(MATERIAL_BYTES[:]) { material_image = loaded }
-    else if bad_image { fail: failed = "cannot load textures/materials-v1.png" }
+    // (the textures decoding, a thread each, while the window and the
+    // device are made; made images once they are, take_textures')
+    *decoders: [Texture] Thread
+    start_textures(decoders)
     defer material_image.destroy()
-    if loaded_controls := Draw.image_from_bytes(CONTROL_BYTES[:]) { control_image = loaded_controls }
-    else if bad_image { fail: failed = "cannot load textures/control-metal-v1.png" }
     defer control_image.destroy()
-    if loaded_steel := Draw.image_from_bytes(UNDER_TABLE_BYTES[:]) { under_table_image = loaded_steel }
-    else if bad_image { fail: failed = "cannot load textures/under-table-steel-v1.png" }
     defer under_table_image.destroy()
-    if loaded_five := Draw.image_from_bytes(FIVE_COLOURS_BYTES[:]) { five_colours_image = loaded_five }
-    else if bad_image { fail: failed = "cannot load textures/five-colour-dots-96.png" }
     defer five_colours_image.destroy()
     if options.elements != "" {
+        if take_textures(decoders) is failed then fail: failed
         if save_element_sheet(options.elements) is failed then fail: failed
         return
     }
     if options.snapshot != "" {
+        if take_textures(decoders) is failed then fail: failed
         if save_snapshots(options.snapshot) is failed then fail: failed
         return
     }
@@ -2917,6 +2923,7 @@ main :: (args: [] string) [failed: string] {
     // (the light the elements give, drawn each frame, then added with its bloom)
     *layer: Draw.Canvas
     if l := Draw.create_canvas(w.size) { layer = l } else if os_error { fail: failed = "no light layer: «os_error»" }
+    if take_textures(decoders) is failed then fail: failed
 
     // The game and each count of players' lines (splits[n] for n players),
     // as they were left last time (Defaults': the registry's), or a new game
@@ -2969,8 +2976,19 @@ main :: (args: [] string) [failed: string] {
     *slowest: f64 = 0
     *busy_frames: i64 = 0
     *woke := started
+    // (and when the first frame was shown, from the process's start, and the
+    // frames after it: the steady work, the first's making left out)
+    *first_shown: f64 = 0
+    *steady: f64 = 0
+    *steady_slowest: f64 = 0
+    *busy_clock: f32 = 0
     defer if options.quit_after > 0 and busy_frames > 0 {
         echo("«busy_frames» frames in «Time.seconds_since_start() - started, ⟨precision: 1⟩» s; each frame's work «busy / f64'busy_frames * 1000, ⟨precision: 2⟩» ms on average, «slowest * 1000, ⟨precision: 2⟩» ms at most")
+        echo("the first frame shown «first_shown * 1000, ⟨precision: 0⟩» ms from the start (the window opened at «started * 1000, ⟨precision: 0⟩» ms)")
+        if busy_frames > 1 {
+            echo("after it, each frame's work «steady / f64'(busy_frames - 1) * 1000, ⟨precision: 2⟩» ms on average, «steady_slowest * 1000, ⟨precision: 2⟩» ms at most")
+            echo("«f64'(busy_frames - 1) / (Time.seconds_since_start() - first_shown), ⟨precision: 1⟩» frames a second after it")
+        }
     }
     while Window.update_windows() {
         frame_start := Time.seconds_since_start()
@@ -3009,7 +3027,21 @@ main :: (args: [] string) [failed: string] {
             fonts_players = game.players
         }
         // (each finger this frame, and the mouse's left button)
-        pointers := `scratch pointers_of(w)
+        // (-busy: two made-up fingers, each dragging from a player toward
+        // another, swaying, never lifted)
+        *made_up: [2] Pointer
+        *made_up_count: i64 = 0
+        if options.busy and layout.count >= 3 {
+            sway := f32'(Time.seconds_since_start() - started)
+            for k: 0 < 2 {
+                aimed := layout.seats[(k + 2) % layout.count].middle
+                along := 0.55 + 0.35 * Math.sin(sway * (1.3 + f32'k * 0.4))
+                made_up[k] = ⟨BUSY_POINTER + u32'k, Math.mix(layout.seats[k].icon, aimed, along), false, false⟩
+                if !screen.drags[k].active then screen.drags[k] = ⟨active: true, from: k, finger: made_up[k].at, pointer: BUSY_POINTER + u32'k⟩
+            }
+            made_up_count = 2
+        }
+        pointers := `scratch pointers_of(w, made_up[:made_up_count])
         cell := cell_of(layout)
 
         // (F11 fullscreen or a window; F12 shows the frames a second, or
@@ -3313,6 +3345,23 @@ main :: (args: [] string) [failed: string] {
         // The elements and their motes moved on: each stirred or settling,
         // a drag's stream fed, the volleys' landings; and the game shown with
         // what's still in flight not yet done.
+        // (-busy: a strike between two players every half second, a new game
+        // when a life runs low, so no one's out)
+        if options.busy and layout.count >= 2 {
+            busy_clock += seconds
+            if busy_clock >= 0.5 {
+                busy_clock -= 0.5
+                striker := random.below(layout.count)
+                struck := (striker + 1 + random.below(layout.count - 1)) % layout.count
+                strike(game, motes, volleys, random, layout, pending, striker, struck, i32'random.through(1, 9), layout.seats[struck].middle, random.chance(0.5))
+                *low := false
+                for life: game.life[:game.players] { if life < 12 then low = true }
+                if low {
+                    call_off_volleys(motes, volleys, pending)
+                    game = new_game(game.players, game.identity)
+                }
+            }
+        }
         stir_elements(elements, layout, game, screen, volleys, seconds)
         motes.flow_scale = MOTE_FLOW * cell
         motes.update(seconds)
@@ -3320,7 +3369,7 @@ main :: (args: [] string) [failed: string] {
         if !screen.previewing then shown = shown_game(game, pending, volleys)
 
         // What changed this frame, stored (a failure to store isn't the game's).
-        if game != stored_game {
+        if game != stored_game and !options.busy {
             if Defaults.set("game", game) is os_error { }
             stored_game = game
         }
@@ -3393,6 +3442,13 @@ main :: (args: [] string) [failed: string] {
         draw_gold_tuner(canvas, tuner)
         canvas.present(w.handle, vsync: true)
         worked := Time.seconds_since_start() - frame_start
+        if busy_frames == 0 {
+            first_shown = Time.seconds_since_start()
+        }
+        else {
+            steady += worked
+            steady_slowest = Math.max(steady_slowest, worked)
+        }
         busy += worked
         slowest = Math.max(slowest, worked)
         busy_frames += 1

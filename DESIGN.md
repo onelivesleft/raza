@@ -250,11 +250,28 @@ each frame one part's is drawn again, in turn, if it's moved since it was
 changes (the size, the lines, a part's colours, who's out or aimed at).
 The light layer and its bloom are drawn only while something's lit (a
 drag, a volley). Draw_Vulkan keeps the driver's compiled pipelines in
-%LOCALAPPDATA%\Raza\vulkan_pipelines.bin: the part shader's took Intel's
-driver about 6 s to compile at every start, and now only at a build's first
-(its cache is the exe's own). `Raza.exe -quit_after:8` prints the frames'
-work; measured at 2160×1440 on Intel's GPU: 58 fps (the 60 cap), each
-frame's work 14 ms, the first frame 0.5 s. The frames a second show top
+%LOCALAPPDATA%\Raza\vulkan_pipelines.bin, saved only when one was compiled
+(it used to be kept only when it grew, so once the shaders changed every
+start compiled them again: 7 to 12 s). The part shader asks Patterns for
+marble by name, the only kind that reaches it, so the driver leaves the
+other kinds out: its cold compile went from 5.3 s to 1.8 s on Intel (a cold
+start, 2.7 s to the first frame, happens after the shaders change, or
+when Intel's own shader cache has dropped them).
+
+The four textures' PNGs are decoded on threads of their own while the
+window and the device are made (materials.rain's start_textures and
+take_textures). Text with an outline or a shadow is drawn by Draw_Vulkan
+once a glyph (its outline and shadow kept in its atlas), and a life's
+recoil moves it but doesn't turn it: every new angle of a big life total is
+new glyphs, outlines and shadows, which filled the atlas over and over.
+
+`Raza.exe -quit_after:8` prints when the first frame was shown, and the
+frames' work after it; `-busy` (with it) is a busy table to measure: a
+strike between two players every half second and two players dragging,
+nothing stored. Measured at 2160×1440 on Intel's GPU, with the pipelines
+cached: the first frame 0.6 s from the start; idle, each frame's work about
+1 ms; busy, the frames as fast as the display (120 Hz, its present waiting
+for the display: the work shows about 8.3 ms). The frames a second show top
 right in a debug build, not in a release build; F12 shows or hides them in
 either (F11 is fullscreen or a window).
 

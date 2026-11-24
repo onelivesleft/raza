@@ -2,6 +2,72 @@
 MATERIAL_BYTES :: #data "../textures/materials-v1.png"
 material_image: Draw.Image
 
+////////////////////////////////
+// The textures, decoded as the program starts
+
+// Each texture's PNG is decoded on a thread of its own as the program
+// starts, while the window and the device are made (one after another, on
+// the main thread, they were a fifth of a start, before the window); each
+// sends its pixels back, in an arena of its own, and take_textures makes
+// them images.
+Texture :: enum { MATERIALS; CONTROLS; UNDER_TABLE; FIVE_COLOURS }
+
+TEXTURE_PATHS :: [Texture] string⟨"textures/materials-v1.png", "textures/control-metal-v1.png",
+                                    "textures/under-table-steel-v1.png", "textures/five-colour-dots-96.png"⟩
+
+Decoded_Texture :: struct {
+    which:  Texture
+    size:   Wide.i32x2
+    pixels: [] u32
+    bad:    bool                  // its PNG couldn't be read
+}
+
+decoded_textures: Channel(Decoded_Texture) = ⟨max_count: 4⟩
+
+// A texture's PNG, as the program carries it.
+texture_bytes :: (which: Texture -> [] u8) {
+    return if which is {
+    case .MATERIALS:    MATERIAL_BYTES[:]
+    case .CONTROLS:     CONTROL_BYTES[:]
+    case .UNDER_TABLE:  UNDER_TABLE_BYTES[:]
+    case .FIVE_COLOURS: FIVE_COLOURS_BYTES[:]
+    }
+}
+
+// A texture decoded (a thread's), its pixels sent back.
+decode_texture :: (which: Texture) {
+    *job := arena()
+    *made := Decoded_Texture⟨which: which, bad: true⟩
+    `job {
+        if size, pixels := Image_Files.decode_image(texture_bytes(which)) { made = ⟨which, size, pixels, false⟩ } else if bad_image { }
+    }
+    decoded_textures.send_waiting(job, made)
+}
+
+// Each texture's decoding started, a thread each.
+start_textures :: (decoders: *[Texture] Thread) {
+    for *d, which: decoders { d = thread(decode_texture(which)) }
+}
+
+// The textures made images as their threads send them (each the global
+// it's drawn from), and the threads ended.
+take_textures :: (decoders: *[Texture] Thread) [failed: string] {
+    for _: 0 < TEXTURE_PATHS.count {
+        job, texture := decoded_textures.wait()
+        if texture.bad then fail: failed = "cannot load «TEXTURE_PATHS[texture.which]»"
+        *image: Draw.Image
+        if made := Draw.image_from_pixels(texture.size, texture.pixels) { image = made }
+        else if bad_image { fail: failed = "cannot load «TEXTURE_PATHS[texture.which]»" }
+        if texture.which is {
+        case .MATERIALS:    material_image = image
+        case .CONTROLS:     control_image = image
+        case .UNDER_TABLE:  under_table_image = image
+        case .FIVE_COLOURS: five_colours_image = image
+        }
+    }
+    for *d: decoders { d.join() }
+}
+
 // Inset samples keep bilinear filtering inside one atlas cell.
 material_sample :: (atlas: Shader.Texture_2D, filtering: Shader.Sampler, tile: i32, uv: V2 -> V3) {
     inset := V2⟨0.006, 0.006⟩ + uv * 0.988

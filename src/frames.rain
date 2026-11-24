@@ -155,15 +155,17 @@ part_shade :: (from: Draw.Quad_Between, part: Shader.Uniforms(Part_Params), atla
         // the midpoint of an asymmetric region's projected bounds.
         blend_half := Math.max((part.frame.z - part.frame.y) * 0.15, 1)
         blend := Math.smoothstep(0 - blend_half, blend_half, local_x)
-        *left_material := V3⟨0, 0, 0⟩
-        *right_material := V3⟨0, 0, 0⟩
-        if blend < 1 {
-            left_material = shade_panel_material(p, local_x, local_y, part.stops[0].xyz, left_look, part.more, angle, left.w, i32'left.x, atlas, filtering)
+        // (each side's material, as much of it as the blend takes: one call
+        // in a loop, not one a side, so the material's code is in the stage
+        // once, which the driver compiles in a fraction of the time)
+        for side: 0 < 2 {
+            weight := if side == 0 then 1 - blend else blend
+            if weight > 0 {
+                hybrid := part.hybrid_looks[side]
+                look := if side == 0 then left_look else right_look
+                rgb = rgb + shade_panel_material(p, local_x, local_y, part.stops[side].xyz, look, part.more, angle, hybrid.w, i32'hybrid.x, atlas, filtering) * weight
+            }
         }
-        if blend > 0 {
-            right_material = shade_panel_material(p, local_x, local_y, part.stops[1].xyz, right_look, part.more, angle, right.w, i32'right.x, atlas, filtering)
-        }
-        rgb = Math.mix(left_material, right_material, blend)
     }
     else {
         rgb = shade_panel_material(p, local_x, local_y, base, part.look, part.more, angle, part.toward.w, tile, atlas, filtering)
@@ -591,7 +593,12 @@ shade_panel_material :: (p: V2, local_x: f32, local_y: f32, base: V3, look: V4, 
         rgb = open_water_at(V2⟨local_x, local_y⟩, base, look.y, look.w, more.x)
     }
     else {
-        v := Patterns.at(Patterns.Kind'i32'(look.x + 0.5), p, look.y, look.w, more.x, angle, more.y, more.z)
+        // (marble's: the only kind that's a pattern here, black's and gold's;
+        // white and red are materials of their own, returned above, blue's
+        // water, green's forest and an artifact's rust its surfaces; a kind
+        // known while compiling leaves the other kinds' code out of the stage,
+        // which compiled for seconds on some drivers)
+        v := Patterns.at(.MARBLE, p, look.y, look.w, more.x, angle, more.y, more.z)
         t := Math.clamp((v - 0.5) * 2, -1, 1) * look.z
         rgb = if t > 0 then Math.mix(base, light, t) else Math.mix(base, shade, 0 - t)
     }
