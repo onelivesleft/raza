@@ -25,11 +25,6 @@ ATTACK_ABOVE_CELLS :: 2.2
 // is dragged toward the next.
 LEAST_SPLIT :: 0.04
 
-// The steps a player's facing turns in (radians): a part's text is drawn at
-// one of only so many angles, however its lines are dragged (each angle's
-// glyphs drawn once), and a part facing a side faces it exactly.
-FACING_STEP :: f32'Math.TAU / 180
-
 // Where the lines from the centre meet the screen's edge: each a share of
 // the way round it, clockwise from its top-left corner (0 up to 1), in
 // order round. Shares, so they're the same on a screen of another size.
@@ -58,6 +53,7 @@ Layout :: struct {
     seats:  [MAX_PLAYERS] Seat
     splits: Splits
     ends:   [MAX_PLAYERS] V2     // where each line from the centre meets the screen's edge
+    life_size: i32               // the life totals' font size (fitted_life_size's)
 }
 
 // The share a turned to lie from 0 up to 1 (or an angle, from 0 up to TAU).
@@ -341,9 +337,9 @@ halfway_between :: (centre: V2, first: V2, next: V2 -> f32) #pure {
 }
 
 // Which way a player between two lines faces (as an angle from the centre,
-// y down): halfway round from the first line to the next, in FACING_STEPs.
+// y down): halfway round from the first line to the next.
 facing_between :: (centre: V2, first: V2, next: V2 -> f32) #pure {
-    return Math.round(halfway_between(centre, first, next) / FACING_STEP) * FACING_STEP
+    return halfway_between(centre, first, next)
 }
 
 // How wide a part is across its life total: along a line through the life
@@ -439,7 +435,33 @@ lay_out :: (size: V2, splits: Splits -> layout: Layout) #pure {
         seat.reach = reach
         layout.seats[k] = seat
     }
+    // (each attack spot far enough from its life total, however big the
+    // totals are drawn (life_size_of's, from the parts' room), for a
+    // commander chip between them: two player's totals in portrait are big)
+    // (where the controls pull a spot back toward its life total, the life
+    // total goes down toward its player by as much instead; then the totals'
+    // size fitted again, their spinners from where they are now)
+    life_half := f32'fitted_life_size(layout) * LIFE_CAP_SHARE / 2
+    for *seat: layout.seats[:n] {
+        above := Math.max(ATTACK_ABOVE_CELLS * cell_of(layout), life_half + ATTACK_LIFE_GAP * cell_of(layout))
+        seat.icon = clear_of_controls(size, centre, seat.middle, seat.middle - seat.toward * above)
+        // (no further than keeps the life total's capitals, and a little,
+        // inside its part toward its player)
+        *short := above - Math.dot(seat.middle - seat.icon, seat.toward)
+        along := Math.dot(seat.middle - centre, seat.toward)
+        short = Math.min(short, seat.reach - life_half - 0.3 * cell_of(layout) - along)
+        if short > 0 then seat.middle = seat.middle + seat.toward * short
+        seat.clear = controls_clearance(size, centre, seat.icon)
+    }
+    layout.life_size = fitted_life_size(layout)
 }
+
+// A life total's capitals' height, as a share of its font's size (Crimson
+// Pro's figures', with a little to spare); and the room between the top of
+// a life total and its attack spot, in cells: a commander chip, the gap
+// beside it, an attack icon's radius, and a little more.
+LIFE_CAP_SHARE :: 0.66
+ATTACK_LIFE_GAP :: 2 * CHIP_RADIUS + CHIP_GAP + DAMAGE_ICON_RADIUS + 0.1
 
 // The seat a point is in, or absent (outside the screen).
 seat_at :: (layout: Layout, p: V2 -> i64) [absent] {

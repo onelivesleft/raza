@@ -641,14 +641,35 @@ living_artifact :: (q: V2, texture: V3, time: f32, seed: f32 -> V3) {
     return Math.mix(metal, corrosion, rust * 0.85) * (1 - pits * 0.28)
 }
 
-// Anchored offset copies of the same forest tile. Only their local opacity
-// changes: bright leaf detail is revealed within independently fading patches.
+// Each layer has a fixed orientation for this seat, independent of its reveal animation.
+forest_layer_uv :: (uv: V2, seed: f32, layer: i64 -> V2) {
+    angle := Patterns.hash(V2⟨seed + 0.73, f32'layer + 0.31⟩) * f32'Math.TAU
+    c := Math.cos(angle)
+    s := Math.sin(angle)
+    return V2⟨c * uv.x - s * uv.y, s * uv.x + c * uv.y⟩
+}
+
+// Four disjoint time slots on the surface clock. Change generation in the
+// middle of a short, fully transparent interval on either side of the wrap.
+forest_layer_cycle :: (time: f32, seed: f32, layer: i64 -> V2) #pure {
+    period: f32 = 152
+    cycle := (time + 38 * f32'(3 - layer)) / period
+    generation := Math.floor(cycle)
+    within := Math.fract(cycle) * period
+    change_at := 124 + 18 * Patterns.hash(V2⟨seed + f32'layer, generation + 0.49⟩)
+    since := within - change_at
+    current := if since >= 0 then generation + 1 else generation
+    return ⟨seed + current * 17.37, Math.smoothstep(0.20, 2.20, Math.abs(since))⟩
+}
+
 layered_forest :: (atlas: Shader.Texture_2D, filtering: Shader.Sampler, uv: V2, time: f32, seed: f32 -> V3) {
-    *rgb := material_at(atlas, filtering, 4, uv)
+    base := forest_layer_cycle(time, seed, 0)
+    *rgb := material_at(atlas, filtering, 4, forest_layer_uv(uv, base.x, 0))
     for i: 0 < 3 {
-        salt := f32'i + seed * 0.37
+        cycle := forest_layer_cycle(time, seed, i + 1)
+        salt := f32'i + cycle.x * 0.37
         offset := V2⟨0.213 + f32'i * 0.317, 0.371 + f32'i * 0.193⟩
-        at := uv + offset
+        at := forest_layer_uv(uv, cycle.x, i + 1) + offset
         copy := material_at(atlas, filtering, 4, at)
         patch := Patterns.layered(at * 13 + V2⟨salt, 2.7⟩, 3)
         phase := Patterns.layered(at * 5 + V2⟨3.1, salt⟩, 3) * 9
@@ -656,7 +677,9 @@ layered_forest :: (atlas: Shader.Texture_2D, filtering: Shader.Sampler, uv: V2, 
         reveal := Math.smoothstep(0.40, 0.68, patch + (life - 0.5) * 0.42)
         detail := Math.dot(copy, V3⟨0.2126, 0.7152, 0.0722⟩)
         leaf := Math.smoothstep(0.08, 0.24, detail)
-        alpha := reveal * leaf * 0.72
+        // The first overlay supplies solid cover while the base is absent.
+        if i == 0 then rgb = Math.mix(copy, rgb, base.y)
+        alpha := reveal * leaf * 0.72 * cycle.y
         rgb = Math.mix(rgb, copy, alpha)
     }
     return rgb

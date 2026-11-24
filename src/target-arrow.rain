@@ -55,11 +55,11 @@ free_arrow_back :: (button: V2, tip: V2, outward: V2 -> V2) #pure {
     if length < 0.001 then return outward
     return delta / length
 }
-draw_target_arrow :: (canvas: *Draw.Canvas, layout: Layout, drag: Drag, tip: V2, back: V2) {
+draw_target_arrow :: (canvas: *Draw.Canvas, layout: Layout, game: Game, drag: Drag, tip: V2, back: V2) {
     cell := cell_of(layout)
     source := layout.seats[drag.from]
     up := source.toward * -1.0
-    start := damage_icon(layout, drag.from, drag.combat) + up * ((DAMAGE_ICON_RADIUS + 0.12) * cell)
+    start := attack_icon(layout, game, drag.from, drag.kind) + up * ((DAMAGE_ICON_RADIUS + 0.12) * cell)
     span := Math.length(tip - start)
     head_length := Math.min(0.85 * cell, Math.max(0.05 * cell, span * 0.4))
     end := tip + back * head_length

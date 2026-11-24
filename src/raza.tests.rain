@@ -9,39 +9,23 @@ near_point :: (a: V2, b: V2 -> bool) {
 
 // Each finger is followed by its id: one let go this frame, or gone, has let
 // go, one still down hasn't. Opening the count column or the settings ends
-// every player's drag, grid and drum.
+// every player's drag and grid; a drum stays open (only its cross or tick
+// ends it), and one spinning spins on.
 fingers_are_followed_apart :: () #test {
     pointers := [2] Pointer⟨⟨3, ⟨10, 10⟩, false, false⟩, ⟨5, ⟨20, 20⟩, false, true⟩⟩
     assert(!let_go(pointers[:], 3) and let_go(pointers[:], 5) and let_go(pointers[:], 9), "3 down, 5 let go, 9 gone")
     if down := pointer_with(pointers[:], 3) { assert(down.at == V2⟨10, 10⟩, "3 at «down.at»") } else if absent { assert(false, "3's down") }
     *screen: Screen_State
-    game := new_game(4)
     screen.drags[0] = ⟨active: true, from: 0⟩
     screen.drags[2] = ⟨active: true, from: 2⟩
     screen.pickers[1] = ⟨open: true, from: 1, to: 0⟩
-    screen.drums[3] = ⟨open: true, player: 3, pressed: true⟩
-    assert(dragging(screen) and any_grid_open(screen), "two dragging, a grid open")
-    *played := game
-    *timeline: Timeline
-    lines: Lines = ⟨⟩
-    end_gestures(screen, played, timeline, lines)
-    assert(!dragging(screen) and !any_grid_open(screen), "the drags and the grid ended")
-    assert(!screen.drums[3].open and !screen.drums[3].pressed, "the drum closed")
-    assert(played == game and timeline.past.count == 0, "a drum that wasn't turned changes nothing")
-}
-
-// A drum spinning as the count column or the settings open keeps the life
-// it's reached: stopped on its row, a step to undo.
-spinning_drums_keep_their_life_as_gestures_end :: () #test {
-    *game := new_game(4)
-    *screen: Screen_State
+    screen.drums[3] = ⟨open: true, player: 3⟩
     screen.drums[1] = ⟨open: true, player: 1, start: 40, from: 40, place: 1, turned: 2.8, speed: 6, spinning: true⟩
-    *timeline: Timeline
-    lines: Lines = ⟨⟩
-    end_gestures(screen, game, timeline, lines)
-    assert(game.life[1] == 43, "the spin's row kept: «game.life[1]»")
-    assert(timeline.past.count == 1 and timeline.past[0].game.life[1] == 40, "a step to undo")
-    assert(!screen.drums[1].open and !screen.drums[1].spinning and screen.drums[1].change == 3, "closed, showing its +3")
+    assert(dragging(screen) and any_grid_open(screen), "two dragging, a grid open")
+    end_gestures(screen)
+    assert(!dragging(screen) and !any_grid_open(screen), "the drags and the grid ended")
+    assert(screen.drums[3].open, "the drum still open")
+    assert(screen.drums[1].open and screen.drums[1].spinning, "the spinning drum still spinning")
 }
 
 // Another player's damage while a drum's open stays: the drum's turn
@@ -178,6 +162,103 @@ drums_spin_on_when_flicked :: () #test {
     assert(!held.spinning and turned, "held still: no spin, the life its row's")
 }
 
+// A drum turns a life no lower than 0, the finger past it moving the wheel
+// again as it comes back, and a spin back stops there; a life damage has
+// taken below 0 turns no lower than it is.
+drums_stop_at_nothing :: () #test {
+    cap: f32 = 100
+    row := DRUM_PITCH * cap
+    frame: f32 = 1.0 / 60
+    *game := new_game(4)
+    game.life[1] = 3
+    *drum: Life_Drum
+    press_drum(drum, game, 1, ⟨0, 0⟩, 1)
+    _, _ := release_drum(drum, game)
+    // (the units' up five rows: only three)
+    press_drum(drum, game, 1, ⟨0, 0⟩, 1)
+    move_drum(drum, ⟨0, -5 * row⟩, cap)
+    assert(drum.turned == -3, "stopped at 0: «drum.turned»")
+    move_drum(drum, ⟨0, -4 * row⟩, cap)
+    assert(Math.abs(drum.turned + 2) < 0.001, "back a row as soon as the finger is: «drum.turned»")
+    nothing, _ := release_drum(drum, game)
+    assert(nothing == 1, "a row back from 0: «nothing»")
+    // (the tens' from 23: two rows, to 3)
+    game.life[1] = 23
+    press_drum(drum, game, 1, ⟨0, 0⟩, 10)
+    move_drum(drum, ⟨0, -4 * row⟩, cap)
+    tens, _ := release_drum(drum, game)
+    assert(tens == 3, "the tens' stop short of below 0: «tens»")
+    // (a spin back settles on 0)
+    game.life[1] = 6
+    *spun := drum
+    spun.from = 6
+    spun.seen = 6
+    spun.place = 1
+    spun.turned = 0
+    spun.speed = -40
+    spun.spinning = true
+    *steps := 0
+    while !spun.settled and steps < 2000 {
+        step_drum(spun, game, frame)
+        steps += 1
+    }
+    assert(spun.settled and spun.settled_life == 0, "spun back to 0: «spun.settled_life»")
+    // (below 0 from damage: no lower, but up)
+    game.life[1] = -4
+    press_drum(drum, game, 1, ⟨0, 0⟩, 1)
+    move_drum(drum, ⟨0, -2 * row⟩, cap)
+    assert(drum.turned == 0, "no lower than it is")
+    move_drum(drum, ⟨0, 0⟩, cap)
+    up, _ := release_drum(drum, game)
+    assert(up == -2, "up from it: «up»")
+}
+
+// A life below 0 tapped opens its drum at 0, the change it adds on its
+// wheel; the cross takes it back to where it was.
+drums_open_at_nothing_from_below :: () #test {
+    *game := new_game(4)
+    game.life[2] = -4
+    *drum: Life_Drum
+    press_drum(drum, game, 2, ⟨0, 0⟩, 1)
+    life, changes := release_drum(drum, game)
+    assert(drum.open and changes and life == 0, "opened at 0: «life»")
+    game.life[2] = life
+    step_drum(drum, game, 1.0 / 60)
+    assert(drum_life(drum) == 0 and change_wheel_position(drum) == 4, "at 0, +4: «change_wheel_position(drum)»")
+    assert(drum.start == -4, "the cross's life: «drum.start»")
+}
+
+// A life below 0 opened at 0 and cancelled straight away leaves no step to
+// undo: the cross takes back the opening's, rather than making another.
+// Something done between them, and the cross makes its own step as usual.
+cancelled_openings_leave_no_step :: () #test {
+    lines: Lines = ⟨⟩
+    for between: [2] bool⟨false, true⟩ {
+        with scratch.rewind()
+        `scratch {
+            *game := new_game(4)
+            game.life[2] = -4
+            *timeline: Timeline
+            *drum: Life_Drum
+            press_drum(drum, game, 2, ⟨0, 0⟩, 1)
+            // (as the program does on letting go: the opening a step to undo)
+            life, changes := release_drum(drum, game)
+            assert(changes, "opened at 0")
+            timeline.remember(game, lines)
+            game.life[2] = life
+            drum.opening_step = timeline.past.count
+            if between {
+                timeline.remember(game, lines)
+                game.life[0] -= 3
+            }
+            cancel_drum(drum, game, timeline, lines)
+            assert(!drum.open and game.life[2] == -4, "back below: «game.life[2]»")
+            steps := if between then 3 else 0
+            assert(timeline.past.count == steps, "«steps» steps to undo, with something between («between»): «timeline.past.count»")
+        }
+    }
+}
+
 // Two fingers on the lines turn them all about the centre: on a square a
 // quarter turn moves each end a quarter of the way round, and on any screen
 // a whole turn (or none) leaves them where they were, in order round.
@@ -217,6 +298,186 @@ games_come_back_or_start_fresh :: () #test {
     *any := false
     for c: coloured[:4] { if c != 0 then any = true }
     assert(any, "Reset's colours aren't all colourless")
+}
+
+// A player's attacks stand in Attack's order, plain damage first and always
+// on; commander damage is on to start with, and the options turn the rest
+// on and off.
+attacks_are_in_order_and_turned_on :: () #test {
+    kinds, count := attacks_of(STARTING_ATTACKS)
+    assert(count == 2 and kinds[0] == .DAMAGE and kinds[1] == .COMMANDER, "to start with: damage, commander damage")
+    every, all := attacks_of(31)
+    expected := [5] Attack⟨.DAMAGE, .COMMANDER, .COMMANDER_LIFELINK, .LIFELINK, .POISON⟩
+    assert(all == 5 and every[:all] == expected[:], "every attack, in order: «every»")
+    *game := new_game(4)
+    toggle_attack(game, 2, .POISON)
+    toggle_attack(game, 2, .COMMANDER)
+    toggle_attack(game, 2, .DAMAGE)
+    turned, n := attacks_of(game.attacks[2])
+    assert(n == 2 and turned[0] == .DAMAGE and turned[1] == .POISON, "poison on, commander off, damage always: «turned[:n]»")
+    kept := new_game(4, game.identity, game.attacks)
+    assert(kept.attacks == game.attacks and new_game(4).attacks[2] == STARTING_ATTACKS, "a new game keeps them; a reset's starts them again")
+}
+
+self_life_shortcuts_undo_individually :: () #test {
+    *timeline: Timeline
+    *lines: Lines
+    *screen: Screen_State
+    *game := new_game(2)
+    amounts := [4] i32⟨1, -1, 2, -2⟩
+    for amount: amounts {
+        previous := game.life[1]
+        apply_life_shortcut(timeline, game, lines, screen, 1, amount)
+        assert(game.life[1] == previous + amount and screen.history_changes[1].change == amount)
+    }
+    for i: 0 < 4 {
+        before := game
+        assert(timeline.undo(game, lines))
+        show_history_changes(screen, before, game, true)
+        amount := amounts[3 - i]
+        assert(game.life[1] == before.life[1] - amount and game.life[0] == 40)
+        assert(screen.history_changes[1].change == amount and screen.history_changes[1].crossed)
+    }
+    assert(!timeline.undo(game, lines))
+    for amount: amounts {
+        before := game
+        assert(timeline.redo(game, lines))
+        show_history_changes(screen, before, game, false)
+        assert(game.life[1] == before.life[1] + amount and game.life[0] == 40)
+        assert(screen.history_changes[1].change == amount and !screen.history_changes[1].crossed)
+    }
+}
+
+// A player's life shortcuts sit in two rows beyond their leftmost damage chip.
+life_shortcuts_beside_damage :: () #test {
+    for players: 2 <= MAX_PLAYERS {
+        layout := laid_out(players, LANDSCAPE)
+        cell := cell_of(layout)
+        for seat, k: layout.seats[:players] {
+            width := f32'life_size_of(layout) * 0.95
+            chips := chip_places(layout, k, width, cell)
+            *positions: [4] V2
+            for kind, i: LIFE_SHORTCUTS {
+                world := life_shortcut_place(layout, k, kind, 254, chips, width)
+                assert(world.x > 0 and world.y > 0 and world.x < layout.size.x and world.y < layout.size.y)
+                positions[i] = local_of(seat.middle, seat.angle, world)
+                assert(positions[i].x < -width / 2)
+            }
+            if Math.abs(positions[0].x - positions[1].x) < 0.01 {
+                assert(positions[1].y < positions[0].y and positions[0].y < positions[2].y and positions[2].y < positions[3].y)
+            }
+            else {
+                assert(positions[1].x < positions[0].x and positions[3].x < positions[2].x)
+                assert(Math.abs(positions[1].y - positions[0].y) < 0.01 and positions[1].y < positions[3].y)
+            }
+        }
+    }
+}
+
+enabled_shortcuts_pack_in_order :: () #test {
+    layout := laid_out(2, LANDSCAPE)
+    cell := cell_of(layout)
+    seat := layout.seats[0]
+    chips := chip_places(layout, 0, cell, cell)
+    for mask: 0 < 16 {
+        *selection := new_game(2)
+        for key, i: LIFE_SHORTCUTS {
+            if (mask & (i64'1 << i)) != 0 then toggle_attack(selection, 0, key)
+        }
+        enabled := selection.attacks[0]
+        *previous: V2
+        *seen := false
+        for key: [4] Attack⟨.GAIN_TWO, .GAIN_ONE, .LOSE_ONE, .LOSE_TWO⟩ {
+            if !has_attack(enabled, key) then continue
+            at := local_of(seat.middle, seat.angle, life_shortcut_place(layout, 0, key, enabled, chips, cell))
+            if seen {
+                assert(Math.abs(at.x - previous.x) < 0.01)
+                assert(Math.abs(at.y - previous.y - OPTION_PITCH * cell) < 0.01)
+            }
+            previous = at
+            seen = true
+        }
+    }
+}
+
+// Each attack does what it says: damage takes life, commander damage counts
+// toward the 21 too, lifelink gives the attacker as much life, poison gives
+// counters, and ten is out; as volleys, each shows happening as it lands.
+attacks_do_what_they_say :: () #test {
+    *game := new_game(4)
+    game.deal_attack(.DAMAGE, 1, 0, 3)
+    game.deal_attack(.COMMANDER, 1, 0, 4)
+    game.deal_attack(.COMMANDER_LIFELINK, 1, 0, 5)
+    game.deal_attack(.LIFELINK, 2, 0, 2)
+    game.deal_attack(.POISON, 3, 0, 9)
+    assert(game.life[0] == 40 - 3 - 4 - 5 - 2 and game.commander[0][1] == 9 and game.commander[0][2] == 0, "life «game.life[0]», commander damage «game.commander[0][1]»")
+    assert(game.life[1] == 45 and game.life[2] == 42 and game.life[3] == 40, "lifelink's life: «game.life[1]», «game.life[2]»")
+    assert(game.poison[0] == 9 and !is_out(game, 0), "nine poison: still in")
+    game.deal_attack(.POISON, 3, 0, 1)
+    assert(is_out(game, 0), "ten poison: out")
+    layout := laid_out(4, LANDSCAPE)
+    *struck := new_game(4)
+    *volleys: Volleys
+    *pending: [MAX_PLAYERS] [MAX_PLAYERS] i32
+    strike(struck, volleys, layout, pending, 1, 0, 3, .LIFELINK)
+    strike(struck, volleys, layout, pending, 2, 3, 10, .POISON)
+    before := shown_game(struck, pending, volleys)
+    assert(before.life[1] == 40 and before.life[0] == 40 and before.poison[3] == 0, "shown as it was while they fly: «before.life[1]», «before.poison[3]»")
+    assert(volleys.list[1].lethal, "ten poison is lethal")
+    steer_volleys(volleys, pending, volley_landing(volleys.list[0]) + LIFELINK_ARRIVAL - 0.01)
+    flying_back := shown_game(struck, pending, volleys)
+    assert(flying_back.life[0] == 37 and flying_back.life[1] == 40, "damage landed, all three gains still returning")
+    steer_volleys(volleys, pending, 0.02)
+    first_back := shown_game(struck, pending, volleys)
+    assert(first_back.life[1] == 41, "only the first returning point reached the attacker")
+    steer_volleys(volleys, pending, 4)
+    after := shown_game(struck, pending, volleys)
+    assert(after.life[1] == 43 and after.life[0] == 37 and after.poison[3] == 10, "landed: «after.life[1]», «after.life[0]», «after.poison[3]»")
+    assert(damage_of(amount_for(0.1, .POISON)) == 1 and damage_of(amount_for(0.5, .POISON)) == 2 and damage_of(amount_for(0.9, .POISON)) == 3, "poison drags 1, 2, 3")
+    assert(damage_of(amount_for(1.1, .POISON)) == 0, "then asks")
+}
+
+// Each part's options are in its bottom right corner as its player sees
+// it, right of its colour toggles, all four inside the part.
+options_are_in_the_bottom_right :: () #test {
+    for size: [2] V2⟨LANDSCAPE, PORTRAIT⟩ {
+        for players: 2 <= MAX_PLAYERS {
+            layout := laid_out(players, size)
+            for seat, k: layout.seats[:players] {
+                colours, colours_middle, _ := toggle_places(layout, seat)
+                options, options_hub, button := toggle_places(layout, seat, true, OPTION_KINDS.count)
+                left := local_of(seat.middle, seat.angle, colours_middle).x
+                right := local_of(seat.middle, seat.angle, options_hub).x
+                assert(left < right, "«players» on «size», «k»: the options right of the colours")
+                assert(local_of(seat.middle, seat.angle, button).x > 0, "«players» on «size», «k»: the options button on its player's right")
+                for i: 0 < 4 {
+                    upper := local_of(options_hub, seat.angle, options[i])
+                    lower := local_of(options_hub, seat.angle, options[i + 4])
+                    assert(Math.abs(upper.x - lower.x) < 0.01 and upper.y < lower.y)
+                    if i > 0 then assert(upper.x > local_of(options_hub, seat.angle, options[i - 1]).x)
+                }
+                for place: options[:OPTION_KINDS.count] { assert(inside(place, seat.outline[:seat.count]), "«players» on «size», «k»: an option outside its part") }
+            }
+        }
+    }
+}
+
+// Squeezing a seat must never push its rotated options pane offscreen or over its button.
+options_in_squeezed_seats :: () #test {
+    for size: [2] V2⟨LANDSCAPE, PORTRAIT⟩ {
+        *splits := equal_splits(6, size)
+        splits.move_split(0, splits.at[1] - LEAST_SPLIT)
+        layout := lay_out(size, splits)
+        seat := layout.seats[0]
+        _, middle, hub := toggle_places(layout, seat, true, OPTION_KINDS.count)
+        cell := cell_of(layout)
+        half := option_panel_half(cell)
+        assert(option_button_clear(local_of(hub, seat.angle, middle), half, cell))
+        for sx: [2] f32⟨-1, 1⟩ { for sy: [2] f32⟨-1, 1⟩ {
+            corner := placed(middle, seat.angle, ⟨sx * half.x, sy * half.y⟩)
+            assert(corner.x >= 0 and corner.y >= 0 and corner.x <= size.x and corner.y <= size.y)
+        } }
+    }
 }
 
 // A count of players laid out as they start.
@@ -375,7 +636,7 @@ four_are_an_x :: () #test {
     assert(faces(layout.seats[3], ⟨0, -1⟩, f32'Math.PI), "top: «layout.seats[3].toward»")
 }
 
-// Every player faces halfway between their part's lines (to a FACING_STEP),
+// Every player faces halfway between their part's lines,
 // into their part, however the lines are dragged.
 players_face_between_their_lines :: () #test {
     *dragged := equal_splits(4, LANDSCAPE)
@@ -389,13 +650,13 @@ players_face_between_their_lines :: () #test {
             to_next := Math.normalize(layout.ends[(k + 1) % n] - layout.centre)
             first := Math.acos(Math.clamp(Math.dot(seat.toward, to_first), -1, 1))
             next := Math.acos(Math.clamp(Math.dot(seat.toward, to_next), -1, 1))
-            assert(Math.abs(first - next) <= FACING_STEP + 0.001, "«n» players: part «k» faces «first» from one line, «next» from the other")
+            assert(Math.abs(first - next) <= 0.001, "«n» players: part «k» faces «first» from one line, «next» from the other")
             if at := seat_at(layout, layout.centre + seat.toward * 100) { assert(at == k, "«n» players: part «k» faces into «at»'s") }
             else if absent { assert(false, "«n» players: part «k» faces off the screen") }
             assert(Math.abs(turn_between(seat.angle, text_angle(seat.toward))) < 0.001, "«n» players: part «k»'s text is turned to its facing")
             offset := seat.middle - layout.centre
             sideways := Math.abs(offset.x * seat.toward.y - offset.y * seat.toward.x)
-            assert(sideways <= Math.length(offset) * FACING_STEP, "life position follows its orientation within font angle rounding")
+            assert(sideways <= 0.01, "life position follows its orientation on the channel bisector")
             assert(inside(seat.middle, seat.outline[:seat.count]), "centred life stays inside its region")
         }
     }
@@ -423,11 +684,12 @@ dragged_ends_stay_between :: () #test {
 }
 
 // The life totals' size follows the smallest part as a line's end is
-// dragged: smaller as a part's squeezed, and always a whole step of a cell.
+// dragged: smaller as a part's squeezed. It's never more than the part's
+// room allows, and every part's spinner, open, cross and tick and all,
+// fits in its part clear of the controls, for every count either way up.
 life_size_follows_the_parts :: () #test {
     *splits := equal_splits(4, LANDSCAPE)
     before := lay_out(LANDSCAPE, splits)
-    step := cell_of(before) / LIFE_STEPS
     start := life_size_of(before)
     // (the part with least room squeezed to half its edge)
     *least: i64 = 0
@@ -435,9 +697,34 @@ life_size_follows_the_parts :: () #test {
     splits.move_split(least, splits.at[least] + wrapped_share(splits.at[(least + 1) % 4] - splits.at[least]) / 2)
     after := life_size_of(lay_out(LANDSCAPE, splits))
     assert(after < start, "a squeezed part's life is smaller: «start», then «after»")
-    for size: [2] i32⟨start, after⟩ {
-        nearest := Math.round(f32'size / step) * step
-        assert(Math.abs(f32'size - nearest) <= 0.5, "«size» is a whole number of steps of «step», to the pixel")
+    for size: [2] V2⟨LANDSCAPE, PORTRAIT⟩ {
+        for players: 2 <= MAX_PLAYERS {
+            layout := laid_out(players, size)
+            cell := cell_of(layout)
+            life := f32'life_size_of(layout)
+            *room: f32 = 1e30
+            for seat: layout.seats[:players] { room = Math.min(room, seat.room) }
+            assert(life <= Math.clamp(room * 1.15, cell, 6 * cell) + 0.5, "«players» players at «size»: «life» more than the room allows")
+            assert(life <= cell + 0.5 or spinners_fit(layout, life), "«players» players at «size»: a spinner for «life» doesn't fit")
+        }
+    }
+}
+
+// Each attack spot is clear of its life total, however big the totals are
+// drawn (two players' in portrait the biggest), with room for a commander
+// chip between them.
+attack_spots_clear_the_life :: () #test {
+    for size: [2] V2⟨LANDSCAPE, PORTRAIT⟩ {
+        for players: 2 <= MAX_PLAYERS {
+            layout := laid_out(players, size)
+            cell := cell_of(layout)
+            life_half := f32'life_size_of(layout) * LIFE_CAP_SHARE / 2
+            for seat, k: layout.seats[:players] {
+                above := 0 - local_of(seat.middle, seat.angle, seat.icon).y
+                assert(above >= life_half + (2 * CHIP_RADIUS + DAMAGE_ICON_RADIUS) * cell - 1,
+                       "«players» players at «size»: «k»'s attack spot «above» above its life, whose top is «life_half»")
+            }
+        }
     }
 }
 
@@ -459,28 +746,49 @@ icons_are_in_their_parts :: () #test {
 // damage's on their right, are wholly in their own part and clear of the controls, for
 // every count either way up; each is found where it's drawn.
 damage_icons_are_in_their_parts :: () #test {
-    for screen: [2] V2⟨LANDSCAPE, PORTRAIT⟩ {
+    // (the table's always landscape: a window taller than wide is drawn
+    // landscape and turned onto it)
+    for screen: [1] V2⟨LANDSCAPE⟩ {
         for players: 2 <= MAX_PLAYERS {
             layout := laid_out(players, screen)
-            game := new_game(players)
             cell := cell_of(layout)
-            for seat, k: layout.seats[:players] {
-                for combat: [2] bool⟨true, false⟩ {
-                    at := damage_icon(layout, k, combat)
-                    for i: 0 < 8 {
-                        a := f32'i / 8 * f32'Math.TAU
-                        edge := at + V2⟨Math.cos(a), Math.sin(a)⟩ * (DAMAGE_ICON_RADIUS * cell)
-                        assert(inside(edge, seat.outline[:seat.count]), "«players» players on «screen»: «k»'s «combat» icon spills out of its part")
-                        assert(!in_controls(layout, edge), "«players» players on «screen»: «k»'s «combat» icon is under the controls")
+            // (as they start, damage and commander damage; and with every
+            // option on, the life shortcuts too, which aren't attack icons)
+            for every: [2] bool⟨false, true⟩ {
+                *game := new_game(players)
+                if every {
+                    for k: 0 < players {
+                        for kind: OPTION_KINDS { if !has_attack(game.attacks[k], kind) then toggle_attack(game, k, kind) }
                     }
-                    if found, which := icon_at(layout, game, at) {
-                        assert(found == k and which == combat, "«players» players: «k»'s «combat» icon found as «found»'s «which»")
-                    }
-                    else if absent { assert(false, "«players» players: «k»'s «combat» icon isn't found where it's drawn") }
                 }
-                left := local_of(seat.middle, seat.angle, damage_icon(layout, k, false)).x
-                right := local_of(seat.middle, seat.angle, damage_icon(layout, k, true)).x
-                assert(left < right, "«players» players: «k»'s damage icon on their left")
+                for seat, k: layout.seats[:players] {
+                    kinds, count := attacks_of(game.attacks[k])
+                    if every then assert(count == 9, "«players» players: «k» has every option on: «count»")
+                    for kind: kinds[:count] {
+                        if self_life_delta(kind) != 0 then continue
+                        at := attack_icon(layout, game, k, kind)
+                        for i: 0 < 8 {
+                            a := f32'i / 8 * f32'Math.TAU
+                            edge := at + V2⟨Math.cos(a), Math.sin(a)⟩ * (DAMAGE_ICON_RADIUS * cell)
+                            assert(inside(edge, seat.outline[:seat.count]), "«players» players on «screen»: «k»'s «kind» icon spills out of its part")
+                            assert(!in_controls(layout, edge), "«players» players on «screen»: «k»'s «kind» icon is under the controls")
+                        }
+                        if found, which := icon_at(layout, game, at) {
+                            assert(found == k and which == kind, "«players» players: «k»'s «kind» icon found as «found»'s «which»")
+                        }
+                        else if absent { assert(false, "«players» players: «k»'s «kind» icon isn't found where it's drawn") }
+                    }
+                    left := local_of(seat.middle, seat.angle, attack_icon(layout, game, k, .DAMAGE)).x
+                    right := local_of(seat.middle, seat.angle, attack_icon(layout, game, k, .COMMANDER)).x
+                    assert(left < right, "«players» players: «k»'s damage icon on their left")
+                    // (a line that wraps goes up, away from them, never below the first)
+                    first := local_of(seat.middle, seat.angle, attack_icon(layout, game, k, .DAMAGE)).y
+                    for kind: kinds[:count] {
+                        if self_life_delta(kind) != 0 then continue
+                        y := local_of(seat.middle, seat.angle, attack_icon(layout, game, k, kind)).y
+                        assert(y <= first + 0.01, "«players» players on «screen»: «k»'s «kind» icon below their first line")
+                    }
+                }
             }
         }
     }
@@ -562,9 +870,9 @@ toggles_make_a_pentagon :: () #test {
                 // Fixed screen/channel clearance determines the folded position; the open pentagon may sit nearer the corner.
                 if Math.length(corner - hub) > 0.1 * cell {
                     nearer := hub + Math.normalize(corner - hub) * 0.1 * cell
-                    assert(!pentagon_fits(layout, seat, points, nearer.x, nearer.y), "«players» on «size»: part «k»'s pentagon could come nearer its icon")
+                    assert(!pentagon_fits(layout, seat, points, nearer.x, nearer.y, 5, corner), "«players» on «size»: part «k»'s pentagon could come nearer its icon")
                 }
-                for p, i: places {
+                for p, i: places[:5] {
                     assert(inside(p, points), "«players» on «size»: part «k»'s toggles are inside it")
                     gap := clearance(p, points)
                     assert(gap >= want - 1, "«players» on «size»: part «k»'s toggle «i» is «gap» from its sides, under «want»")
@@ -764,35 +1072,41 @@ dragged_lines_pass_under_the_finger :: () #test {
 }
 
 // The settings' buttons are each where it's drawn, in the channel the
-// table opens: the motion's a place left of undo, Reset a place right of
-// the system's, and Quit a place right of Reset; the pill's buttons, the
-// system's too, or anywhere else, close the table; and all of them are on
-// the screen, either way up.
+// table opens: the motion's a place left of undo; Reset a place right of
+// the system's, the orientation's a place right of Reset, and Quit at the
+// channel's far right; the pill's buttons, the system's too, or anywhere
+// else, close the table; and all of them are on the screen, either way up.
 settings_buttons_are_where_drawn :: () #test {
     for size: [2] V2⟨LANDSCAPE, PORTRAIT⟩ {
         shown := laid_out(4, size)
-        last := shown.centre.x + (QUIT_PLACE.x * CAPSULE_PITCH + SETTINGS_BUTTON) * cell_of(shown)
+        quit := quit_place(shown)
+        last := shown.centre.x + (quit.x * CAPSULE_PITCH + SETTINGS_BUTTON) * cell_of(shown)
         first := shown.centre.x + (animation_place(.OFF).x * CAPSULE_PITCH - 0.38) * cell_of(shown)
         assert(first > 0 and last < size.x, "the settings' buttons on the screen at «size»: «first» to «last»")
+        assert((quit.x - ORIENTATION_PLACE.x) * CAPSULE_PITCH > 2 * SETTINGS_BUTTON, "Quit clear of the orientation's at «size»")
     }
     layout := laid_out(4, LANDSCAPE)
     pitch := CAPSULE_PITCH * cell_of(layout)
     at :: (layout: Layout, place: V2, pitch: f32 -> Settings_Part) { return settings_part_at(layout, layout.centre + place * pitch) }
-    if at(layout, ⟨4, 0⟩, pitch) is {
+    if at(layout, quit_place(layout), pitch) is {
     case quit: _
-    case animation, reset, close: assert(false, "right of Reset quits")
+    case animation, brightness, orientation, reset, close: assert(false, "the far right quits")
+    }
+    if at(layout, ⟨4, 0⟩, pitch) is {
+    case orientation: _
+    case animation, brightness, reset, quit, close: assert(false, "right of Reset turns the orientation on")
     }
     if at(layout, ⟨3, 0⟩, pitch) is {
     case reset: _
-    case animation, quit, close: assert(false, "right of the system's button resets")
+    case animation, brightness, orientation, quit, close: assert(false, "right of the system's button resets")
     }
     if at(layout, ⟨-3, 0⟩, pitch) is {
     case animation: assert(animation == .FAST)
-    case reset, quit, close: assert(false, "left of undo moves the motion on")
+    case brightness, orientation, reset, quit, close: assert(false, "left of undo moves the motion on")
     }
     if settings_part_at(layout, capsule_centre(layout, .SYSTEM)) is {
     case close: _
-    case animation, reset, quit: assert(false, "the system's button closes the table")
+    case animation, brightness, orientation, reset, quit: assert(false, "the system's button closes the table")
     }
     // (the settings' buttons are past the pill's ends, in the channel)
     reach := CAPSULE_REACH * cell_of(layout)
@@ -803,9 +1117,44 @@ settings_buttons_are_where_drawn :: () #test {
     for blank: blanks {
         if at(layout, blank, pitch) is {
         case close: _
-        case animation, reset, quit: assert(false, "«blank» closes the settings")
+        case animation, brightness, orientation, reset, quit: assert(false, "«blank» closes the settings")
         }
     }
+}
+
+// The orientation's button goes round: auto, landscape, portrait, auto. A
+// kept orientation is drawn turned onto a window the other way about; auto
+// never is.
+orientation_goes_round :: () #test {
+    *orientation := Orientation.AUTO
+    for expected: [3] Orientation⟨.LANDSCAPE, .PORTRAIT, .AUTO⟩ {
+        orientation = next_orientation(orientation)
+        assert(orientation == expected, "«orientation», not «expected»")
+    }
+    wide := Wide.i32x2⟨2160, 1440⟩
+    tall := Wide.i32x2⟨1440, 2160⟩
+    assert(!turned_onto_window(.AUTO, wide) and !turned_onto_window(.AUTO, tall), "auto: as the window is")
+    assert(!turned_onto_window(.LANDSCAPE, wide) and turned_onto_window(.LANDSCAPE, tall), "landscape: turned onto a tall window")
+    assert(turned_onto_window(.PORTRAIT, wide) and !turned_onto_window(.PORTRAIT, tall), "portrait: turned onto a wide window")
+}
+
+// The brightness slider is right of the orientation's button and left of
+// Quit, on the screen, its left end the dimmest and its right end full;
+// touched, it gives the brightness there. A portrait screen has no room
+// for it.
+brightness_slides :: () #test {
+    layout := laid_out(4, LANDSCAPE)
+    pitch := CAPSULE_PITCH * cell_of(layout)
+    from, to, fits := brightness_track(layout)
+    assert(fits and from > ORIENTATION_PLACE.x and to < quit_place(layout).x and layout.centre.x + (to + BRIGHTNESS_SUN) * pitch < layout.size.x,
+           "between the orientation's and Quit, on the screen: «from» to «to»")
+    assert(brightness_at(layout, from) == MIN_BRIGHTNESS and brightness_at(layout, to) == 1, "dimmest at its left, full at its right")
+    if settings_part_at(layout, layout.centre + V2⟨(from + to) / 2, 0⟩ * pitch) is {
+    case brightness: assert(Math.abs(brightness - (MIN_BRIGHTNESS + 1) / 2) < 0.01, "half way: «brightness»")
+    case animation, orientation, reset, quit, close: assert(false, "its middle is the slider")
+    }
+    _, _, room := brightness_track(laid_out(4, PORTRAIT))
+    assert(!room, "no room in portrait")
 }
 
 // The motion's button goes round: paused, slow, medium, fast, paused.
@@ -857,7 +1206,7 @@ volleys_follow_the_path :: () #test {
     *pending: [MAX_PLAYERS] [MAX_PLAYERS] i32
     strike(game, volleys, layout, pending, 1, 0, 1)
     v := volleys.list[0]
-    assert(near_point(v.start, damage_icon(layout, 1, true)) and near_point(v.end, layout.seats[0].middle), "from their spot to the life total")
+    assert(near_point(v.start, attack_icon(layout, game, 1, .COMMANDER)) and near_point(v.end, layout.seats[0].middle), "from their spot to the life total")
     middle := (v.start + v.end) / 2
     assert(v.bend.y < middle.y, "the bolts arc above the table")
     steer_volleys(volleys, pending, VOLLEY_GATHER + VOLLEY_TRAVEL)
@@ -938,6 +1287,109 @@ chips_are_where_their_commanders_sit :: () #test {
                 chip := local_of(seat.middle, seat.angle, chips[j])
                 assert(Math.abs(chip.x) >= (1 + CHIP_RADIUS) * cell or Math.abs(chip.y) >= (0.8 + CHIP_RADIUS) * cell)
                 for m: 0 < j { if m == k then continue; assert(Math.length(chips[j] - chips[m]) >= 2 * CHIP_RADIUS * cell) }
+            }
+        }
+    }
+}
+
+// A part's colour and options buttons answer a touch only where they're
+// drawn: not while its drum's open, nor while the count column has the
+// table.
+hidden_buttons_take_no_touch :: () #test {
+    layout := laid_out(4, LANDSCAPE)
+    *screen: Screen_State
+    colours := toggle_folded(layout, 1)
+    options := options_folded(layout, 1)
+    if shown_colours := five_colours_at(layout, screen, colours) { assert(shown_colours == 1, "its five-colour button: «shown_colours»") }
+    else if absent { assert(false, "its five-colour button") }
+    if shown_options := options_button_at(layout, screen, options) { assert(shown_options == 1, "its options button: «shown_options»") }
+    else if absent { assert(false, "its options button") }
+    for hiding: 0 < 2 {
+        *hidden := screen
+        if hiding == 0 { hidden.drums[1].open = true } else { hidden.count_ui_visible = 0 }
+        if _ := five_colours_at(layout, hidden, colours) is not absent then assert(false, "a hidden five-colour button took a touch («hiding»)")
+        if _ := options_button_at(layout, hidden, options) is not absent then assert(false, "a hidden options button took a touch («hiding»)")
+    }
+}
+
+// A window taller than wide shows the landscape drawing turned a quarter
+// turn clockwise: its top right is the drawing's top left, its bottom left
+// the drawing's bottom right, and a finger's turned back to where it is in
+// the drawing.
+fingers_on_a_turned_window_are_turned_back :: () #test {
+    window_width: f32 = 1440    // (the drawing's 2160 by 1440 on a window 1440 by 2160)
+    assert(landscape_point(V2⟨1440, 0⟩, true, window_width) == V2⟨0, 0⟩, "the window's top right: the drawing's top left")
+    assert(landscape_point(V2⟨0, 2160⟩, true, window_width) == V2⟨2160, 1440⟩, "its bottom left: the drawing's bottom right")
+    assert(landscape_point(V2⟨1000, 300⟩, true, window_width) == V2⟨300, 440⟩, "a finger turned back")
+    assert(landscape_point(V2⟨1000, 300⟩, false, 2160) == V2⟨1000, 300⟩, "a landscape window's as it is")
+}
+
+// A player's poison and tax sit either side of their centre line, the
+// poison on their left, inside their part and clear of the other chips.
+tax_reverses_from_its_current_position :: () #test {
+    *slide: Tax_Slide
+    step_tax_slide(slide, false, 0)
+    assert(slide.phase == 0)
+    step_tax_slide(slide, true, TAX_SLIDE_SECONDS / 2)
+    assert(Math.abs(slide.phase - 0.5) < 0.001)
+    step_tax_slide(slide, false, TAX_SLIDE_SECONDS / 4)
+    assert(Math.abs(slide.phase - 0.25) < 0.001)
+    step_tax_slide(slide, false, 1)
+    assert(slide.phase == 0)
+    step_tax_slide(slide, true, 1)
+    assert(slide.phase == 1)
+}
+
+poison_and_tax_straddle_the_centre_line :: () #test {
+    for players: 2 <= MAX_PLAYERS {
+        layout := laid_out(players, LANDSCAPE)
+        cell := cell_of(layout)
+        for k: 0 < players {
+            seat := layout.seats[k]
+            chips := chip_places(layout, k, 2.0 * cell, 1.6 * cell)
+            poison, tax := poison_tax_places(seat, chips[k], cell)
+            p := local_of(seat.middle, seat.angle, poison)
+            t := local_of(seat.middle, seat.angle, tax)
+            solo := chip_places(layout, k, 2.0 * cell, 1.6 * cell, false)
+            _, centred := poison_tax_places(seat, solo[k], cell, false)
+            assert(Math.abs(local_of(seat.middle, seat.angle, centred).x) < 0.01, "tax alone sits on the player's centre line")
+            // (their near edges as far from the line, each its own width)
+            poison_edge := p.x + POISON_HALF * cell
+            tax_edge := t.x - TAX_HALF * cell
+            assert(Math.abs(poison_edge + tax_edge) < 0.01 and poison_edge < 0 and tax_edge > 0 and Math.abs(p.y - t.y) < 0.01,
+                   "«players» players, part «k»: poison at «p», tax at «t»")
+            assert(inside(poison, seat.outline[:seat.count]) and inside(tax, seat.outline[:seat.count]), "«players» players, part «k»: inside it")
+            for j: 0 < players {
+                if j == k then continue
+                for at: [2] V2⟨poison, tax⟩ {
+                    assert(Math.length(chips[j] - at) >= (PAIR_REACH + CHIP_RADIUS) * cell, "«players» players, part «k»: «j»'s chip on the pair")
+                }
+            }
+        }
+    }
+}
+
+// However its lines are dragged (each as far as it goes either way), a
+// player's poison and tax are inside their part, clear of its edges.
+poison_and_tax_stay_in_thin_parts :: () #test {
+    for players: 2 <= MAX_PLAYERS {
+        initial := laid_out(players, LANDSCAPE)
+        for edge: 0 < players {
+            for direction: [2] f32⟨-1, 1⟩ {
+                *splits := initial.splits
+                splits.move_split_with_clearance(edge, wrapped_share(splits.at[edge] + direction * 0.4), LANDSCAPE)
+                layout := lay_out(LANDSCAPE, splits)
+                cell := cell_of(layout)
+                for k: 0 < players {
+                    seat := layout.seats[k]
+                    if seat.room < 0.6 * cell then continue
+                    chips := chip_places(layout, k, 2.0 * cell, 1.6 * cell)
+                    poison, tax := poison_tax_places(seat, chips[k], cell)
+                    for at: [2] V2⟨poison, tax⟩ {
+                        assert(inside(at, seat.outline[:seat.count]) and clearance(at, seat.outline[:seat.count]) >= 0.8 * PAIR_REACH * cell,
+                               "«players» players, line «edge» dragged «direction»: «k»'s poison or tax at «at» isn't in their part")
+                    }
+                }
             }
         }
     }
@@ -1330,9 +1782,9 @@ spells_take_life_alone :: () #test {
     flying.commander[0][1] = 6
     *volleys: Volleys
     *pending: [MAX_PLAYERS] [MAX_PLAYERS] i32
-    strike(flying, volleys, layout, pending, 1, 0, 20, combat: false)
+    strike(flying, volleys, layout, pending, 1, 0, 20, .DAMAGE)
     assert(flying.life[0] == 20 and flying.commander[0][1] == 6, "dealt at once, life alone: «flying.life[0]», «flying.commander[0][1]»")
-    assert(volleys.list.count == 1 and !volleys.list[0].lethal and !volleys.list[0].combat, "a spell's volley, not lethal")
+    assert(volleys.list.count == 1 and !volleys.list[0].lethal and volleys.list[0].kind == .DAMAGE, "a spell's volley, not lethal")
     shown := shown_game(flying, pending, volleys)
     assert(shown.life[0] == 40 and shown.commander[0][1] == 6, "shown undone while it flies: «shown.life[0]», «shown.commander[0][1]»")
     steer_volleys(volleys, pending, 2)
@@ -1475,7 +1927,7 @@ animation_settings_select_each_speed :: () #test {
             at := layout.centre + animation_place(choice) * (CAPSULE_PITCH * cell_of(layout))
             if settings_part_at(layout, at) is {
                 case animation: assert(animation == choice)
-                case reset, quit, close: assert(false)
+                case brightness, orientation, reset, quit, close: assert(false)
             }
         }
     }
@@ -1549,4 +2001,26 @@ commander_tax_accepts_one_click_a_second :: () #test {
     order := Seating⟨1, 0, 2, 3, 4, 5⟩
     moved := reseated(game, order, 4)
     assert(moved.tax[1] == 4 and moved.tax[0] == 0)
+}
+
+forest_reseeds_only_while_hidden :: () #test {
+    *previous: [4] V2
+    *changes: [4] i64
+    *active_ticks: i64 = 0
+    for tick: 0 <= 3200 {
+        *fading: i64 = 0
+        for layer: 0 < 4 {
+            state := forest_layer_cycle(f32'tick * 0.1, 2.3, layer)
+            if state.y < 1 then fading += 1
+            if tick > 0 and state.x != previous[layer].x {
+                assert(state.y == 0 and previous[layer].y == 0)
+                changes[layer] += 1
+            }
+            previous[layer] = state
+        }
+        if fading > 0 then active_ticks += 1
+        assert(fading <= 1)
+    }
+    assert(active_ticks < 480)
+    for count: changes { assert(count >= 2) }
 }

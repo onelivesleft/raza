@@ -17,9 +17,10 @@ Volley :: struct {
     bend:   V2
     end:    V2
     amount: i32
+    returned: i32   // lifelink points that reached the attacker
     landed: i32
     lethal: bool
-    combat: bool       // commander damage (its combat damage); else damage, life alone
+    kind:   Attack     // what it does as it lands (deal_attack's)
     age:    f32
 }
 
@@ -34,6 +35,9 @@ Volleys :: struct {
 VOLLEY_GATHER :: 0.14
 VOLLEY_TRAVEL :: 0.42
 VOLLEY_LAND :: 0.36
+LIFELINK_TURN :: 0.20
+LIFELINK_FLIGHT :: 0.58
+LIFELINK_ARRIVAL :: LIFELINK_TURN + LIFELINK_FLIGHT
 
 // One bolt per point; large volleys finish launching within two seconds.
 bolt_spacing :: (count: i64 -> f32) #pure {
@@ -74,28 +78,32 @@ life_recoil :: (volleys: Volleys, player: i64, cell: f32 -> offset: V2, turn: f3
     }
 }
 
-// Damage dealt as a volley: combat damage (commander damage: life, and the
-// commander's count toward lethal), or a spell's (life alone). The game
-// changed at once (so undo is as before), the volley thrown from the
-// attacker's damage icon along an arc raised above the table to their life
-// total, the life shown counting down as it lands (by pending, until it
-// has). It's lethal when this commander damage made it so.
+// An attack made as a volley (deal_attack's: damage, commander damage,
+// lifelink, poison). The game changed at once (so undo is as before), the
+// volley thrown from the attacker's attack icon along an arc raised above
+// the table to their life total, what it does shown happening as it lands:
+// the life counting down (by pending, until it has), and a lifelink's
+// attacker's life up, a poison's counters up, a commander's damage chip
+// growing (shown_game's). It's lethal when it made its commander's damage
+// or the poison lethal.
 strike :: (game: *Game, volleys: *Volleys, layout: Layout, pending: *[MAX_PLAYERS] [MAX_PLAYERS] i32,
-           from: i64, to: i64, amount: i32, combat := true) {
+           from: i64, to: i64, amount: i32, kind := Attack.COMMANDER) {
     if amount <= 0 or from == to then return
     was := game.commander[to][from]
-    if combat { game.deal(from, to, amount) } else { game.deal_spell(from, to, amount) }
-    lethal := combat and was < LETHAL_COMMANDER_DAMAGE and game.commander[to][from] >= LETHAL_COMMANDER_DAMAGE
-    pending[to][from] += amount
+    poisoned := game.poison[to]
+    game.deal_attack(kind, from, to, amount)
+    lethal := (is_commander(kind) and was < LETHAL_COMMANDER_DAMAGE and game.commander[to][from] >= LETHAL_COMMANDER_DAMAGE) or
+              (kind == .POISON and poisoned < LETHAL_POISON and game.poison[to] >= LETHAL_POISON)
+    if kind != .POISON then pending[to][from] += amount
     // (the path ends at their life total whatever the finger's over now)
-    start := damage_icon(layout, from, combat)
+    start := attack_icon(layout, game, from, kind)
     end := layout.seats[to].middle
     middle := (start + end) / 2
     bend := middle + V2⟨0, -Math.min(Math.length(end - start) * 0.45, cell_of(layout) * 3.5)⟩
     id := volleys.next_id
     volleys.next_id = if volleys.next_id >= 0xFFFF then 1 else volleys.next_id + 1
     `global volleys.list.add(⟨id: id, from: from, to: to, start: start, bend: bend, end: end, amount: amount, lethal: lethal,
-                             combat: combat⟩)
+                             kind: kind⟩)
 }
 
 // The volleys moved on a frame: each as it lands has its points come off
@@ -110,8 +118,13 @@ steer_volleys :: (volleys: *Volleys, pending: *[MAX_PLAYERS] [MAX_PLAYERS] i32, 
             while should < volley.amount and volley.age >= bolt_impact(volley, i64'should) { should += 1 }
             newly := should - volley.landed
             if newly > 0 {
-                pending[volley.to][volley.from] = Math.max(pending[volley.to][volley.from] - newly, 0)
+                if volley.kind != .POISON then pending[volley.to][volley.from] = Math.max(pending[volley.to][volley.from] - newly, 0)
                 volley.landed = should
+            }
+        }
+        if has_lifelink(volley.kind) {
+            while volley.returned < volley.landed and volley.age >= bolt_impact(volley, i64'volley.returned) + LIFELINK_ARRIVAL {
+                volley.returned += 1
             }
         }
         if volley.age >= landing + volley_after(volley) then remove volley
@@ -119,15 +132,19 @@ steer_volleys :: (volleys: *Volleys, pending: *[MAX_PLAYERS] [MAX_PLAYERS] i32, 
 }
 
 // The game as it's shown while volleys are in flight: what they'll do not
-// yet done (the life they'll take, by pending; and a combat volley's
-// commander damage, what of it hasn't landed).
+// yet done (the life they'll take, by pending; and of what hasn't landed, a
+// commander's damage, a lifelink's life for its attacker, a poison's
+// counters).
 shown_game :: (game: Game, pending: [MAX_PLAYERS] [MAX_PLAYERS] i32, volleys: Volleys = ⟨⟩ -> shown: Game) #pure {
     shown = game
     for to: 0 < MAX_PLAYERS {
         for from: 0 < MAX_PLAYERS { shown.life[to] += pending[to][from] }
     }
     for v: volleys.list {
-        if v.combat then shown.commander[v.to][v.from] -= v.amount - v.landed
+        unlanded := v.amount - v.landed
+        if is_commander(v.kind) then shown.commander[v.to][v.from] -= unlanded
+        if has_lifelink(v.kind) then shown.life[v.from] -= v.amount - v.returned
+        if v.kind == .POISON then shown.poison[v.to] -= unlanded
     }
 }
 
@@ -137,14 +154,14 @@ call_off_volleys :: (volleys: *Volleys, pending: *[MAX_PLAYERS] [MAX_PLAYERS] i3
     for *row: pending { for *p: row { p = 0 } }
 }
 
-// A volley of volley from from to to (combat damage, or a spell's) as it is
+// A volley of volley from from to to (an attack of a kind) as it is
 // volley_age seconds after it was thrown, stepped a sixtieth of a second at
 // a time (for snapshots, the same each time).
-settled_volleys :: (layout: Layout, game: Game, from: i64, to: i64, volley: i32, volley_age: f32, combat := true -> volleys: Volleys) {
+settled_volleys :: (layout: Layout, game: Game, from: i64, to: i64, volley: i32, volley_age: f32, kind := Attack.COMMANDER -> volleys: Volleys) {
     *thrown: Volleys
     *pending: [MAX_PLAYERS] [MAX_PLAYERS] i32
     *dealt := game
-    strike(dealt, thrown, layout, pending, from, to, volley, combat)
+    strike(dealt, thrown, layout, pending, from, to, volley, kind)
     for _: 0 < i64'(volley_age * 60) { steer_volleys(thrown, pending, 1.0 / 60) }
     volleys = thrown
 }

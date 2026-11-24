@@ -58,13 +58,14 @@ stays behind what's on it.
   then blue, black, red and green clockwise. Folded, they're the five-colour
   icon (the card back's five dots, textures/five-colour-dots-96.png, as
   wide as a toggle, turned to face them) right in the player's bottom left
-  corner, as near it as fits; open, the pentagon is as near the icon as it
-  fits, so it moves out as little as it can. After a reset (every seat its
-  starting colours) they're open, and stay so until the player sets one;
-  then they fold 2 s after the last one set (each set starts it again),
-  drawing in to the icon as it comes, 0.2 s. The icon touched opens them for
-  3 s, each one set then giving 2 s from then; the pentagon's middle
-  touched folds them at once. A restart or a new count keeps the colours,
+  corner, as near it as fits; the icon stays while they're open, and the
+  pentagon is as near it as fits, clear of it, so it moves out as little as
+  it can. After a reset (every seat its starting colours) they're open, and
+  stay so until the player sets one; then they fold 2 s after the last one
+  set (each set starts it again), drawing in to the icon, 0.2 s. The icon
+  touched opens them for 3 s, each one set then giving 2 s from then;
+  touched while they're open, or the pentagon's middle touched, folds them
+  at once. They, and the options, are drawn over everything else. A restart or a new count keeps the colours,
   and leaves the toggles as they were; when Raza starts, carrying
   on a game, they're folded.
 - **The life drum.** A life total tapped opens into wheels, a digit each,
@@ -74,11 +75,31 @@ stays behind what's on it.
   dragged turns with the finger (down brings the bigger digits to the
   middle), the life changing by its place, the units' by one and the tens'
   by ten, a row at a time; the others turn only as it carries into them,
-  and the change's wheel counts in its place. Each squashes and darkens
+  and the change's wheel counts in its place. A turn takes the life no
+  lower than 0 (a wheel stops at the last whole row above it, a spin back
+  settles on it); damage can take it lower, and a life below 0 tapped
+  opens its drum at 0, the change it adds (+4 from -4) on the change's
+  wheel (the cross takes it back, and with nothing done since, takes back
+  the opening's step to undo too, rather than making another); so the
+  leading wheel shows no digits
+  below its 0 (nor, below 10, does the units'), nor the change's wheel
+  changes past that. There are always at least the units' and the tens'
+  wheels: a life below 10 has its tens' wheel, blank at 0, so it can be
+  turned by ten too (flat, the drum's digits are where the life's drawn,
+  the blank wheel to their left). Each squashes and darkens
   toward its edges as a cylinder turns away, with a gleam above the middle.
   Let go, the number at the middle is the life (undo brings each turn
-  back). Tapped again it closes: the wheels flatten (0.15 s), and the
-  change stays flat beside the life 1 s, then fades over 1.5 s. A press
+  back). Only its cross or its tick closes it (a touch elsewhere in the
+  player's part does nothing while it's open, but for a line there, which
+  is still dragged except where the drum covers it, its glass or its cross
+  and tick; the settings opening leaves it open, and the count can't be
+  changed while it's open, as undo can't): the wheels flatten (0.15 s), and the
+  change stays flat beside the life 1 s, then fades over 1.5 s. As it
+  rounds, the whole drum (its wheels and the change's) slides to be
+  centred on the life total, sliding back as it flattens, over blurred
+  glass, with a glass button either side as tall as that glass: the cross
+  (red, on the player's left: the life as it opened) and the tick (green,
+  on their right: the life as turned), each closing it. A press
   that moves less than 0.15 of the life's capitals is a tap. Drawn by drawing the rows flat into the light
   layer (a canvas is opaque, so their fill, border and shadow go in its
   red, green and blue) and wrapping that round the cylinder in the Drum
@@ -94,15 +115,56 @@ stays behind what's on it.
 **Goal: damage is something a player draws from their own colours and
 throws**, each colour as its own element, as damage or commander damage.
 
-- **Two damage icons per player**, at their damage spot, side by side as
-  they see it, each white with a black outline and drop shadow, turned to face them: Mana ms-counter-damage
-  on their left for damage (a spell's, an ability's, another creature's: life
-  alone, never toward the 21), and Mana ms-commander on their right for
-  commander damage (their commander's combat damage: it takes life and counts
-  toward the 21 from that commander, as the rules count only that).
-  Both drag the same way with the same range (1 to 9 out to the life total,
-  past it the picker); the one dragged from is lit. Nothing else is drawn
-  there at rest.
+- **Attack icons per player**, at their damage spot, in a line as they see
+  it, each white with a black outline and drop shadow, turned to face them:
+  plain damage's leftmost (a spell's, an ability's, another creature's: life
+  alone, never toward the 21), then each attack they've turned on in their
+  options, in this order: commander damage (Mana ms-commander, bronze, with
+  the power symbol's badge at its lower right: their commander's combat
+  damage, taking life and counting toward the 21 from that commander, as
+  the rules count only that; on to start with), commander damage with
+  lifelink (the same, with lifelink's badge at its lower left too: and they
+  gain as much life), lifelink (ms-ability-lifelink, its heart white and
+  the hands holding it bronze, drawn from the glyph's own two outlines,
+  with the power symbol's badge: life taken, and as much gained), and
+  poison (ms-ability-infect: poison counters, ten and the player is out).
+  Badges are white; the options' toggles show the same symbols. The line is centred on the spot; one
+  too wide for their part wraps, the rest in lines above it (further from
+  them), never below it, each centred; where they don't fit so they're
+  pulled closer together (to 0.8 of their spacing), and only where even
+  that won't fit (every option on, in a narrow part) is the whole moved
+  down toward them, its lines still going up. Every attack drags
+  the same way (1 to 9 out to the life total, poison 1 to 3, past it the
+  picker); the one dragged from is lit. Nothing else is drawn there at rest.
+- **Options**, in each player's bottom right corner, mirroring the colour
+  toggles in their bottom left: the options button (Mana's
+  ms-ability-improvise alone, at the attack icons' size, outlined, at 80%
+  opacity) opens four toggles round their
+  middle, commander damage, commander damage with lifelink, lifelink and
+  poison clockwise from the top, each its attack's symbol in a dark circle,
+  white and ringed in white when it's on, dim when it's off.
+  The button stays while they're open, and they stay open until it's
+  touched again (or their middle is): they don't fold by themselves. They're
+  undone as the colours are, a run of taps one step. An attack turned off
+  ends its player's drag of it, or its number grid, without making it.
+  The options and the colours, their buttons too, take a touch only where
+  they're drawn: not in a part too thin for them, while its drum's open, or
+  while the count column has the table. They
+  belong to the seat, kept with the game and across a new game; Reset turns
+  every seat's back to damage and commander damage.
+- **Poison** flies as poison tokens (a green counter with poison's symbol)
+  in place of the damage dots, with no number flying off as each lands
+  (they're no life lost), and the player's
+  count shows as a green counter once they have any. It and their
+  commander tax sit either side of their centre line (the line through
+  their life total, straight toward them), the poison on their left and
+  the tax on their right, each's near edge as far from that line (the
+  wide poison counter's middle further out than the tax's), just below
+  their life total, or just above it
+  where there's no room below, or further out along that line; where the
+  line has no room for them (a part dragged thin), off it, the nearest
+  place to just below that's clear of the life total; the commander damage
+  chips keep clear of both. Lifelink's life counts up for the attacker as its dots land.
 - **Each colour's element** gives the colour of the damage it throws (the
   volley, below): white's sun a pale gold, blue's water blue, black's oil
   violet, red's fire orange-red, green's wind green, and colourless metal
@@ -153,6 +215,25 @@ system's (settings and quitting) at the right end, as a power button. Its
 edge is raised bronze piping (0.06 cells), a round bead lit from the top
 left with a highlight along it, casting a soft shadow down and to the right. The text is Crimson Pro.
 
+The settings' channel has a brightness slider between the orientation's
+button and Quit, as the count runner is: a narrow bronze-lined groove in
+the steel, and a round domed bronze knob riding in it with a sun engraved
+on it (dimmest at its left, full at its right). Touched, or dragged, it dims everything drawn toward black,
+from full down to 30%; it's kept between runs, as the motion is, and isn't
+undone. A portrait screen has no room for it there.
+
+The orientation's button, a place right of Reset, goes round auto,
+landscape and portrait, showing which (a screen turning; a tablet, on its
+side or upright), kept between runs. Auto draws as the window is, the
+display turning as the tablet's held (Window's keep_orientation(.ANY)).
+Landscape or portrait asks the display to keep to it (keep_orientation:
+Windows then keeps a tablet turned on its side as it was, and turns one
+held the other way); where its window is still the other way about
+(Linux's desktops, which turn a display only by their own settings, or
+Windows refusing), it draws the table that way into a canvas of its own
+and turns that onto the window a quarter turn clockwise (the Turn shader),
+the fingers turned back with it.
+
 A line between parts is dragged by its end along the screen's edge. A
 second finger on a line while one's dragged turns every line together about
 the screen's centre, by as much as the two fingers' middle goes round it, so
@@ -192,13 +273,19 @@ own (drawn apart, over the table drawn without it). In the steel channel that op
 on a chip of the pill's floor: the motion, a place left of undo, one button
 showing what it is (pause, or play's triangles: ▶ slow, ▶▶ medium, ▶▶▶
 fast), each tap the next, round from pause to fast and back; Reset, a
-place right of the menu button, which closes the table, then resets; and
-Quit, the power icon, a place right of Reset. The menu button, touched
+place right of the menu button, which closes the table, then resets; the
+orientation's button a place right of Reset; the brightness slider; and
+Quit, the power icon, at the channel's far right. The menu button, touched
 again, closes the table, as a tap anywhere else, or Escape, does.
 
 ## Ideas kept for later
 
-- **Foil.** A shader the user noted for foil effects: the plane warped by
+- **Foil.** (Now the glass of a drag's damage label, just beyond the
+  arrow's tip at the target during an attack drag, not over the arrow:
+  `glass_foil`, moving with time, its tan nudges held and its streaks
+  softened so its lines are less pronounced, brighter through the glass,
+  and swirling (waves pushing across as much as up and down, moving
+  opposite ways) rather than drifting up and down.) A shader the user noted for foil effects: the plane warped by
   stacked waves (each step a tan of y nudging x and a cos of x nudging y,
   finer and weaker each time, all moving with time), then coloured in
   rainbow bands of the warped place that brighten sharply where a cosine of

@@ -245,7 +245,7 @@ draw_settings_split :: (canvas: *Draw.Canvas, layout: Layout, screen: Screen_Sta
     draw_steel(canvas, layout)
     draw_count_bed(canvas, layout, 0)
     draw_counts(canvas, layout, screen, game)
-    draw_settings(canvas, layout, screen.motion, 1)
+    draw_settings(canvas, layout, screen.motion, 1, screen.brightness, screen.orientation)
     button := capsule_centre(layout, .PLAYERS)
     params := Settings_Split_Params⟨⟨layout.size.x, layout.size.y, layout.centre.y, s⟩,
                                     ⟨layout.centre.x, layout.centre.y, CAPSULE_REACH * cell, CAPSULE_HALF * cell⟩,
@@ -288,15 +288,25 @@ draw :: (canvas: *Draw.Canvas, layer: *Draw.Canvas, layout: Layout, game: Game, 
         button := capsule_centre(layout, .PLAYERS)
         draw_metal_bar(canvas, button, V2⟨BAR_WIDTH, BAR_WIDTH⟩ * cell, 1)
         draw_people(canvas, button, game.players, cell, Draw.rgb(0x171C22))
-        if screen.settings_shown > 0 then draw_settings(canvas, layout, screen.motion, screen.settings_shown)
+        if screen.settings_shown > 0 then draw_settings(canvas, layout, screen.motion, screen.settings_shown, screen.brightness, screen.orientation)
     }
     draw_count_ring(canvas, layout, screen)
-    for d: screen.drags { if d.active then draw_drag(canvas, layout, game, fonts, d, ARTIFACT) }
+    for d: screen.drags { if d.active then draw_drag(canvas, layout, game, fonts, d, screen.foil_time) }
     for picker: screen.pickers {
         // (its glass blurs the table, drawn apart, where it was)
         if picker.open then draw_picker(canvas, layout, fonts, picker, game, ARTIFACT, count_table_canvas, count_table_made)
     }
+    // (each player's colour toggles and options, over everything else)
+    if screen.settings_shown <= 0 {
+        for k: 0 < layout.count {
+            draw_colours(canvas, layout, game, fonts, screen, k)
+        }
+        for k: 0 < layout.count { draw_options(canvas, layout, game, fonts, screen, k) }
+        for k: 0 < layout.count { draw_options_button(canvas, layout, fonts, screen, k) }
+    }
     if screen.show_fps then draw_fps(canvas, layout, fonts, screen.fps)
+    // (everything dimmed to the brightness, last)
+    if screen.brightness < 1 then canvas.fill_rect(⟨0, 0⟩, layout.size, Draw.rgba(0x000000, 1 - Math.max(screen.brightness, MIN_BRIGHTNESS)))
 }
 
 UNDER_TABLE_BYTES :: #data "../textures/under-table-steel-v1.png"
@@ -342,12 +352,14 @@ Count_Bed_Params :: struct { track: V4; material: V4 }
 count_bed_shade :: (from: Draw.Quad_Between, bed: Shader.Uniforms(Count_Bed_Params), steel: Shader.Texture_2D, filtering: Shader.Sampler -> colour: V4) {
     texel := control_material(steel, filtering, from.pixel / bed.material.x)
     p := from.pixel - bed.track.xy
-    d := round_box_distance(p, bed.track.zw, bed.track.z)
+    // (its ends round: its corners' radius its narrower half, upright or across)
+    corner := Math.min(bed.track.z, bed.track.w)
+    d := round_box_distance(p, bed.track.zw, corner)
     // The exposed cavity remains a lit, quiet steel surface to receive shadows.
     *rgb := texel
     if d < 1 {
-        gx := round_box_distance(p + V2⟨0.5, 0⟩, bed.track.zw, bed.track.z) - round_box_distance(p - V2⟨0.5, 0⟩, bed.track.zw, bed.track.z)
-        gy := round_box_distance(p + V2⟨0, 0.5⟩, bed.track.zw, bed.track.z) - round_box_distance(p - V2⟨0, 0.5⟩, bed.track.zw, bed.track.z)
+        gx := round_box_distance(p + V2⟨0.5, 0⟩, bed.track.zw, corner) - round_box_distance(p - V2⟨0.5, 0⟩, bed.track.zw, corner)
+        gy := round_box_distance(p + V2⟨0, 0.5⟩, bed.track.zw, corner) - round_box_distance(p - V2⟨0, 0.5⟩, bed.track.zw, corner)
         outward := Math.normalize(V2⟨gx, gy⟩ + V2⟨0.00001, 0⟩)
         facing := Math.dot(outward, PART_LIGHT)
         rim := Math.exp(0 - Math.pow((d + bed.material.y * 0.35) / Math.max(bed.material.y, 1), 2))

@@ -40,13 +40,13 @@ BLOOM_STRENGTH :: 0.65
 // The volleys in flight and landing, then the light they give added with
 // its bloom. (At rest, a player's damage spot is its two icons,
 // draw_damage_icons'.)
-draw_elements :: (canvas: *Draw.Canvas, layer: *Draw.Canvas, layout: Layout, game: Game, volleys: Volleys) {
+draw_elements :: (canvas: *Draw.Canvas, layer: *Draw.Canvas, layout: Layout, game: Game, fonts: Fonts, volleys: Volleys) {
     // (no volley, nothing lit: no light to add)
     if volleys.list.count == 0 then return
     cell := cell_of(layout)
     layer.clear(Draw.rgb(0x000000))
     for v: volleys.list {
-        draw_volley(canvas, layer, layout, game, v)
+        if v.kind == .POISON { draw_poison_volley(canvas, layer, layout, fonts, v) } else { draw_volley(canvas, layer, layout, game, v) }
     }
     canvas.add_light(layer, BLOOM_CELLS * cell, BLOOM_STRENGTH)
 }
@@ -103,24 +103,116 @@ draw_volley :: (canvas: *Draw.Canvas, layer: *Draw.Canvas, layout: Layout, game:
     }
 }
 
-// Each lost point flies out along the impact, facing the victim.
+// A poison counter's green, and its symbol's ink on it.
+POISON_GREEN :: Draw.rgb(0x6CC63F)
+POISON_INK   :: Draw.rgb(0x10200A)
+
+// A poison volley: a poison token a point (a green counter with poison's
+// symbol, facing its attacker), each flying along its arc as a damage dot
+// does, one after another, landing with a green flash.
+draw_poison_volley :: (canvas: *Draw.Canvas, layer: *Draw.Canvas, layout: Layout, fonts: Fonts, v: Volley) {
+    cell := cell_of(layout)
+    r := 0.2 * cell
+    angle := layout.seats[v.from].angle
+    for j: 0 < i64'v.amount {
+        p := bolt_along(v.age, j, i64'v.amount)
+        hit_age := v.age - bolt_impact(v, j)
+        if hit_age >= 0 and hit_age < 0.12 {
+            flash := 1 - hit_age / 0.12
+            canvas.fill_glow(v.end, cell * (0.15 + hit_age * 1.4), faded(POISON_GREEN, flash * flash), 0.7)
+        }
+        if p < 0 or p >= 1 then continue
+        at := curve_at(v.start, bolt_bend(v, j, cell), v.end, p)
+        canvas.fill_glow(at + V2⟨0.06, 0.09⟩ * cell, r * 1.5, Draw.rgba(0x000000, 0.35))
+        canvas.fill_circle(at, r + Math.max(1.5, cell * 0.025), POISON_INK)
+        canvas.fill_circle(at, r, POISON_GREEN)
+        layer.fill_glow(at, r * 1.2, faded(POISON_GREEN, 0.5), 1)
+        draw_centred(canvas, fonts.commander_badge, at, angle, POISON_GLYPH, POISON_INK)
+    }
+}
+
+// The two labels share a small texture. Projecting the lettering with the disc
+// keeps it attached to the face all the way through the lifelink flip.
+loss_faces: Draw.Canvas
+loss_faces_ready: bool
+
+prepare_loss_faces :: (font: Draw.Font, side: i32 -> bool) {
+    size := Wide.i32x2⟨side * 2, side⟩
+    if loss_faces_ready and loss_faces.size == size then return true
+    if loss_faces_ready {
+        if loss_faces.resize(size) is os_error then return false
+    } else {
+        if made := Draw.create_canvas(size) { loss_faces = made } else if os_error { return false }
+        loss_faces_ready = true
+    }
+    loss_faces.clear(Draw.rgb(0x000000))
+    for label, i: [2] string⟨"-1", "+1"⟩ {
+        at := V2⟨(f32'i + 0.5) * f32'side, 0.5 * f32'side⟩
+        draw_centred(loss_faces, font, at, 0, label, Draw.rgb(0xFFFFFF))
+    }
+    return true
+}
+
+Loss_Disc_Params :: struct { disc: V4; turn: V4 }
+loss_disc_shade :: (from: Draw.Quad_Between, token: Shader.Uniforms(Loss_Disc_Params), labels: Shader.Texture_2D, filtering: Shader.Sampler -> colour: V4) {
+    d := from.pixel - token.disc.xy
+    facing := token.turn.z
+    scale := Math.max(Math.abs(facing), 1 / token.disc.z)
+    p := V2⟨Math.dot(d, token.turn.xy) / scale, d.y * token.turn.x - d.x * token.turn.y⟩
+    length := Math.length(p)
+    // Convert the ellipse's boundary distance back to screen pixels for antialiasing.
+    gradient := Math.length(V2⟨p.x / scale, p.y⟩) / Math.max(length, 0.001)
+    cover := Math.clamp(0.5 + (token.disc.z - length) / Math.max(gradient, 1), 0, 1)
+    uv := p / (2 * token.disc.z) + V2⟨0.5, 0.5⟩
+    face := token.turn.w
+    glyph := Shader.sample_level(labels, filtering, V2⟨(uv.x + face) * 0.5, uv.y⟩, 0).x
+    tone := Math.mix(glyph, 1 - glyph, face)
+    return V4⟨tone, tone, tone, 1⟩ * (cover * token.disc.w)
+}
+Loss_Disc :: shader { vertex: Draw.quad_place; fragment: loss_disc_shade }
+LOSS_DISC :: Loss_Disc(Draw.SHADER_TARGET)
+
+// Each landed point of life flies out along the impact, facing the victim:
+// a "-1" of their life (poison's tokens are their own count: none).
 draw_bolt_losses :: (canvas: *Draw.Canvas, layout: Layout, fonts: Fonts, volleys: Volleys) {
     cell := cell_of(layout)
-    cap := f32'fonts.loss.cap_height
-    width := f32'fonts.loss.text_width("-1")
+    if volleys.list.count == 0 then return
+    side_pixels := i32'Math.ceil(Math.max(f32'fonts.loss.text_width("+1") * 1.45, f32'fonts.loss.cap_height * 2.1))
+    if !prepare_loss_faces(fonts.loss, side_pixels) then return
+    radius := f32'side_pixels / 2
     for v: volleys.list {
+        if v.kind == .POISON then continue
+        link := has_lifelink(v.kind)
         seat := layout.seats[v.to]
         for j: 0 < i64'v.landed {
             age := v.age - bolt_impact(v, j)
-            if age < 0 or age >= 0.30 then continue
-            fade := (1 - age / 0.30) * (1 - age / 0.30)
+            duration: f32 = if link then LIFELINK_ARRIVAL else 0.85
+            if age < 0 or age >= duration then continue
             way := bolt_direction(v, j, cell)
             spread := Math.sin(f32'j * 2.39996 + f32'v.id * 1.73)
             side := V2⟨0 - way.y, way.x⟩ * spread
-            at := v.end + (way * (0.45 + age * 8) + side * (0.28 + age * 4)) * cell
-            turn := seat.angle + spread * age * 1.1
-            style := Draw.Text_Style⟨outline: Draw.rgba(0x000000, fade), outline_width: Math.max(0.65, cap * 0.06)⟩
-            canvas.draw_text(fonts.loss, placed(at, turn, ⟨-width / 2, cap / 2⟩), "-1", Draw.rgba(0xFFFFFF, fade), style, turn)
+            brake: f32 = if link then LIFELINK_TURN else 0.40
+            remaining := 1 - Math.clamp(age / brake, 0, 1)
+            out_time := brake / 3 * (1 - remaining * remaining * remaining)
+            *at := v.end + (way * (0.45 + out_time * 8) + side * (0.28 + out_time * 4)) * cell
+            *turn := seat.angle + spread * out_time * 1.1
+            returning := link and age >= LIFELINK_TURN
+            if returning {
+                attacker := layout.seats[v.from]
+                progress := (age - LIFELINK_TURN) / LIFELINK_FLIGHT
+                bend := (at + attacker.middle) / 2 + across_path(at, attacker.middle) * (cell * spread * 0.9)
+                at = curve_at(at, bend, attacker.middle, progress * progress)
+                delta := attacker.angle - turn
+                turn += Math.atan2(Math.sin(delta), Math.cos(delta)) * Math.smoothstep(0, 1, progress)
+            }
+            flip := if link then Math.smoothstep(LIFELINK_TURN - 0.16, LIFELINK_TURN + 0.16, age) else 0
+            facing := Math.cos(f32'Math.PI * flip)
+            fade: f32 = if link then 1 else 1 - Math.smoothstep(0.40, duration, age)
+            face: f32 = if returning then 1 else 0
+            params := Loss_Disc_Params⟨⟨at.x, at.y, radius, fade⟩, ⟨Math.cos(turn), Math.sin(turn), facing, face⟩⟩
+            half := V2⟨radius + 1, radius + 1⟩
+            canvas.draw_shader_canvas(at - half, half * 2, LOSS_DISC.code, LOSS_DISC.bindings.token, params,
+                                      loss_faces, LOSS_DISC.bindings.labels, LOSS_DISC.bindings.filtering)
         }
     }
 }

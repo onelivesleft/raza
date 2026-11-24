@@ -3,6 +3,74 @@
 
 STARTING_LIFE :: 40
 LETHAL_COMMANDER_DAMAGE :: 21
+LETHAL_POISON :: 10
+
+// The attacks a player can make, in the order their icons stand: plain
+// damage (always theirs, leftmost), then those they turn on in their
+// options: commander damage (on to start with), commander damage with
+// lifelink, lifelink, and poison.
+Attack :: enum u8 {
+    DAMAGE
+    COMMANDER
+    COMMANDER_LIFELINK
+    LIFELINK
+    POISON
+    GAIN_ONE
+    LOSE_ONE
+    GAIN_TWO
+    LOSE_TWO
+}
+
+// A player's attacks turned on: a bit for each, by Attack's value (DAMAGE's
+// always set).
+Attacks :: #alias u8
+STARTING_ATTACKS :: Attacks'3                  // damage, and commander damage
+EVERY_STARTING_ATTACKS :: [MAX_PLAYERS] Attacks⟨3, 3, 3, 3, 3, 3⟩
+
+has_attack :: (attacks: Attacks, kind: Attack -> bool) #pure {
+    if kind == .DAMAGE then return true
+    // Plain damage was always enabled in saved games. Reuse its set bit
+    // to mean LOSE_TWO is off, preserving the existing one-byte format.
+    if kind == .LOSE_TWO then return attacks & 1 == 0
+    return attacks & attack_bit(kind) != 0
+}
+
+attack_bit :: (kind: Attack -> Attacks) #pure {
+    if kind == .LOSE_TWO then return 1
+    return u8'1 << u8'kind
+}
+
+self_life_delta :: (kind: Attack -> i32) #pure {
+    return if kind is {
+    case .GAIN_ONE: 1
+    case .LOSE_ONE: -1
+    case .GAIN_TWO: 2
+    case .LOSE_TWO: -2
+    case .DAMAGE, .COMMANDER, .COMMANDER_LIFELINK, .LIFELINK, .POISON: 0
+    }
+}
+
+// Whether an attack is its commander's combat damage (counting toward the 21
+// from that commander), and whether it gives its attacker life (lifelink).
+is_commander :: (kind: Attack -> bool) #pure {
+    return kind == .COMMANDER or kind == .COMMANDER_LIFELINK
+}
+
+has_lifelink :: (kind: Attack -> bool) #pure {
+    return kind == .COMMANDER_LIFELINK or kind == .LIFELINK
+}
+
+// A player's attacks turned on, in their order (plain damage first), and
+// how many.
+attacks_of :: (attacks: Attacks -> kinds: [9] Attack, count: i64) #pure {
+    kinds = ⟨⟩
+    count = 0
+    for kind: [9] Attack⟨.GAIN_ONE, .LOSE_ONE, .GAIN_TWO, .LOSE_TWO, .DAMAGE, .COMMANDER, .COMMANDER_LIFELINK, .LIFELINK, .POISON⟩ {
+        if !has_attack(attacks, kind) then continue
+        kinds[count] = kind
+        count += 1
+    }
+}
 
 // Magic's five colours, in their order (WUBRG).
 Mana :: enum u8 {
@@ -94,6 +162,8 @@ reseated :: (game: Game, order: Seating, players: i64 -> moved: Game) #pure {
     for k: 0 < MAX_PLAYERS {
         moved.life[k] = game.life[order[k]]
         moved.tax[k] = game.tax[order[k]]
+        moved.poison[k] = game.poison[order[k]]
+        moved.attacks[k] = game.attacks[order[k]]
         moved.identity[k] = game.identity[order[k]]
         for j: 0 < MAX_PLAYERS { moved.commander[k][j] = game.commander[order[k]][order[j]] }
     }
@@ -106,6 +176,8 @@ forget_the_absent :: (game: *Game, colours: [MAX_PLAYERS] Identity) {
     for k: game.players < MAX_PLAYERS {
         game.life[k] = STARTING_LIFE
         game.tax[k] = 0
+        game.poison[k] = 0
+        game.attacks[k] = STARTING_ATTACKS
         game.identity[k] = colours[k]
         for j: 0 < MAX_PLAYERS {
             game.commander[k][j] = 0
@@ -132,7 +204,7 @@ starting_colours ::(size: V2, players: i64 -> identity: [MAX_PLAYERS] Identity) 
     for seat, k: six.seats[:MAX_PLAYERS] {
         turn := turn_between(up, facing_of(seat))
         off := Math.abs(turn)
-        if off < least - 1.5 * FACING_STEP or (off < least + 1.5 * FACING_STEP and turn > 0) {
+        if off < least - f32'Math.TAU / 120 or (off < least + f32'Math.TAU / 120 and turn > 0) {
             least = off
             top = k
         }
@@ -155,13 +227,16 @@ Game :: struct {
     commander: [MAX_PLAYERS] [MAX_PLAYERS] i32
     // Each player's commander's colours, as they've set them.
     identity:  [MAX_PLAYERS] Identity
+    // Each player's poison counters, and the attacks they've turned on.
+    poison:    [MAX_PLAYERS] i32
+    attacks:   [MAX_PLAYERS] Attacks = EVERY_STARTING_ATTACKS
 }
 
 // A game begun: everyone at the starting life, no damage done, each seat's
-// colours those it had before (the same decks, mostly, sit in the same
-// seats).
-new_game :: (players: i64, identity: [MAX_PLAYERS] Identity = ⟨⟩ -> game: Game) #pure {
-    game = ⟨players: Math.clamp(players, 2, MAX_PLAYERS), identity: identity⟩
+// colours and attacks those it had before (the same decks, mostly, sit in
+// the same seats).
+new_game :: (players: i64, identity: [MAX_PLAYERS] Identity = ⟨⟩, attacks: [MAX_PLAYERS] Attacks = EVERY_STARTING_ATTACKS -> game: Game) #pure {
+    game = ⟨players: Math.clamp(players, 2, MAX_PLAYERS), identity: identity, attacks: attacks⟩
     for *l: game.life { l = STARTING_LIFE }
 }
 
@@ -174,28 +249,40 @@ kept_game :: (kept: Game -> game: Game, fresh: bool) #pure {
     game = if fresh then new_game(4) else kept
 }
 
-// Whether a player has lost: no life left, or a commander's lethal damage.
+// Whether a player has lost: no life left, a commander's lethal damage, or
+// lethal poison.
 is_out :: (game: Game, player: i64 -> bool) #pure {
-    if game.life[player] <= 0 then return true
+    if game.life[player] <= 0 or game.poison[player] >= LETHAL_POISON then return true
     for d: game.commander[player][:game.players] {
         if d >= LETHAL_COMMANDER_DAMAGE then return true
     }
     return false
 }
 
+// An attack of an amount from one player at another: damage takes life (a
+// commander's counting toward LETHAL_COMMANDER_DAMAGE from it too), with
+// lifelink giving the attacker as much; poison gives poison counters.
+deal_attack :: (game: *Game, kind: Attack, from: i64, to: i64, amount: i32) {
+    if amount <= 0 or from == to then return
+    if kind == .POISON {
+        game.poison[to] += amount
+        return
+    }
+    game.life[to] -= amount
+    if is_commander(kind) then game.commander[to][from] += amount
+    if has_lifelink(kind) then game.life[from] += amount
+}
+
 // Commander damage from one player's commander to another (its combat
 // damage, which counts toward LETHAL_COMMANDER_DAMAGE): it's life lost too.
 deal :: (game: *Game, from: i64, to: i64, amount: i32) {
-    if amount <= 0 or from == to then return
-    game.commander[to][from] += amount
-    game.life[to] -= amount
+    game.deal_attack(.COMMANDER, from, to, amount)
 }
 
 // Damage that isn't commander damage (a spell's, an ability's, another
 // creature's): life lost alone.
 deal_spell :: (game: *Game, from: i64, to: i64, amount: i32) {
-    if amount <= 0 or from == to then return
-    game.life[to] -= amount
+    game.deal_attack(.DAMAGE, from, to, amount)
 }
 
 // Progress from the region entry to the life total along the source-to-life
@@ -218,8 +305,15 @@ Drag_Amount :: union {
     asked
 }
 
-amount_for :: (share: f32 -> Drag_Amount) #pure {
+// A poison attack's drag: 1, 2 and 3 in equal slots, then a number to pick.
+MOST_POISON_BY_DRAG :: 3
+
+amount_for :: (share: f32, kind: Attack = .DAMAGE -> Drag_Amount) #pure {
     if share > QUESTION_FROM then return Drag_Amount.asked
+    if kind == .POISON {
+        third := i32'Math.floor(Math.max(share, 0) / QUESTION_FROM * f32'MOST_POISON_BY_DRAG)
+        return Drag_Amount.damage(Math.clamp(third + 1, 1, MOST_POISON_BY_DRAG))
+    }
     slot := i32'Math.floor(Math.max(share, 0) / QUESTION_FROM * f32'DRAG_SLOT_COUNT)
     *passed: i32 = 0
     for slots, i: DRAG_SLOTS {
