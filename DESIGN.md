@@ -254,7 +254,9 @@ drag, a volley). Draw_Vulkan keeps the driver's compiled pipelines in
 driver about 6 s to compile at every start, and now only at a build's first
 (its cache is the exe's own). `Raza.exe -quit_after:8` prints the frames'
 work; measured at 2160×1440 on Intel's GPU: 58 fps (the 60 cap), each
-frame's work 14 ms, the first frame 0.5 s.
+frame's work 14 ms, the first frame 0.5 s. The frames a second show top
+right in a debug build, not in a release build; F12 shows or hides them in
+either (F11 is fullscreen or a window).
 
 ## Material assets and animation
 
@@ -297,7 +299,27 @@ and a thin highlight marking the divider being dragged.
 Drag damage projects the pointer onto the line from the attacker's source
 icon to the target's life counter. Nine equal bands run from its entry into
 that region (1) to the counter (9); beyond it is ?. Sideways movement does
-not change the amount. Releasing on ? opens the picker at 10.
+not change the amount. Releasing on ? opens the number grid, five keys
+across and four up (a cell apart), facing the dragger to the nearest
+quarter turn and kept on the screen:
+
+```
+50 60 70 80 90
+00 10 20 30 40
+ 5  6  7  8  9
+ 0  1  2  3  4
+```
+
+The dragger's damage icons are hidden while it's open, and in their
+places, at their size, are a cross (combat's place) and a tick (spell's),
+the grid just above them. It opens at 10 (10 and 0 chosen, shown gold).
+A tens or a units touched is chosen; only the tick deals the two together
+(00 and 0, nothing); the cross, or anywhere else, cancels. Behind the grid
+is a pane of frosted glass (the table under it blurred, seven by seven
+samples 0.05 cells apart, a little paler and darker, a fine rim lit from
+the top left: `glass_shade`, reading the table's own canvas); the screen
+isn't darkened. The numbers are Crimson Pro, white, outlined in black with
+a drop shadow, as the life totals are.
 
 The snapshot command writes raza_materials_0.png and raza_materials_2.png:
 all five colours plus artifact at two surface times with fixed particles,

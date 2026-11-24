@@ -151,9 +151,10 @@ part_shade :: (from: Draw.Quad_Between, part: Shader.Uniforms(Part_Params), atla
         right := part.hybrid_looks[1]
         left_look := V4⟨left.y, part.look.y, left.z, part.look.w⟩
         right_look := V4⟨right.y, part.look.y, right.z, part.look.w⟩
-        // (each half worked out only where it shows: both only in the
-        // blend between them, from 35% to 65% across)
-        blend := Math.smoothstep(0.35, 0.65, u)
+        // Centre the blend on the life total's local vertical axis, not
+        // the midpoint of an asymmetric region's projected bounds.
+        blend_half := Math.max((part.frame.z - part.frame.y) * 0.15, 1)
+        blend := Math.smoothstep(0 - blend_half, blend_half, local_x)
         *left_material := V3⟨0, 0, 0⟩
         *right_material := V3⟨0, 0, 0⟩
         if blend < 1 {
@@ -246,6 +247,10 @@ part_shade :: (from: Draw.Quad_Between, part: Shader.Uniforms(Part_Params), atla
         rgb = rgb * (1 - floor * 0.68)
         rgb = rgb * (1 + Math.min(facing, 0) * wall * 0.48)
         rgb = Math.mix(rgb, PART_WARM, Math.max(facing, 0) * wall * 0.38)
+        // A narrow bronze insert occupies only the floor; the old rolled edges remain.
+        inset := 1 - Math.smoothstep(0.12, 0.30, across)
+        bronze := V3⟨0.58, 0.38, 0.19⟩ * (0.72 + Math.max(facing, 0) * wall * 0.3)
+        rgb = Math.mix(rgb, bronze, inset)
         // The cosine bowl meets both its floor and the surface with zero slope.
     }
     // (out, dimmed; aimed at, lifted)
@@ -478,29 +483,52 @@ part_fill :: (identity: Identity, cell: f32, seat: i64, time: f32, angle: f32, i
 SURFACE_FEATURES :: 1.5
 SURFACE_QUIET :: 0.6
 
-// Two stationary mineral fields exchange weight over time. Their zero
-// contours can split and join; local deposition controls width and fading.
-// No UV translation or distortion: the network changes its connectivity.
+// Feathered mineral deposits follow a fixed, folded grain. Time changes
+// their breadth and local density; neither the grain nor stone slides.
 living_marble :: (atlas: Shader.Texture_2D, filtering: Shader.Sampler, q: V2, time: f32, seed: f32 -> V3) {
     uv := q * 0.18 + V2⟨seed * 0.17, seed * 0.31⟩
-    mineral := material_at(atlas, filtering, 2, uv)
+    mineral := material_at(atlas, filtering, 0, uv)
     detail := Math.dot(mineral, V3⟨0.2126, 0.7152, 0.0722⟩)
-    first := Patterns.layered(q * 1.3 + V2⟨seed, 1.7⟩, 5) - 0.5
-    second := Patterns.layered(q * 1.5 + V2⟨7.3, seed⟩, 5) - 0.5
-    local_phase := Patterns.layered(q * 0.27 + V2⟨seed, 0⟩, 3) * 5
-    phase := time * 0.38 + local_phase
-    field := first * Math.cos(phase) + second * Math.sin(phase)
-    deposit := 0.5 + 0.5 * Math.sin(time * 0.57 + local_phase * 1.7)
-    width := 0.001 + deposit * deposit * 0.004
-    fracture := field + (Patterns.noise(q * 19) - 0.5) * 0.012
-    seam := 1 - Math.smoothstep(width, width + 0.004, Math.abs(fracture))
-    // Existing fine seams also widen and fade as minerals accumulate.
-    inherited := Math.smoothstep(0.16 - deposit * 0.1, 0.34 - deposit * 0.09, detail)
-    growth := Math.smoothstep(0.12, 0.65, deposit)
-    veins := Math.max(inherited * (0.2 + growth * 0.55), seam * growth * (0.12 + detail * 0.6))
-    cloudy := Patterns.layered(q * 1.1 + V2⟨seed, 3.1⟩, 4)
-    stone := V3⟨0.95, 0.935, 0.89⟩ * (0.95 + cloudy * 0.05)
-    return Math.mix(stone, V3⟨0.62, 0.63, 0.59⟩, veins)
+    cloud := Patterns.layered(q * 2.7 + V2⟨seed, 3.1⟩, 4)
+    grain := Patterns.layered(q * 23 + V2⟨seed, 1.7⟩, 3)
+    mineral_variation := Math.clamp((detail - 0.65) * 0.26, -0.06, 0.07)
+    ivory := V3⟨0.965, 0.945, 0.895⟩ * (0.92 + cloud * 0.08 + mineral_variation)
+    warmth := Math.clamp((mineral.x - mineral.z) * 0.5, 0, 0.12)
+    stone := Math.mix(ivory, ivory * V3⟨1.0, 0.94, 0.83⟩, warmth + (1 - cloud) * 0.12)
+    fold := Patterns.layered(q * 0.8 + V2⟨seed, 0⟩, 5)
+    branches := Patterns.layered(q * 4.5 + V2⟨1.7, seed⟩, 4)
+    band := Math.abs(Math.sin(q.x * 1.3 + q.y * 2.2 + fold * 9 + branches * 1.2))
+    front := Patterns.layered(q * 0.65 + V2⟨seed, 8.1⟩, 3)
+    growth := 0.5 + 0.5 * Math.sin(time * (2.4 / 3.0) + front * 8)
+    width := 0.035 + growth * (0.08 + branches * 0.28)
+    deposit := 1 - Math.smoothstep(width * 0.2, width + 0.24, band + (grain - 0.5) * 0.24)
+    threads := 1 - Math.smoothstep(0.018, 0.09, band + (grain - 0.5) * 0.10)
+    // The authored mineral grain supplies granular inclusions, not black-tile seams.
+    inclusions := Math.clamp((0.85 - detail) * 1.4, 0, 0.45)
+    fine_band := Math.abs(Math.sin(q.x * 4.7 - q.y * 2.8 + fold * 13 + branches * 4))
+    fine := (1 - Math.smoothstep(0.015, 0.12, fine_band)) * Math.smoothstep(0.35, 0.65, branches)
+    density := 0.45 + cloud * 0.65
+    veins := (deposit * (0.16 + growth * 0.24) + threads * growth * 0.12) * density + fine * growth * 0.13
+    return Math.mix(stone, V3⟨0.63, 0.64, 0.61⟩, Math.clamp(veins + inclusions * (0.35 + growth * 0.30), 0, 0.65))
+}
+
+// Fixed rock plates, with cracks propagating along their branching boundaries.
+// Time changes the fracture front and aperture, never the rock's coordinates.
+living_cracks :: (q: V2, time: f32, seed: f32, base: V3 -> V3) {
+    bend := V2⟨Patterns.layered(q * 1.7 + V2⟨seed, 0⟩, 3), Patterns.layered(q * 1.7 + V2⟨3.3, seed⟩, 3)⟩ - V2⟨0.5, 0.5⟩
+    rock := q + bend * 0.7
+    cells := Patterns.cells(rock)
+    boundary := cells.y - cells.x
+    front := Patterns.layered(rock * 0.65 + V2⟨seed, 4.4⟩, 3)
+    cycle := 0.5 + 0.5 * Math.sin(time * (2.2 / 3.0) + front * 9 + seed)
+    growth := Math.smoothstep(front - 0.12, front + 0.12, cycle)
+    width := 0.003 + growth * 0.045
+    crack := (1 - Math.smoothstep(width * 0.3, width, boundary)) * growth
+    rim := (1 - Math.smoothstep(width, width + 0.025, boundary)) * growth
+    grain := Patterns.layered(q * 7 + V2⟨seed, 1.9⟩, 3)
+    plate := base * (0.95 + grain * 0.10)
+    lit := plate + V3⟨0.10, 0.035, 0.012⟩ * rim
+    return Math.mix(lit, base * V3⟨0.32, 0.26, 0.23⟩, crack * 0.85)
 }
 // Warm old artifact metal; corrosion follows granular material detail,
 // with a soft, irregular growing front instead of outlined painted islands.
@@ -545,6 +573,9 @@ layered_forest :: (atlas: Shader.Texture_2D, filtering: Shader.Sampler, uv: V2, 
 
 // Shared by single-colour panels and both halves of a hybrid panel.
 shade_panel_material :: (p: V2, local_x: f32, local_y: f32, base: V3, look: V4, more: V4, angle: f32, surface: f32, tile: i32, atlas: Shader.Texture_2D, filtering: Shader.Sampler -> V3) {
+    // These solid materials bypass the old moving pattern/light overlay entirely.
+    if tile == 0 then return living_marble(atlas, filtering, V2⟨local_x, local_y⟩ * 2 / Math.max(look.y * 5, 1), more.x, look.w)
+    if tile == 3 then return living_cracks(V2⟨local_x, local_y⟩ / Math.max(look.y, 1), more.x, look.w, base)
     light := Math.mix(base, PART_WARM, 0.55)
     shade := base * PART_COOL
     // (its surface: a forest floor, rusting metal, open water, or its look's pattern lighting
@@ -584,10 +615,7 @@ shade_panel_material :: (p: V2, local_x: f32, local_y: f32, base: V3, look: V4, 
     // Contrast only: preserve the original moving pattern and illumination.
     if tile == 2 then rgb = Math.max((rgb - V3⟨0.16, 0.16, 0.16⟩) * 1.35 + V3⟨0.16, 0.16, 0.16⟩, V3⟨0.006, 0.006, 0.006⟩)
     // These materials evolve in place rather than sliding a photograph.
-    if tile == 0 {
-        rgb = living_marble(atlas, filtering, V2⟨local_x, local_y⟩ / Math.max(look.y * 5, 1), more.x, look.w)
-    }
-    else if tile == 5 {
+    if tile == 5 {
         rgb = living_artifact(V2⟨local_x, local_y⟩ / Math.max(look.y * 5, 1), texel, more.x, look.w)
     }
     return rgb

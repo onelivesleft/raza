@@ -154,11 +154,7 @@ curve_at :: (a: V2, b: V2, c: V2, t: f32 -> V2) #pure {
     return Math.mix(Math.mix(a, b, t), Math.mix(b, c, t), t)
 }
 
-// A volley: who it's from and to, the path it's thrown along (the
-// stream's, as it was let go), how many points it is and how many have
-// landed, whether it made its commander damage lethal, whether it's black's
-// strike (its attacker's colours have black: its tendrils plunge, pulse and
-// snap, and it lands all at once), and how long it's been going.
+// A volley retains its landed points briefly for recoil and loss labels.
 Volley :: struct {
     id:     u32
     from:   i64
@@ -195,20 +191,37 @@ BLACK_PULSE :: 0.3
 BLACK_SNAP :: 0.26
 BLACK_RESIDUE :: 0.35
 
-// When a volley lands (its age): black's strike when its glob hits.
-volley_landing :: (v: Volley -> f32) #pure {
-    if v.black then return VOLLEY_GATHER + BLACK_REACH + BLACK_PULSE + BLACK_SNAP
-    return VOLLEY_GATHER + VOLLEY_TRAVEL
+// One bolt per point; large volleys finish launching within two seconds.
+bolt_spacing :: (count: i64 -> f32) #pure {
+    return Math.min(0.065, 2.0 / f32'Math.max(count - 1, 1))
 }
-
-// How long a volley's landing takes, its points coming off over it (black's
-// all at once), and how long after landing it's gone.
-volley_land :: (v: Volley -> f32) #pure {
-    return if v.black then 0 else VOLLEY_LAND
+volley_landing :: (v: Volley -> f32) #pure { return VOLLEY_GATHER + VOLLEY_TRAVEL }
+volley_land :: (v: Volley -> f32) #pure { return f32'Math.max(v.amount - 1, 0) * bolt_spacing(i64'v.amount) }
+volley_after :: (v: Volley -> f32) #pure { return volley_land(v) + 1.0 }
+bolt_impact :: (v: Volley, j: i64 -> f32) #pure {
+    return volley_landing(v) + f32'j * bolt_spacing(i64'v.amount)
 }
-
-volley_after :: (v: Volley -> f32) #pure {
-    return if v.black then BLACK_RESIDUE else VOLLEY_LAND + VOLLEY_LINGER
+bolt_bend :: (v: Volley, j: i64, cell: f32 -> V2) #pure {
+    return v.bend + across_path(v.start, v.end) * (Math.sin(f32'j * 2.39996) * cell * 0.65)
+}
+bolt_direction :: (v: Volley, j: i64, cell: f32 -> V2) #pure {
+    delta := v.end - bolt_bend(v, j, cell)
+    return if Math.length(delta) > 0.001 then Math.normalize(delta) else V2⟨0, 1⟩
+}
+// Damped spring impulses add for simultaneous hits, returning to rest.
+life_recoil :: (volleys: Volleys, player: i64, cell: f32 -> offset: V2, turn: f32) #pure {
+    offset = ⟨0, 0⟩
+    turn = 0
+    for v: volleys.list {
+        if v.to != player then continue
+        for j: 0 < i64'v.landed {
+            age := v.age - bolt_impact(v, j)
+            if age < 0 or age >= 1 then continue
+            spring := Math.exp(0 - age * 8) * Math.sin(age * 32)
+            offset += bolt_direction(v, j, cell) * (spring * cell * 0.24)
+            turn += Math.sin(f32'j * 2.39996 + f32'v.id) * spring * 0.045
+        }
+    }
 }
 
 // Damage dealt as a volley: combat damage (commander damage: life, and the
@@ -225,14 +238,14 @@ strike :: (game: *Game, motes: *Particles.System, volleys: *Volleys, random: *Ra
     lethal := combat and was < LETHAL_COMMANDER_DAMAGE and game.commander[to][from] >= LETHAL_COMMANDER_DAMAGE
     pending[to][from] += amount
     // (the path ends at their life total whatever the finger's over now)
-    start := layout.seats[from].icon
+    start := damage_icon(layout, from, combat)
     end := layout.seats[to].middle
     middle := (start + end) / 2
-    bend := middle + (finger - middle) * STREAM_BEND
+    bend := middle + V2⟨0, -Math.min(Math.length(end - start) * 0.45, cell_of(layout) * 3.5)⟩
     id := volleys.next_id
     volleys.next_id = if volleys.next_id >= 0xFFFF then 1 else volleys.next_id + 1
     `global volleys.list.add(⟨id: id, from: from, to: to, start: start, bend: bend, end: end, amount: amount, lethal: lethal,
-                             black: has_colour(game.identity[from], .BLACK), combat: combat⟩)
+                             black: false, combat: combat⟩)
 }
 
 // The volleys moved on a frame: each as it lands has its points come off
@@ -247,13 +260,10 @@ steer_volleys :: (motes: *Particles.System, volleys: *Volleys, random: *Random.G
         before := volley.age
         volley.age += Math.max(seconds, 0)
         if before < landing and volley.age >= landing {
-            splash(motes, random, layout, game.identity[volley.from], volley.to, volley.end, volley.lethal)
             if volley.lethal then bursts += 1
         }
         if volley.age >= landing {
-            land := volley_land(volley)
-            share := if land > 0 then Math.clamp((volley.age - landing) / land, 0, 1) else 1
-            should := i32'Math.ceil(share * f32'volley.amount)
+            should := Math.min(volley.amount, 1 + i32'Math.floor((volley.age - landing) / bolt_spacing(i64'volley.amount)))
             newly := should - volley.landed
             if newly > 0 {
                 pending[volley.to][volley.from] = Math.max(pending[volley.to][volley.from] - newly, 0)
@@ -261,51 +271,6 @@ steer_volleys :: (motes: *Particles.System, volleys: *Volleys, random: *Random.G
             }
         }
         if volley.age >= landing + volley_after(volley) then remove volley
-    }
-}
-
-// How many motes a second each element's volley throws off as it flies
-// (shared among its bolts): the storm's its debris, the deluge's its spray.
-VOLLEY_MOTES :: [Element] f32⟨SUN: 45, WATER: 120, OIL: 25, FIRE: 80, WIND: 170, CHROME: 25⟩
-
-// Each volley's motes as it flies, thrown off each of its heads ahead
-// along its path: the storm's leaves (and now and then a twig), fire's
-// sparks, the deluge's spray, the energy's sparkles, oil's and metal's
-// drops. (Tagged as a landing's: an undo calls them off.)
-feed_volleys :: (motes: *Particles.System, random: *Random.Generator, layout: Layout, game: Game, volleys: Volleys, seconds: f32) {
-    cell := cell_of(layout)
-    for v: volleys.list {
-        if v.black or v.age < VOLLEY_GATHER or v.age >= VOLLEY_GATHER + VOLLEY_TRAVEL then continue
-        *list: [6] Element
-        n := elements_of(game.identity[v.from], list)
-        size := volley_cells(v.amount) * cell
-        across := across_path(v.start, v.end)
-        speed := Math.length(v.end - v.start) * 1.15 / VOLLEY_TRAVEL
-        up := layout.seats[v.from].toward * -1
-        for which, i: list[:n] {
-            shape := VOLLEY_SHAPES[which]
-            bolts := volley_bolts(which, v.amount)
-            braid := braided(v.start, v.bend, v.end, i, n, cell)
-            for j: 0 < bolts {
-                p := bolt_along(v.age, j, bolts)
-                if p <= 0 or p >= 1 then continue
-                side := (f32'j - f32'(bolts - 1) / 2) * shape.apart * cell
-                bend := braid + across * (side * 2)
-                head := curve_at(v.start, bend, v.end, p)
-                ahead := curve_at(v.start, bend, v.end, Math.min(p + 0.02, 1)) - curve_at(v.start, bend, v.end, Math.max(p - 0.02, 0))
-                *way := V2⟨0, 0⟩
-                if Math.length(ahead) > 0.0001 then way = Math.normalize(ahead)
-                reach := size * shape.reach
-                for _: 0 < births(random, VOLLEY_MOTES[which] * 0.35 / f32'bolts, seconds) {
-                    angle := f32'random.below(0.0, Math.TAU)
-                    at := head + V2⟨Math.cos(angle), Math.sin(angle)⟩ * (Math.sqrt(f32'random.below(0.0, 1.0)) * reach * 0.8)
-                    *m := mote_of_style(random, which, at, way * (speed * f32'random.below(0.3, 0.9)), up, cell, SPLASH_MOTE)
-                    m.life = m.life * 0.6
-                    if which == .WIND and random.chance(0.25) then twig(m)
-                    motes.add(m)
-                }
-            }
-        }
     }
 }
 
@@ -382,7 +347,6 @@ settled_motes :: (layout: Layout, game: Game, from: i64 = -1, finger: V2 = ⟨0,
     for frame: 0 < SETTLE_FRAMES {
         seconds: f32 = 1.0 / 60
         if frame == thrown_at and volley > 0 then strike(dealt, made, thrown, random, layout, pending, from, to, volley, finger, combat)
-        feed_volleys(made, random, layout, game, thrown, seconds)
         made.update(seconds)
         steer_volleys(made, thrown, random, layout, game, pending, seconds)
     }

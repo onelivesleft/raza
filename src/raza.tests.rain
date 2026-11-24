@@ -7,6 +7,78 @@ near_point :: (a: V2, b: V2 -> bool) {
     return Math.length(a - b) < 0.5
 }
 
+// Each finger is followed by its id: one let go this frame, or gone, has let
+// go, one still down hasn't. Opening the count column or the settings ends
+// every player's drag, grid and drum.
+fingers_are_followed_apart :: () #test {
+    pointers := [2] Pointer⟨⟨3, ⟨10, 10⟩, false, false⟩, ⟨5, ⟨20, 20⟩, false, true⟩⟩
+    assert(!let_go(pointers[:], 3) and let_go(pointers[:], 5) and let_go(pointers[:], 9), "3 down, 5 let go, 9 gone")
+    if down := pointer_with(pointers[:], 3) { assert(down.at == V2⟨10, 10⟩, "3 at «down.at»") } else if absent { assert(false, "3's down") }
+    *screen: Screen_State
+    game := new_game(4)
+    screen.drags[0] = ⟨active: true, from: 0⟩
+    screen.drags[2] = ⟨active: true, from: 2⟩
+    screen.pickers[1] = ⟨open: true, from: 1, to: 0⟩
+    screen.drums[3] = ⟨open: true, player: 3, pressed: true⟩
+    assert(dragging(screen) and any_grid_open(screen), "two dragging, a grid open")
+    end_gestures(screen, game)
+    assert(!dragging(screen) and !any_grid_open(screen), "the drags and the grid ended")
+    assert(!screen.drums[3].open and !screen.drums[3].pressed, "the drum closed")
+}
+
+// A wheel let go with a flick spins on, slowing, and settles on a whole row
+// further its way, that row's life to be the game's; one turned and held
+// still before it's let go doesn't spin; and a spinning wheel's caught
+// where it is.
+drums_spin_on_when_flicked :: () #test {
+    game := new_game(4)
+    cap: f32 = 10
+    row := DRUM_PITCH * cap
+    frame: f32 = 1.0 / 60
+    *drum: Life_Drum
+    press_drum(drum, game, 1, ⟨0, 0⟩, 1)
+    _, _ := release_drum(drum, game)
+    // (a row a frame, down: the bigger digits coming)
+    press_drum(drum, game, 1, ⟨0, 0⟩, 1)
+    for i: 1 <= 5 {
+        move_drum(drum, ⟨0, f32'i * row⟩, cap)
+        step_drum(drum, game, frame)
+    }
+    _, flicked := release_drum(drum, game)
+    assert(drum.spinning and !flicked, "a flick spins on, the life not yet changed")
+    for _: 0 < 30 { step_drum(drum, game, frame) }
+    turning := drum.turned
+    assert(turning > 6 and drum.spinning, "still turning on: «turning»")
+    // (caught: where it is, and let go without moving, it stops on the row it's nearest)
+    press_drum(drum, game, 1, ⟨0, 0⟩, 1)
+    assert(!drum.spinning and drum.turned == turning, "caught where it was")
+    caught, stops := release_drum(drum, game)
+    assert(stops and caught == game.life[1] + i32'Math.round(turning), "stopped on its row: «caught»")
+    // (let go again with a flick, it slows and settles on its own)
+    *settling := drum
+    settling.from = caught
+    settling.turned = 0
+    settling.speed = 20
+    settling.spinning = true
+    *steps := 0
+    while !settling.settled and steps < 2000 {
+        step_drum(settling, game, frame)
+        steps += 1
+    }
+    assert(settling.settled and settling.settled_life > caught + 10, "settled further on: «settling.settled_life»")
+    assert(settling.goal == Math.floor(settling.goal), "on a whole row")
+    // (a turn held still before it's let go is no flick)
+    *held: Life_Drum
+    press_drum(held, game, 1, ⟨0, 0⟩, 1)
+    _, _ := release_drum(held, game)
+    press_drum(held, game, 1, ⟨0, 0⟩, 1)
+    move_drum(held, ⟨0, 2 * row⟩, cap)
+    step_drum(held, game, frame)
+    for _: 0 < 20 { step_drum(held, game, frame) }
+    _, turned := release_drum(held, game)
+    assert(!held.spinning and turned, "held still: no spin, the life its row's")
+}
+
 // A count of players laid out as they start.
 laid_out :: (players: i64, size: V2 -> Layout) {
     return lay_out(size, equal_splits(players, size))
@@ -22,6 +94,64 @@ covers_the_screen_once :: (layout: Layout) {
             assert(count == 1, "«p» is in «count» parts of «layout.count»")
         }
     }
+}
+
+// The number grid, for each player of each count either way up, faces the
+// quarter turn nearest its player (an eighth of a turn from them at most),
+// its bottom along their damage icons' (unless the screen's edge moves it),
+// is on the screen, and each of its keys is the key it's drawn as (the
+// units 0 to 9 in the bottom two rows, the tens 00 to 90 above), the tick
+// and the cross where the damage icons are.
+the_number_grid_is_by_its_player :: () #test {
+    part_code :: (part: Picker_Part -> i64) {
+        return if part is { case tens: 100 + i64'tens; case units: i64'units; case accept: -2; case cancel: -3; case outside: -1 }
+    }
+    for size: [2] V2⟨LANDSCAPE, PORTRAIT⟩ {
+        for players: 2 <= MAX_PLAYERS {
+            layout := laid_out(players, size)
+            cell := cell_of(layout)
+            for seat, k: layout.seats[:players] {
+                picker := Picker⟨open: true, from: k, to: (k + 1) % players⟩
+                origin, angle, pitch := picker_frame(layout, picker)
+                off := seat.angle - angle
+                assert(Math.abs(Math.atan2(Math.sin(off), Math.cos(off))) <= f32'Math.PI / 4 + 0.001, "«players» on «size», «k»: faces within an eighth of a turn")
+                half := f32'PICK_COLUMNS / 2
+                for corner: [4] V2⟨⟨0 - half, 0⟩, ⟨half, 0⟩, ⟨0 - half, 0 - f32'PICK_ROWS⟩, ⟨half, 0 - f32'PICK_ROWS⟩⟩ {
+                    at := placed(origin, angle, corner * pitch)
+                    assert(at.x >= 0 and at.y >= 0 and at.x <= size.x and at.y <= size.y, "«players» on «size», «k»: the grid's corner «at» on the screen")
+                }
+                *seen: [200] bool
+                for row: 0 < PICK_ROWS {
+                    for column: 0 < PICK_COLUMNS {
+                        middle := placed(origin, angle, pick_key_middle(row, column, pitch))
+                        hit := part_code(picker_part_at(layout, picker, middle))
+                        assert(hit == part_code(pick_key(row, column)), "«players» on «size», «k»: key «row», «column» hits «hit»")
+                        assert(hit >= 0, "«players» on «size», «k»: key «row», «column» is a number")
+                        seen[hit] = true
+                    }
+                }
+                for units: 0 < 10 { assert(seen[units] and seen[100 + units * 10], "«players» on «size», «k»: every unit and ten has its key") }
+                assert(part_code(picker_part_at(layout, picker, damage_icon(layout, k, false))) == -2, "«players» on «size», «k»: the tick's in the spell icon's place")
+                assert(part_code(picker_part_at(layout, picker, damage_icon(layout, k, true))) == -3, "«players» on «size», «k»: the cross in the combat icon's")
+            }
+        }
+    }
+}
+
+// The grid opens at 10; a tens or a units touched is chosen, another of one
+// kind changing it, the tick, the cross and outside choosing nothing.
+picking_chooses_a_tens_and_a_units :: () #test {
+    *picker := Picker⟨open: true, from: 0, to: 1⟩
+    assert(picker.tens + picker.units == 10, "opens at 10")
+    picker.pick(Picker_Part.tens(30))
+    picker.pick(Picker_Part.tens(40))
+    picker.pick(Picker_Part.units(7))
+    assert(picker.tens + picker.units == 47, "40 then 7: 47, not «picker.tens + picker.units»")
+    picker.pick(Picker_Part.units(2))
+    picker.pick(Picker_Part.tens(0))
+    picker.pick(Picker_Part.accept)
+    picker.pick(Picker_Part.outside)
+    assert(picker.tens + picker.units == 2, "2 then 00: 2")
 }
 
 lays_out_every_count :: () #test {
@@ -266,7 +396,7 @@ toggles_make_a_pentagon :: () #test {
                     }
                 }
                 assert(Math.abs(screen_clearance - want) < 0.1, "all folded pickers have the same screen gap")
-                assert(Math.abs(channel_clearance - want) < 0.1, "folded picker channel and screen gaps match")
+                assert(channel_clearance >= want - 0.1, "folded picker stays clear of channels")
                 corner := local_of(seat.middle, seat.angle, folded)
                 hub := local_of(seat.middle, seat.angle, middle)
                 *bottom_left := V2⟨1e30, -1e30⟩
@@ -486,7 +616,7 @@ settings_buttons_are_where_drawn :: () #test {
     for size: [2] V2⟨LANDSCAPE, PORTRAIT⟩ {
         shown := laid_out(4, size)
         last := shown.centre.x + (QUIT_PLACE.x * CAPSULE_PITCH + SETTINGS_BUTTON) * cell_of(shown)
-        first := shown.centre.x + (ANIMATION_PLACE.x * CAPSULE_PITCH - SETTINGS_BUTTON) * cell_of(shown)
+        first := shown.centre.x + (animation_place(.OFF).x * CAPSULE_PITCH - 0.38) * cell_of(shown)
         assert(first > 0 and last < size.x, "the settings' buttons on the screen at «size»: «first» to «last»")
     }
     layout := laid_out(4, LANDSCAPE)
@@ -501,7 +631,7 @@ settings_buttons_are_where_drawn :: () #test {
     case animation, quit, close: assert(false, "right of the system's button resets")
     }
     if at(layout, ⟨-3, 0⟩, pitch) is {
-    case animation: _
+    case animation: assert(animation == .FAST)
     case reset, quit, close: assert(false, "left of undo moves the motion on")
     }
     if settings_part_at(layout, capsule_centre(layout, .SYSTEM)) is {
@@ -580,12 +710,11 @@ volleys_follow_the_path :: () #test {
     finger := layout.seats[0].middle + V2⟨0, 300⟩
     strike(game, motes, volleys, random, layout, pending, 1, 0, 1, finger)
     v := volleys.list[0]
-    assert(near_point(v.start, layout.seats[1].icon) and near_point(v.end, layout.seats[0].middle), "from their spot to the life total")
+    assert(near_point(v.start, damage_icon(layout, 1, true)) and near_point(v.end, layout.seats[0].middle), "from their spot to the life total")
     middle := (v.start + v.end) / 2
-    assert(Math.dot(v.bend - middle, finger - middle) > 0, "bends toward the finger")
+    assert(v.bend.y < middle.y, "the bolts arc above the table")
     steer_volleys(motes, volleys, random, layout, game, pending, VOLLEY_GATHER + VOLLEY_TRAVEL)
-    assert(motes.motes.count > 0, "a splash where it lands")
-    for m: motes.motes { assert(near_point(m.at, v.end), "the splash at the life total: «m.at»") }
+    assert(pending[0][1] == 0, "the bolt takes one life on contact")
 }
 
 // Volleys from one player to another stay apart, each landing its own
@@ -609,27 +738,26 @@ volleys_land_apart :: () #test {
 // A volley's bolts leave one after another once it's gathered, and every
 // one lands as the volley does (its points counted then); more damage, more
 // bolts, up to each element's most, and one for those that throw a mass.
-bolts_land_together :: () #test {
-    landing: f32 = VOLLEY_GATHER + VOLLEY_TRAVEL
-    for shape, which: VOLLEY_SHAPES {
+bolts_land_in_sequence :: () #test {
+    for which: [6] Element⟨.SUN, .WATER, .OIL, .FIRE, .WIND, .CHROME⟩ {
         for amount: [4] i32⟨1, 5, 12, 40⟩ {
             n := volley_bolts(which, amount)
-            assert(n >= 1 and n <= Math.max(shape.bolts, 1), "«which» throws «n» for «amount»")
-            if shape.bolts == 1 then assert(n == 1, "«which» throws one mass")
+            assert(n == i64'amount, "one bolt per point for every colour")
             for j: 0 < n {
-                assert(bolt_along(VOLLEY_GATHER - 0.01, j, n) < 0, "«which»'s bolt «j» leaves before it's gathered")
-                assert(Math.abs(bolt_along(landing, j, n) - 1) < 0.001, "«which»'s bolt «j» of «n» isn't there as the volley lands")
+                arrival := VOLLEY_GATHER + VOLLEY_TRAVEL + f32'j * bolt_spacing(n)
+                assert(bolt_along(arrival - 0.001, j, n) < 1)
+                assert(Math.abs(bolt_along(arrival, j, n) - 1) < 0.001)
+                if j + 1 < n then assert(bolt_along(arrival, j + 1, n) < 1)
             }
         }
     }
-    assert(volley_bolts(.FIRE, 12) > volley_bolts(.FIRE, 1), "more damage, more bolts")
 }
 
 // Black's strike lands once, all its damage at once as its glob hits (the
 // life shown never ticks down part of it), after its tendrils plunge, pulse
 // and snap; a lethal one bursts once. More damage, more strands and a
 // bigger glob, within reason.
-black_strikes_once :: () #test {
+black_bolts_land_in_sequence :: () #test {
     layout := laid_out(2, LANDSCAPE)
     for amount: [3] i32⟨1, 18, 40⟩ {
         with scratch.rewind()
@@ -641,16 +769,18 @@ black_strikes_once :: () #test {
             *random := Random.generator(seed: 21)
             *pending: [MAX_PLAYERS] [MAX_PLAYERS] i32
             strike(game, motes, volleys, random, layout, pending, 1, 0, amount, layout.seats[0].middle)
-            assert(volleys.list.count == 1 and volleys.list[0].black, "a black player's volley is black's strike")
+            assert(volleys.list.count == 1 and !volleys.list[0].black, "black uses the common bolts")
             landing := volley_landing(volleys.list[0])
-            assert(landing > VOLLEY_GATHER + BLACK_REACH + BLACK_PULSE, "it plunges and pulses before it hits")
+            assert(landing == VOLLEY_GATHER + VOLLEY_TRAVEL)
             *age: f32 = 0
             *bursts: i64 = 0
-            for _: 0 < 120 {
+            *previous: i32 = 40
+            for _: 0 < 300 {
                 bursts += steer_volleys(motes, volleys, random, layout, game, pending, 1.0 / 60)
                 age += 1.0 / 60
                 shown := shown_game(game, pending).life[0]
-                assert(shown == 40 or shown == 40 - amount, "black never ticks down part of its hit: «shown»")
+                assert(shown <= previous and previous - shown <= 1, "one life per bolt")
+                previous = shown
                 if age < landing - 0.001 then assert(shown == 40, "nothing off before its glob hits: «shown» at «age»")
             }
             assert(pending[0][1] == 0 and volleys.list.count == 0, "landed and gone")
@@ -662,6 +792,32 @@ black_strikes_once :: () #test {
     assert(black_strands(99999) <= 20 and black_glob(99999) <= 1.6, "large damage has bounded rendering cost")
 }
 
+// A part's commander damage slots are a small map of the table below its
+// life: each where that seat's life total is on the screen, shrunk alike
+// (the same shape), apart, and below the life as its player reads it.
+chips_are_where_their_commanders_sit :: () #test {
+    for players: [3] i64⟨3, 4, 6⟩ {
+        layout := laid_out(players, LANDSCAPE)
+        cell := cell_of(layout)
+        for k: 0 < players {
+            seat := layout.seats[k]
+            chips := chip_places(layout, k, 2.0 * cell, 1.6 * cell)
+            // (shrunk alike: one scale between each two slots and their seats' lives)
+            scale := Math.length(chips[1] - chips[0]) / Math.length(layout.seats[1].middle - layout.seats[0].middle)
+            for j: 0 < players {
+                chip := local_of(seat.middle, seat.angle, chips[j])
+                assert(chip.y > 0, "«players» players, part «k»: «j»'s slot below the life: «chip»")
+                for m: 0 < players {
+                    if m == j then continue
+                    assert(Math.length(chips[j] - chips[m]) >= 2 * CHIP_RADIUS * cell, "«players» players, part «k»: «j»'s and «m»'s slots apart")
+                    mapped := (layout.seats[j].middle - layout.seats[m].middle) * scale
+                    assert(Math.length(chips[j] - chips[m] - mapped) < 0.01 * cell, "«players» players, part «k»: «j»'s and «m»'s slots as their lives are")
+                }
+            }
+        }
+    }
+}
+
 // A part's commander damage chips, as many as it can have, are inside it
 // and clear of its colour toggles, for every count of players, either way up.
 chips_keep_off_the_toggles :: () #test {
@@ -670,9 +826,9 @@ chips_keep_off_the_toggles :: () #test {
             layout := lay_out(screen, equal_splits(players, screen))
             cell := cell_of(layout)
             for k: 0 < players {
-                count := players - 1
-                chips := chip_places(layout, k, 2.0 * cell, 1.6 * cell, count)
-                for chip: chips[:count] {
+                chips := chip_places(layout, k, 2.0 * cell, 1.6 * cell)
+                for chip, from: chips[:players] {
+                    if from == k then continue
                     for t: toggles_of(layout, k) {
                         assert(Math.length(chip - t) >= (CHIP_RADIUS + TOGGLE_RADIUS) * cell, "«players» players, part «k»: a chip at «chip» on a toggle at «t»")
                     }
@@ -1110,7 +1266,6 @@ combat_damage_shows_as_it_lands :: () #test {
 
 
 drag_damage_uses_the_entry_line :: () #test {
-    assert(DEFAULT_PICKED == 10)
     for i: 0 < 9 {
         assert(damage_of(amount_for((f32'i + 0.5) / 9)) == i32'i + 1)
     }
@@ -1275,4 +1430,78 @@ free_arrow_points_along_the_drag :: () #test {
     assert(forward.y < 0 and forward.x > 0, "toward blue, not curling back toward the attacker")
     assert(Math.dot(forward, Math.normalize(finger - button)) > 0.999)
     assert(free_arrow_back(button, button, ⟨0, 1⟩) == V2⟨0, 1⟩)
+}
+colour_picker_is_at_the_players_bottom_left :: () #test {
+    layout := laid_out(2, LANDSCAPE)
+    cell := cell_of(layout)
+    for seat: layout.seats[:2] {
+        _, _, folded := toggle_places(layout, seat)
+        local := local_of(seat.middle, seat.angle, folded)
+        assert(local.x < 0 and local.y > cell, "picker is bottom-left, not beside the central divider")
+    }
+}
+animation_settings_select_each_speed :: () #test {
+    for size: [2] V2⟨LANDSCAPE, PORTRAIT⟩ {
+        layout := laid_out(4, size)
+        for choice: [4] Motion⟨.OFF, .SLOW, .MEDIUM, .FAST⟩ {
+            at := layout.centre + animation_place(choice) * (CAPSULE_PITCH * cell_of(layout))
+            if settings_part_at(layout, at) is {
+                case animation: assert(animation == choice)
+                case reset, quit, close: assert(false)
+            }
+        }
+    }
+}
+spinner_change_falls_and_bounces :: () #test {
+    assert(change_fall(0) == 0 and change_fall(0.05) > 0, "fall starts immediately")
+    duration: f32 = DRUM_FADE * 0.8
+    impact := change_fall(duration / 2.75)
+    rebound := change_fall(duration * 1.5 / 2.75)
+    assert(impact > 0.99 and rebound < 0.8)
+    assert(change_fall(duration) > 0.999)
+    for i: 0 <= 100 {
+        at := change_fall(duration * f32'i / 100)
+        assert(at >= 0 and at <= 1.001, "the change never crosses into the life text")
+    }
+}
+history_changes_keep_original_sign_on_undo :: () #test {
+    *before := new_game(3)
+    *after := before
+    after.life[0] -= 4
+    after.life[1] += 2
+    *screen: Screen_State
+    show_history_changes(screen, before, after, false)
+    assert(screen.history_changes[0].change == -4 and !screen.history_changes[0].crossed)
+    assert(screen.history_changes[1].change == 2)
+    assert(screen.history_changes[2].change == 0)
+    show_history_changes(screen, after, before, true)
+    assert(screen.history_changes[0].change == -4 and screen.history_changes[0].crossed)
+    assert(screen.history_changes[1].change == 2 and screen.history_changes[1].crossed)
+    assert(screen.history_changes[0].since == 0)
+    show_history_changes(screen, before, before, true)
+    assert(screen.history_changes[0].change == 0 and screen.history_changes[1].change == 0)
+}
+change_spinner_speed_tracks_digit_place :: () #test {
+    for place: [3] i32⟨1, 10, 100⟩ {
+        drum := Life_Drum⟨start: 40, from: 43, place: place, turned: 0.25⟩
+        assert(change_wheel_position(drum) == 3 + f32'place * 0.25)
+        reverse := Life_Drum⟨start: 40, from: 43, place: place, turned: -0.25⟩
+        assert(change_wheel_position(reverse) == 3 - f32'place * 0.25)
+    }
+}
+// A hit displaces and twists the life total, then friction settles it.
+bolt_recoil_settles :: () #test {
+    *volleys: Volleys
+    `scratch volleys.list.add(⟨id: 1, from: 1, to: 0, start: ⟨0, 0⟩, bend: ⟨50, -50⟩, end: ⟨100, 100⟩,
+                              amount: 1, landed: 1, age: VOLLEY_GATHER + VOLLEY_TRAVEL + 0.04⟩)
+    first, twist := life_recoil(volleys, 0, 100)
+    assert(Math.length(first) > 1 and Math.abs(twist) > 0.001)
+    untouched, _ := life_recoil(volleys, 1, 100)
+    assert(Math.length(untouched) == 0)
+    volleys.list[0].age += 0.12
+    rebound, _ := life_recoil(volleys, 0, 100)
+    assert(Math.dot(first, rebound) < 0, "the spring rebounds")
+    volleys.list[0].age += 0.8
+    settled, _ := life_recoil(volleys, 0, 100)
+    assert(Math.length(settled) < 0.02, "friction removes the motion")
 }

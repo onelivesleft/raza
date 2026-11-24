@@ -710,14 +710,15 @@ settled_elements :: (-> elements: Elements) #pure {
 // The elements moved on a frame: each eases toward stirred while its player
 // drags from it or a volley of theirs gathers, half while it's aimed at.
 stir_elements :: (elements: *Elements, layout: Layout, game: Game, screen: Screen_State, volleys: Volleys, seconds: f32) {
-    *aimed: i64 = -1
-    if screen.drag.active {
-        if to, _ := aim(layout, game, screen.drag.from, screen.mouse) is not missed then aimed = to
+    *aimed: [MAX_PLAYERS] bool
+    for d: screen.drags {
+        if !d.active then continue
+        if to, _ := aim(layout, game, d.from, d.finger) is not missed then aimed[to] = true
     }
     for k: 0 < MAX_PLAYERS {
         *target: f32 = 0
-        if screen.drag.active and screen.drag.from == k then target = 1
-        else if k == aimed then target = 0.5
+        if screen.drags[k].active then target = 1
+        else if aimed[k] then target = 0.5
         for v: volleys.list { if v.from == k and v.age < volley_landing(v) then target = 1 }
         elements.stir[k] += (target - elements.stir[k]) * Math.min(seconds * 6, 1)
         elements.clock[k] += seconds * (1 + 1.2 * elements.stir[k])
@@ -742,7 +743,7 @@ draw_elements :: (canvas: *Draw.Canvas, layer: *Draw.Canvas, layout: Layout, gam
     cell := cell_of(layout)
     layer.clear(Draw.rgb(0x000000))
     for v: volleys.list {
-        if v.black { draw_black_volley(canvas, layer, layout, game, elements, v) } else { draw_volley(canvas, layer, layout, game, elements, v) }
+        draw_volley(canvas, layer, layout, game, elements, v)
     }
     canvas.add_light(layer, BLOOM_CELLS * cell, BLOOM_STRENGTH)
 }
@@ -800,24 +801,15 @@ volley_cells :: (amount: i32 -> f32) #pure {
     return Math.min(0.5 + 0.1 * Math.sqrt(f32'Math.max(amount, 1)), 1.2)
 }
 
-// How many bolts an element's volley of an amount throws: one a few points,
-// at least two of a kind that throws them, at most its shape's.
+// Every element throws exactly one compact bolt per damage point.
 volley_bolts :: (which: Element, amount: i32 -> i64) #pure {
-    most := VOLLEY_SHAPES[which].bolts
-    if most <= 1 then return 1
-    return Math.clamp(1 + i64'(amount - 1) / 3, 2, most)
+    return i64'Math.max(amount, 1)
 }
 
-// How far along its path a volley's bolt j of n is at an age (0 to 1, eased;
-// below 0 not thrown yet): each leaves BOLT_APART after the last, quicker,
-// so all land as the volley does.
-BOLT_APART :: 0.06
+// Each bolt travels for the same duration, leaving and landing in sequence.
 bolt_along :: (age: f32, j: i64, n: i64 -> f32) #pure {
-    travel := VOLLEY_TRAVEL - f32'(n - 1) * BOLT_APART
-    t := (age - VOLLEY_GATHER - f32'j * BOLT_APART) / travel
-    if t < 0 then return t
-    c := Math.min(t, 1)
-    return c * c * (3 - 2 * c)
+    t := (age - VOLLEY_GATHER - f32'j * bolt_spacing(n)) / VOLLEY_TRAVEL
+    return Math.min(t, 1)
 }
 
 // The way across a path, a unit long (to one side of start to end).
@@ -827,44 +819,44 @@ across_path :: (start: V2, end: V2 -> V2) #pure {
     return V2⟨0 - along.y, along.x⟩ / Math.length(along)
 }
 
-// A volley: gathering at its player's spot (their fields swell, drawn
-// there), then thrown along its path as each element's shape has it (a
-// deluge, bolts, a storm), each head biggest, its tail trailing; then
-// landing, a splash of it spreading at whoever it hit and fading (bigger
-// for a lethal one).
+// Small bright cores with coloured auras, following staggered raised arcs.
 draw_volley :: (canvas: *Draw.Canvas, layer: *Draw.Canvas, layout: Layout, game: Game, elements: Elements, v: Volley) {
-    if v.age < VOLLEY_GATHER then return
     cell := cell_of(layout)
     *list: [6] Element
     n := elements_of(game.identity[v.from], list)
-    size := volley_cells(v.amount) * cell
-    time := elements.clock[v.from]
-    landing: f32 = VOLLEY_GATHER + VOLLEY_TRAVEL
-    across := across_path(v.start, v.end)
-    for element, i: list[:n] {
-        shape := VOLLEY_SHAPES[element]
-        seed := f32'(v.from * 3 + i) * 1.7 + f32'v.id
-        if v.age < landing {
-            bolts := volley_bolts(element, v.amount)
-            braid := braided(v.start, v.bend, v.end, i, n, cell)
-            for j: 0 < bolts {
-                p := bolt_along(v.age, j, bolts)
-                if p <= 0 or p >= 1 then continue
-                // (each bolt its own way, apart from the others')
-                side := (f32'j - f32'(bolts - 1) / 2) * shape.apart * cell
-                f := Field⟨start: v.start, bend: braid + across * (side * 2), end: v.end, up: layout.seats[v.from].toward * -1,
-                           reach: size * shape.reach, from: Math.max(p - shape.length, 0), to: p, width_from: shape.width_from, width_to: shape.width_to,
-                           time: time + f32'i * 7.3 + f32'j * 3.1, stir: 1, seed: seed + f32'j * 5.3, form: shape.form⟩
-                draw_field(canvas, layer, element, f)
-            }
-        }
-        else {
-            l := Math.clamp((v.age - landing) / (VOLLEY_LAND + VOLLEY_LINGER), 0, 1)
-            lethal: f32 = if v.lethal then 2 else 1
-            grow := shape.splash * lethal
-            f := Field⟨start: v.end, bend: v.end, end: v.end, up: layout.seats[v.to].toward * -1,
-                       reach: size * (1 + grow * Math.sqrt(l)), time: time + f32'i * 7.3 + l * 2, stir: 1, seed: seed, fade: (1 - l) * (1 - l)⟩
-            draw_field(canvas, layer, element, f)
+    colours := [Element] Draw.RGBA⟨SUN: Draw.rgb(0xFFE8A3), WATER: Draw.rgb(0x39AFFF),
+        OIL: Draw.rgb(0x9E6FD9), FIRE: Draw.rgb(0xFF5426), WIND: Draw.rgb(0x62DE62), CHROME: Draw.rgb(0xD6B575)⟩
+    for j: 0 < i64'v.amount {
+        p := bolt_along(v.age, j, i64'v.amount)
+        if p < 0 or p >= 1 then continue
+        bend := bolt_bend(v, j, cell)
+        at := curve_at(v.start, bend, v.end, p)
+        tangent := Math.mix(bend - v.start, v.end - bend, p)
+        axis := if Math.length(tangent) > 0.001 then Math.normalize(tangent) * 1.45 else V2⟨0, 0⟩
+        colour := colours[list[j % n]]
+        canvas.fill_glow(at + V2⟨0.08, 0.12⟩ * cell, cell * 0.16, Draw.rgba(0x000000, 0.3))
+        canvas.fill_glow(at, cell * 0.19, colour, 0.65, axis)
+        layer.fill_glow(at, cell * 0.10, colour, 1, axis)
+        canvas.fill_glow(at, cell * 0.055, Draw.rgb(0xFFFFF4), 1, axis)
+    }
+}
+
+// Each lost point flies out along the impact, facing the victim.
+draw_bolt_losses :: (canvas: *Draw.Canvas, layout: Layout, fonts: Fonts, volleys: Volleys) {
+    cell := cell_of(layout)
+    cap := f32'fonts.small.cap_height
+    width := f32'fonts.small.text_width("-1")
+    for v: volleys.list {
+        seat := layout.seats[v.to]
+        for j: 0 < i64'v.landed {
+            age := v.age - bolt_impact(v, j)
+            if age < 0 or age >= 0.38 then continue
+            fade := (1 - age / 0.38) * (1 - age / 0.38)
+            way := bolt_direction(v, j, cell)
+            side := across_path(v.start, v.end) * Math.sin(f32'j * 2.39996)
+            at := v.end + (way * (0.35 + age * 6.5) + side * age * 1.4) * cell
+            style := Draw.Text_Style⟨outline: Draw.rgba(0x000000, fade), outline_width: Math.max(1.5, cap * LIFE_OUTLINE)⟩
+            canvas.draw_text(fonts.small, placed(at, seat.angle, ⟨-width / 2, cap / 2⟩), "-1", Draw.rgba(0xFFFFFF, fade), style, seat.angle)
         }
     }
 }

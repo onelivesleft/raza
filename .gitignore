@@ -2,4 +2,6 @@
 *.pdb
 *.rdi
 build/
-release/
+# (the release build is tracked, so it's on GitHub; what else is there isn't)
+release/*
+!release/Raza.exe
