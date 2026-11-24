@@ -49,7 +49,15 @@ stays behind what's on it.
 - **The life total is always white with a black border and a drop shadow**,
   on any surface (half clear when the player's out). Its shadow is cast from
   the screen's centre, falling away from it (down as its player reads it)
-  and a little to their right. Nothing behind it is softened.
+  and a little to their right. Nothing behind it is softened. Every life
+  total is one size: as big as the smallest part's room allows (so each
+  fits its part), from a cell up to six, and no bigger than lets each
+  player's spinner, open with its cross and tick, fit on the screen (it's
+  moved onto the screen as it opens; its glass may lie over another's
+  part). Each attack spot is far enough above its life total for a
+  commander chip between them; where the controls in the middle hold it
+  back, the life total moves down toward its player instead, as far as
+  still keeps it in its part.
 - **Readable.** The colour toggles sit on soft shadows; commander damage
   chips sit in a row below the life total, or where they fit clear of the
   toggles and inside the part.
@@ -96,7 +104,8 @@ stays behind what's on it.
   changed while it's open, as undo can't): the wheels flatten (0.15 s), and the
   change stays flat beside the life 1 s, then fades over 1.5 s. As it
   rounds, the whole drum (its wheels and the change's) slides to be
-  centred on the life total, sliding back as it flattens, over blurred
+  centred on the life total (and, where that would put any of it, cross
+  and tick too, off the screen, onto it), sliding back as it flattens, over blurred
   glass, with a glass button either side as tall as that glass: the cross
   (red, on the player's left: the life as it opened) and the tick (green,
   on their right: the life as turned), each closing it. A press
@@ -163,8 +172,9 @@ throws**, each colour as its own element, as damage or commander damage.
   their life total, or just above it
   where there's no room below, or further out along that line; where the
   line has no room for them (a part dragged thin), off it, the nearest
-  place to just below that's clear of the life total; the commander damage
-  chips keep clear of both. Lifelink's life counts up for the attacker as its dots land.
+  place to just below that's clear of the life total; every place clear of
+  the attack icons' rows too; the commander damage chips keep clear of
+  both. Lifelink's life counts up for the attacker as its dots land.
 - **Each colour's element** gives the colour of the damage it throws (the
   volley, below): white's sun a pale gold, blue's water blue, black's oil
   violet, red's fire orange-red, green's wind green, and colourless metal
@@ -178,7 +188,7 @@ A white arrow with a black outline starts just above the pressed attack
 button in its player's frame. It curves up from the button, over the table,
 and down onto the chosen victim's life total. A soft down-right shadow falls
 over everything beneath it, including the table, controls and life counts.
-The arrow is drawn after those layers. Its shaft is 80% of an attack button's diameter. Before a victim is selected, its head points along the drag direction, away from the pressed button. It appears immediately on dragging, pointing at the finger until an eligible victim is selected. Its shadow lifts only through the arch, with both ends touching the table. The pending amount sits above the victim's life total and arrow tip in the attacker's frame, facing the attacker.
+The arrow is drawn after those layers. Its shaft is 80% of an attack button's diameter. Before a victim is selected, its head points along the drag direction, away from the pressed button. It appears immediately on dragging, pointing at the finger until an eligible victim is selected. Its shadow lifts only through the arch, with both ends touching the table. The pending amount, on foil glass, sits just beyond the arrow's tip (its nearest edge a little past it, along the way the arrow points), in the attacker's frame, facing the attacker, and kept on the screen (near an edge it may overlap the arrowhead).
 Nothing else is drawn while selecting.
 
 ## The attack: the volley on release

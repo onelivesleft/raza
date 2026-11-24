@@ -1349,17 +1349,27 @@ poison_and_tax_straddle_the_centre_line :: () #test {
             seat := layout.seats[k]
             chips := chip_places(layout, k, 2.0 * cell, 1.6 * cell)
             poison, tax := poison_tax_places(seat, chips[k], cell)
-            p := local_of(seat.middle, seat.angle, poison)
-            t := local_of(seat.middle, seat.angle, tax)
+            // (either side of their middle: on the centre line where there's
+            // room, else as near it as fits, clear of the attack icons)
+            p := local_of(chips[k], seat.angle, poison)
+            t := local_of(chips[k], seat.angle, tax)
             solo := chip_places(layout, k, 2.0 * cell, 1.6 * cell, false)
             _, centred := poison_tax_places(seat, solo[k], cell, false)
-            assert(Math.abs(local_of(seat.middle, seat.angle, centred).x) < 0.01, "tax alone sits on the player's centre line")
-            // (their near edges as far from the line, each its own width)
+            assert(Math.abs(local_of(solo[k], seat.angle, centred).x) < 0.01, "tax alone sits on its middle")
+            // (their near edges as far from the middle, each its own width)
             poison_edge := p.x + POISON_HALF * cell
             tax_edge := t.x - TAX_HALF * cell
             assert(Math.abs(poison_edge + tax_edge) < 0.01 and poison_edge < 0 and tax_edge > 0 and Math.abs(p.y - t.y) < 0.01,
                    "«players» players, part «k»: poison at «p», tax at «t»")
             assert(inside(poison, seat.outline[:seat.count]) and inside(tax, seat.outline[:seat.count]), "«players» players, part «k»: inside it")
+            game := new_game(players)
+            kinds, count := attacks_of(game.attacks[k])
+            for kind: kinds[:count] {
+                attack_at := attack_icon(layout, game, k, kind)
+                for at: [2] V2⟨poison, tax⟩ {
+                    assert(Math.length(attack_at - at) >= (PAIR_REACH + DAMAGE_ICON_RADIUS) * cell, "«players» players, part «k»: the pair on its «kind» icon")
+                }
+            }
             for j: 0 < players {
                 if j == k then continue
                 for at: [2] V2⟨poison, tax⟩ {

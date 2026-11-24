@@ -2873,11 +2873,19 @@ sliding_tax_place :: (layout: Layout, k: i64, width: f32, cap: f32, current: V2,
 // of the life total. (None anywhere: just below.)
 PAIR_LINE_STEPS :: 30
 PAIR_SEARCH_CELLS :: 5.0
+ATTACK_BAND_HALF :: 2.0 + DAMAGE_ICON_RADIUS   // a row of five attack icons' half width, in cells
 own_pair_place :: (seat: Seat, points: [] V2, toggles: [5] V2, life_width: f32, life_height: f32, cell: f32, has_poison: bool -> V2) #pure {
     away := life_height / 2 + (PAIR_REACH + 0.2) * cell
     pair_fits :: (seat: Seat, points: [] V2, toggles: [5] V2, pair: V2, cell: f32, has_poison: bool -> bool) #pure {
         poison, tax := poison_tax_places(seat, pair, cell, has_poison)
-        return (!has_poison or chip_fits(poison, points, toggles, PAIR_REACH * cell, cell)) and chip_fits(tax, points, toggles, PAIR_REACH * cell, cell)
+        // (and clear of the attack icons: their rows, across the attack
+        // spot and up from it, ATTACK_BAND_HALF cells each way)
+        off_attacks :: (seat: Seat, at: V2, cell: f32 -> bool) #pure {
+            local := local_of(seat.icon, seat.angle, at)
+            return Math.abs(local.x) >= (ATTACK_BAND_HALF + PAIR_REACH) * cell or local.y >= (DAMAGE_ICON_RADIUS + PAIR_REACH + 0.05) * cell
+        }
+        return (!has_poison or (chip_fits(poison, points, toggles, PAIR_REACH * cell, cell) and off_attacks(seat, poison, cell))) and
+               chip_fits(tax, points, toggles, PAIR_REACH * cell, cell) and off_attacks(seat, tax, cell)
     }
     for i: 0 < PAIR_LINE_STEPS {
         for side: [2] f32⟨1, -1⟩ {
