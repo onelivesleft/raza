@@ -1,5 +1,5 @@
 // The table opens over a stationary count slider. This canvas contains only
-// the table surface and its controls; the tuning panel and popups stay above it.
+// the table surface and its controls; popups stay above it.
 count_table_canvas: Draw.Canvas
 count_table_made: bool
 
@@ -261,17 +261,16 @@ draw_settings_split :: (canvas: *Draw.Canvas, layout: Layout, screen: Screen_Sta
     }
 }
 
-draw :: (canvas: *Draw.Canvas, layer: *Draw.Canvas, layout: Layout, game: Game, fonts: Fonts, screen: Screen_State, motes: Particles.System,
-         elements: Elements, volleys: Volleys = ⟨⟩) {
+draw :: (canvas: *Draw.Canvas, layer: *Draw.Canvas, layout: Layout, game: Game, fonts: Fonts, screen: Screen_State, volleys: Volleys = ⟨⟩) {
     cell := cell_of(layout)
     shift := count_split_offset(cell, screen.counts_shown)
     if screen.settings_shown > 0 and prepare_count_table(canvas.size) {
         // (the table without the pill, which lies over its halves)
-        draw_table(count_table_canvas, layer, layout, game, fonts, screen, motes, elements, volleys, with_pill: false)
+        draw_table(count_table_canvas, layer, layout, game, fonts, screen, volleys, with_pill: false)
         draw_settings_split(canvas, layout, screen, game)
     }
     else if prepare_count_table(canvas.size) {
-        draw_table(count_table_canvas, layer, layout, game, fonts, screen, motes, elements, volleys)
+        draw_table(count_table_canvas, layer, layout, game, fonts, screen, volleys)
         // The stationary mechanism is revealed by the opening, not painted on top.
         canvas.clear(Draw.rgb(0x101318))
         draw_count_bed(canvas, layout, shift)
@@ -285,14 +284,14 @@ draw :: (canvas: *Draw.Canvas, layer: *Draw.Canvas, layout: Layout, game: Game, 
                                   count_table_canvas, COUNT_SPLIT.bindings.table, COUNT_SPLIT.bindings.filtering)
     }
     else {
-        draw_table(canvas, layer, layout, game, fonts, screen, motes, elements, volleys)
+        draw_table(canvas, layer, layout, game, fonts, screen, volleys)
         button := capsule_centre(layout, .PLAYERS)
         draw_metal_bar(canvas, button, V2⟨BAR_WIDTH, BAR_WIDTH⟩ * cell, 1)
         draw_people(canvas, button, game.players, cell, Draw.rgb(0x171C22))
         if screen.settings_shown > 0 then draw_settings(canvas, layout, screen.motion, screen.settings_shown)
     }
     draw_count_ring(canvas, layout, screen)
-    for d: screen.drags { if d.active then draw_drag(canvas, layout, game, fonts, d, ARTIFACT, motes.time) }
+    for d: screen.drags { if d.active then draw_drag(canvas, layout, game, fonts, d, ARTIFACT) }
     for picker: screen.pickers {
         // (its glass blurs the table, drawn apart, where it was)
         if picker.open then draw_picker(canvas, layout, fonts, picker, game, ARTIFACT, count_table_canvas, count_table_made)

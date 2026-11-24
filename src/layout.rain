@@ -9,7 +9,8 @@
 // middle: one line goes straight up when there's an odd
 // number of players, and the top part is centred on the top when there's an
 // even, so two players have the halves. A player drags a line's end along
-// the edge to move it.
+// the edge to move it, or with two fingers turns every line together about
+// the centre.
 
 MAX_PLAYERS :: 6
 
@@ -18,7 +19,7 @@ MAX_PLAYERS :: 6
 MAX_OUTLINE :: 8
 
 // Fixed distance above the life counter in the player's frame, in cells.
-ATTACK_ABOVE_CELLS :: 1.8
+ATTACK_ABOVE_CELLS :: 2.2
 
 // The least share of the way round the edge a part keeps when a line's end
 // is dragged toward the next.
@@ -421,10 +422,10 @@ lay_out :: (size: V2, splits: Splits -> layout: Layout) #pure {
         facing := facing_between(centre, layout.ends[k], layout.ends[(k + 1) % n])
         seat.toward = ⟨Math.cos(facing), Math.sin(facing)⟩
         seat.angle = text_angle(seat.toward)
-        // Keep the centroid's depth, but centre the display between the channels.
+        // Centre between the channels, slightly nearer the player than the centroid.
         bisector := halfway_between(centre, layout.ends[k], layout.ends[(k + 1) % n])
         centre_line := V2⟨Math.cos(bisector), Math.sin(bisector)⟩
-        depth := Math.dot(area_middle - centre, centre_line)
+        depth := Math.dot(area_middle - centre, centre_line) + 0.35 * cell_of(layout)
         seat.middle = centre + centre_line * depth
         seat.icon = clear_of_controls(size, centre, seat.middle, seat.middle - seat.toward * (ATTACK_ABOVE_CELLS * cell_of(layout)))
         seat.clear = controls_clearance(size, centre, seat.icon)
@@ -471,6 +472,23 @@ share_through :: (layout: Layout, p: V2 -> f32) [absent] {
     d := p - layout.centre
     if Math.length(d) < 1 then fail: absent
     return share_at(layout.size, edge_point(layout.centre, layout.size / 2, Math.atan2(d.y, d.x)))
+}
+
+// The lines turned together about the screen's centre by an angle
+// (radians, clockwise on the screen): each end where its line, so turned,
+// meets the edge.
+turned_splits :: (splits: Splits, size: V2, angle: f32 -> turned: Splits) #pure {
+    turned = splits
+    centre := size / 2
+    for k: 0 < splits.count {
+        end := edge_at(size, splits.at[k]) - centre
+        turned.at[k] = share_at(size, edge_point(centre, centre, Math.atan2(end.y, end.x) + angle))
+    }
+}
+
+// The angle of a point about a centre (y down: clockwise as it grows).
+angle_about :: (centre: V2, p: V2 -> f32) #pure {
+    return Math.atan2(p.y - centre.y, p.x - centre.x)
 }
 
 // A point of a frame turned angle about origin (x along its text, y down

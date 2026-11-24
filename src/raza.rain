@@ -40,7 +40,6 @@ Raza :: program {
 #import Defaults
 #import Time
 #import Patterns
-#import Particles
 #import Shader
 #import Random
 #import Icons(SETS: .MDI)
@@ -50,7 +49,6 @@ Raza :: program {
 
 #include "layout.rain"
 #include "game.rain"
-#include "background-tuning.rain"
 #include "frames.rain"
 #include "count-table.rain"
 #include "target-arrow.rain"
@@ -61,7 +59,7 @@ Raza :: program {
 V2 :: #alias Math.Vector2(f32)
 
 // The fonts, carried in the program.
-MANA        :: #data "../fonts/mana/mana.ttf"
+MANA        :: #data "../fonts/mana/mana-mirrored-power.ttf"
 CRIMSON_PRO :: #data "../fonts/crimson_pro/CrimsonPro[wght].ttf"
 
 TEXT_FAMILY :: "Crimson Pro"
@@ -424,18 +422,19 @@ clearance :: (p: V2, points: [] V2 -> f32) #pure {
 }
 
 // Each player's damage spot (seat.icon) is two icons side by side across it
-// as its player sees it: combat damage's on their left (commander damage,
-// toward the 21), a spell's on their right (life alone). Each is
+// as its player sees it: damage's on their left (life alone: a spell's, an
+// ability's, another creature's), commander damage's on their right (their
+// commander's combat damage: life, and toward the 21). Each is
 // DAMAGE_ICON_APART cells from the spot, DAMAGE_ICON_RADIUS cells round.
 DAMAGE_ICON_APART  :: 0.5
 DAMAGE_ICON_RADIUS :: 0.42
-COMBAT_GLYPH :: "\u{E9D1}" // Mana ms-battle
-SPELL_GLYPH :: "\u{E624}" // Mana ms-sorcery
+COMMANDER_GLYPH :: "\u{E9C6}" // Mana ms-commander
+DAMAGE_GLYPH :: "\u{EA2F}" // Mana ms-power-mtga
 
-// Where a player's combat damage's icon is, or their spell damage's.
+// Where a player's commander damage's icon is (combat), or their damage's.
 damage_icon :: (layout: Layout, k: i64, combat: bool -> V2) #pure {
     seat := layout.seats[k]
-    side: f32 = if combat then -1 else 1
+    side: f32 = if combat then 1 else -1
     return placed(seat.icon, seat.angle, V2⟨side * DAMAGE_ICON_APART * cell_of(layout), 0⟩)
 }
 
@@ -491,6 +490,24 @@ move_split_with_clearance :: (splits: *Splits, k: i64, share: f32, size: V2) {
         }
     }
 }
+// Commander damage uses the commander symbol with a lower-right power badge,
+// in the player's frame, in both the controls and the pending damage label.
+draw_damage_symbol :: (canvas: *Draw.Canvas, fonts: Fonts, at: V2, angle: f32, cell: f32, combat: bool, shows: f32, style: Draw.Text_Style) {
+    glyph := if combat then COMMANDER_GLYPH else DAMAGE_GLYPH
+    width := f32'fonts.attack.text_width(glyph)
+    canvas.draw_text(fonts.attack, placed(at, angle, ⟨-width / 2, f32'fonts.attack.cap_height / 2⟩),
+                     glyph, Draw.rgba(0xFFFFFF, shows), style, angle)
+    if combat {
+        badge_width := f32'fonts.commander_badge.text_width(DAMAGE_GLYPH)
+        badge := placed(at, angle, ⟨cell * 0.17, cell * 0.16⟩)
+        *badge_style := style
+        badge_style.outline_width = Math.max(1, cell * 0.018)
+        canvas.draw_text(fonts.commander_badge,
+                         placed(badge, angle, ⟨-badge_width / 2, f32'fonts.commander_badge.cap_height / 2⟩),
+                         DAMAGE_GLYPH, Draw.rgba(0xFFFFFF, shows), badge_style, angle)
+    }
+}
+
 // Each player's damage symbols: white, outlined in black, with a soft
 // down-right shadow, turned to match their life total.
 draw_damage_icons :: (canvas: *Draw.Canvas, layout: Layout, game: Game, screen: Screen_State, fonts: Fonts) {
@@ -503,13 +520,10 @@ draw_damage_icons :: (canvas: *Draw.Canvas, layout: Layout, game: Game, screen: 
             at := damage_icon(layout, k, combat)
             shows := player_controls_visibility(screen.drums[k], k)
             if shows <= 0 then continue
-            glyph := if combat then COMBAT_GLYPH else SPELL_GLYPH
-            width := f32'fonts.attack.text_width(glyph)
-            baseline := placed(at, seat.angle, ⟨0 - width / 2, f32'fonts.attack.cap_height / 2⟩)
             style := Draw.Text_Style⟨outline: Draw.rgba(0x000000, shows), outline_width: Math.max(1.5, cell * 0.025),
                                      shadow: Draw.rgba(0x000000, 0.55 * shows), shadow_offset: V2⟨0.04, 0.055⟩ * cell,
                                      shadow_soft: 0.04 * cell⟩
-            canvas.draw_text(fonts.attack, baseline, glyph, Draw.rgba(0xFFFFFF, shows), style, seat.angle)
+            draw_damage_symbol(canvas, fonts, at, seat.angle, cell, combat, shows, style)
         }
     }
 }
@@ -638,10 +652,12 @@ ink_on :: (colour: Draw.RGBA -> Draw.RGBA) #pure {
 Fonts :: struct {
     life:      Draw.Font         // the life totals
     life_size: i32               // ...its size
+    loss:      Draw.Font         // small per-bolt loss labels
     small:     Draw.Font         // commander damage
     label:     Draw.Font         // the number grid's buttons
     output:    Draw.Font         // the number grid's number
-    attack:    Draw.Font         // Mana battle and sorcery symbols
+    attack:    Draw.Font         // Mana power symbol
+    commander_badge: Draw.Font   // lower-right commander overlay
     mana:      Draw.Font         // Mana's, for the colour toggles
     change:    Draw.Font         // a life drum's change, DRUM_CHANGE of the life's size
 }
@@ -684,10 +700,12 @@ load_fonts :: (family: string, layout: Layout -> fonts: Fonts) [os_error: Draw.D
     fonts.life_size = life
     if change := Draw.load_font(family, i32'(f32'life * DRUM_CHANGE), 500) { fonts.change = change } else if os_error { fail: os_error }
     if small := Draw.load_font(family, i32'(cell * 0.3), 600) { fonts.small = small } else if os_error { fail: os_error }
+    if loss := Draw.load_font(family, i32'(cell * 0.27), 600) { fonts.loss = loss } else if os_error { fail: os_error }
     if label := Draw.load_font(family, i32'(cell * 0.45), 500) { fonts.label = label } else if os_error { fail: os_error }
     if output := Draw.load_font(family, i32'(cell * 0.8), 500) { fonts.output = output } else if os_error { fail: os_error }
     if mana := Draw.load_font(ICON_FAMILY, i32'(cell * TOGGLE_RADIUS * 1.25)) { fonts.mana = mana } else if os_error { fail: os_error }
     if attack := Draw.load_font(ICON_FAMILY, i32'(cell * 0.5)) { fonts.attack = attack } else if os_error { fail: os_error }
+    if badge := Draw.load_font(ICON_FAMILY, i32'(cell * 0.25)) { fonts.commander_badge = badge } else if os_error { fail: os_error }
 }
 
 // The fonts made again, for a new layout.
@@ -698,6 +716,7 @@ reload_fonts :: (fonts: *Fonts, family: string, layout: Layout) [os_error: Draw.
     fonts.output.destroy()
     fonts.mana.destroy()
     fonts.attack.destroy()
+    fonts.commander_badge.destroy()
     fonts.change.destroy()
     if loaded := load_fonts(family, layout) { fonts = loaded } else if os_error { fail: os_error }
 }
@@ -706,7 +725,7 @@ reload_fonts :: (fonts: *Fonts, family: string, layout: Layout) [os_error: Draw.
 // Dragging, and the number grid
 
 // A drag from one of a player's two damage icons, while its finger's down:
-// combat damage's (commander damage) or a spell's (life alone). Each player
+// commander damage's (its combat damage) or damage's (life alone). Each player
 // has their own, so several drag at once.
 Drag :: struct {
     active:  bool
@@ -728,15 +747,34 @@ any_grid_open :: (screen: Screen_State -> bool) #pure {
     return false
 }
 
-// Every player's gesture ended, their grids and drums closed (the count
-// column or the settings opening, which are the table's alone).
-end_gestures :: (screen: *Screen_State, game: Game) {
+// Every player's gesture ended, their grids closed and their drums too,
+// each drum's turn kept (the count column or the settings opening, which
+// are the table's alone).
+end_gestures :: (screen: *Screen_State, game: *Game, timeline: *Timeline, lines: Lines) {
     for *d: screen.drags { d.active = false }
     for *p: screen.pickers { p.open = false }
-    for *drum: screen.drums {
-        drum.pressed = false
-        close_drum(drum, game)
+    for *drum: screen.drums { commit_drum(drum, game, timeline, lines) }
+}
+
+// Whether anything's under way: a drag, a number grid or a drum open (or a
+// drum held or spinning), a line being moved, the count column or the
+// settings open. Undo and redo wait till it's done.
+under_way :: (screen: Screen_State -> bool) #pure {
+    if dragging(screen) or any_grid_open(screen) or screen.moving_end >= 0 or screen.counts.open or screen.settings_open then return true
+    for drum: screen.drums {
+        if drum.open or drum.pressed or drum.spinning then return true
     }
+    return false
+}
+
+// An undo (again: a redo), unless something's under way: whether it moved.
+step_history :: (screen: *Screen_State, timeline: *Timeline, game: *Game, lines: *Lines, again: bool -> bool) {
+    if under_way(screen) then return false
+    before := game
+    moved := if again then timeline.redo(game, lines) else timeline.undo(game, lines)
+    if !moved then return false
+    show_history_changes(screen, before, game, !again)
+    return true
 }
 
 // The player first dragging and whom they're aimed at, for the part lit as
@@ -826,20 +864,22 @@ aim :: (layout: Layout, game: Game, from: i64, at: V2 -> to: i64, amount: Drag_A
 }
 
 // The number grid, asked for by a drag past the life total along the aim
-// line: five keys across and four up, its bottom along the bottom of the
+// line: five keys across and four up, its bottom along the top of the
 // dragger's damage icons (hidden while it's open). The two rows nearest
 // them are the units, 0 to 4 then 5 to 9; the two above, the tens, 00 to
-// 40 then 50 to 90. It opens at 10 (10 and 0 chosen, shown gold); a tens
-// or a units touched is chosen, and only the tick deals the two together
-// (00 and 0 none); the cross, or anywhere else, cancels. It faces the
-// player who dragged.
+// 40 then 50 to 90. It opens at 10 (10 and 0 chosen, shown green); a tens
+// or a units touched is chosen. Below its keys are two glass buttons, each
+// half its width: the cross (tinted red, on its player's left) cancels,
+// and the tick (tinted green, showing the attack it makes) deals the two
+// together (00 and 0 none). Only they end it: a touch anywhere else is
+// whatever it would be without it. It faces the player who dragged.
 Picker :: struct {
     open:        bool
     from:        i64
     to:          i64
     tens:        i32 = 10      // the tens chosen (0, 10, ... 90)
     units:       i32           // the units chosen (0 to 9)
-    combat:      bool = true   // the drag's: combat damage, or a spell's
+    combat:      bool = true   // the drag's: commander damage (its combat damage), or damage (life alone)
 }
 
 // A key touched: its tens or units chosen.
@@ -873,13 +913,15 @@ picker_frame :: (layout: Layout, picker: Picker -> origin: V2, angle: f32, pitch
     seat := layout.seats[picker.from]
     // (just above the cross and the tick, which take the damage icons' places)
     origin = placed(seat.icon, seat.angle, V2⟨0, 0 - DAMAGE_ICON_RADIUS * cell⟩)
-    // (moved, if it must be, to keep the keys a little in from the screen's edges)
+    // (moved, if it must be, to keep the keys and the buttons below them a
+    // little in from the screen's edges)
     margin := 0.15 * cell
-    half := f32'PICK_COLUMNS / 2 * pitch
+    half := f32'PICK_COLUMNS / 2 * pitch + GLASS_PAD * cell
     up := f32'PICK_ROWS * pitch
+    below := (GLASS_PAD + PICK_BUTTON_GAP + PICK_BUTTON_TALL) * cell
     *low := V2⟨1e30, 1e30⟩
     *high := V2⟨-1e30, -1e30⟩
-    for corner: [4] V2⟨⟨0 - half, 0⟩, ⟨half, 0⟩, ⟨0 - half, 0 - up⟩, ⟨half, 0 - up⟩⟩ {
+    for corner: [4] V2⟨⟨0 - half, below⟩, ⟨half, below⟩, ⟨0 - half, 0 - up⟩, ⟨half, 0 - up⟩⟩ {
         at := placed(origin, angle, corner)
         low = Math.min(low, at)
         high = Math.max(high, at)
@@ -892,17 +934,28 @@ picker_frame :: (layout: Layout, picker: Picker -> origin: V2, angle: f32, pitch
     origin = origin + shift
 }
 
-// The number grid's cross and tick, on the screen: just below its keys, in
-// its frame (square to it, and moved with it), as far apart and in the
-// order its player's damage icons are, which they stand in for.
-picker_buttons :: (layout: Layout, picker: Picker -> cross: V2, tick: V2) #pure {
-    origin, angle, _ := picker_frame(layout, picker)
-    seat := layout.seats[picker.from]
-    below := DAMAGE_ICON_RADIUS * cell_of(layout)
-    cross_x := local_of(seat.icon, seat.angle, damage_icon(layout, picker.from, true)).x
-    tick_x := local_of(seat.icon, seat.angle, damage_icon(layout, picker.from, false)).x
-    cross = placed(origin, angle, V2⟨cross_x, below⟩)
-    tick = placed(origin, angle, V2⟨tick_x, below⟩)
+// The number grid's buttons: in cells, the gap between them and the keys'
+// pane (and between the two), and how tall they are; their glass's tints
+// (a colour, and how much of it); and the chosen keys' colour.
+PICK_BUTTON_GAP  :: 0.12
+PICK_BUTTON_TALL :: 0.8
+PICK_CROSS_TINT  :: V4⟨0.85, 0.12, 0.10, 0.38⟩
+PICK_TICK_TINT   :: V4⟨0.15, 0.75, 0.30, 0.38⟩
+PICK_CHOSEN      :: Draw.rgb(0x7CE08C)
+
+// The number grid's cross or tick, in its frame (x across as its player
+// sees it, y down from its keys' bottom): a glass button below the keys'
+// pane, half its width, the cross on its player's left and the tick on
+// their right: its middle and half size.
+picker_button :: (layout: Layout, tick: bool -> middle: V2, half: V2) #pure {
+    cell := cell_of(layout)
+    pad := GLASS_PAD * cell
+    edge := f32'PICK_COLUMNS / 2 * PICK_PITCH * cell + pad
+    gap := PICK_BUTTON_GAP * cell
+    tall := PICK_BUTTON_TALL * cell
+    half = ⟨(edge - gap / 2) / 2, tall / 2⟩
+    side: f32 = if tick then 1 else -1
+    middle = ⟨side * (gap / 2 + half.x), pad + gap + tall / 2⟩
 }
 
 // Where in the grid's frame a key's middle is, by its row (0 the bottom)
@@ -914,8 +967,8 @@ pick_key_middle :: (row: i64, column: i64, pitch: f32 -> V2) #pure {
 Picker_Part :: union {
     tens: i32         // a tens key: 0, 10, ... 90
     units: i32        // a units key: 0 to 9
-    accept            // the tick, in the spell damage icon's place
-    cancel            // the cross, in the combat damage icon's
+    accept            // the tick: the grid's button on its player's right
+    cancel            // the cross: its button on their left
     outside
 }
 
@@ -942,11 +995,14 @@ tick_or_cross_at :: (layout: Layout, cross: V2, tick: V2, at: V2 -> Picker_Part)
 // What of the number grid is at a point of the screen: the tick or the
 // cross, a key (the gaps between keys their nearest's), or outside it.
 picker_part_at :: (layout: Layout, picker: Picker, at: V2 -> Picker_Part) #pure {
-    cross, tick := picker_buttons(layout, picker)
-    button := tick_or_cross_at(layout, cross, tick, at)
-    if button is { case accept, cancel: return button; case tens, units, outside: _ }
     origin, angle, pitch := picker_frame(layout, picker)
-    p := local_of(origin, angle, at) / pitch
+    local := local_of(origin, angle, at)
+    for tick: [2] bool⟨false, true⟩ {
+        middle, half := picker_button(layout, tick)
+        off := Math.abs(local - middle)
+        if off.x <= half.x and off.y <= half.y then return if tick then Picker_Part.accept else Picker_Part.cancel
+    }
+    p := local / pitch
     column := i64'Math.floor(p.x + f32'PICK_COLUMNS / 2)
     row := i64'Math.floor(0 - p.y)
     if column < 0 or column >= PICK_COLUMNS or row < 0 or row >= PICK_ROWS then return Picker_Part.outside
@@ -1305,7 +1361,7 @@ fill_turned_box :: (canvas: *Draw.Canvas, origin: V2, angle: f32, at: V2, size: 
     canvas.fill_rounded_rect(low, high - low, radius, colour)
 }
 
-draw_seat :: (canvas: *Draw.Canvas, layer: *Draw.Canvas, layout: Layout, game: Game, fonts: Fonts, k: i64, targeted: bool, time: f32, toggles_shown: f32 = 1,
+draw_seat :: (canvas: *Draw.Canvas, layer: *Draw.Canvas, layout: Layout, game: Game, fonts: Fonts, k: i64, targeted: i64, time: f32, toggles_shown: f32 = 1,
               drum: Life_Drum = ⟨⟩, surface_kept := false, recoil: V2 = ⟨0, 0⟩, recoil_turn: f32 = 0) {
     seat := layout.seats[k]
     cell := cell_of(layout)
@@ -1380,14 +1436,14 @@ draw_seat :: (canvas: *Draw.Canvas, layer: *Draw.Canvas, layout: Layout, game: G
         if shows > 0 then draw_change(canvas, seat, fonts, drum, life_colour, shows, life_width)
     }
     // The commander damage it's taken: a small map of the table below its
-    // life (chip_places'), a slot for each seat, a dark hollow till that
-    // commander's done damage, then a chip in their colour (its own slot
-    // always a hollow).
+    // life (chip_places'), one for each other commander: a dark hollow
+    // until they have dealt damage, then a chip in their colour.
     chips := chip_places(layout, k, life_width, cap)
     for from: 0 < layout.count {
+        if from == k then continue
         d := if from < game.players then game.commander[k][from] else 0
         middle := chips[from]
-        if d <= 0 or from == k {
+        if d <= 0 {
             canvas.fill_circle(middle, CHIP_RADIUS * cell, Draw.rgba(0x000000, 0.22))
             continue
         }
@@ -1400,6 +1456,7 @@ draw_seat :: (canvas: *Draw.Canvas, layer: *Draw.Canvas, layout: Layout, game: G
         canvas.fill_circle(middle, CHIP_RADIUS * cell - Math.max(2, 0.04 * cell), source)
         draw_centred(canvas, fonts.small, middle, seat.angle, "«d»", ink_on(source))
     }
+    if !out then draw_tax_button(canvas, fonts, chips[k], seat.angle, cell, game.tax[k], player_controls_visibility(drum, k))
     if drum_showing(drum, k) {
         draw_drum_glass(canvas, seat, fonts, drum, cell)
         draw_drum(canvas, layer, seat, fonts, drum, life_colour, life_style)
@@ -1440,7 +1497,8 @@ DRUM_SETTLE  :: 1.5        // slower than this (rows a second), it settles on th
 Life_Drum :: struct {
     open:    bool          // tapped open: its wheels turn
     player:  i64 = -1
-    start:   i32           // the life as it was opened
+    start:   i32           // the life as it was opened (moved on by others' changes: the drum's own are the rest)
+    seen:    i32           // the game's life as it last saw it, while a finger's on it or it spins
     pressed: bool          // a finger down on it (pointer, Pointer's id)...
     pointer: u32
     moved:   bool          // ...that's moved: a turn, not a tap
@@ -1515,6 +1573,32 @@ close_drum :: (drum: *Life_Drum, game: Game) {
     drum.since = 0
 }
 
+// A drum's own turn made the game's life (a spin stopped where it is, a
+// turn a finger's still making as far as it's gone), a step to undo if it
+// changes it, and the drum closed: its tick, a touch away from it, and the
+// count column or the settings opening.
+commit_drum :: (drum: *Life_Drum, game: *Game, timeline: *Timeline, lines: Lines) {
+    if drum.player < 0 or drum.player >= game.players {
+        drum.pressed = false
+        close_drum(drum, game)
+        return
+    }
+    *life := game.life[drum.player]
+    if drum.spinning {
+        stopped, _ := stop_drum(drum, game)
+        life = stopped
+    }
+    else if drum.pressed and drum.open and drum.moved {
+        life = drum_life(drum)
+    }
+    drum.pressed = false
+    if life != game.life[drum.player] {
+        timeline.remember(game, lines)
+        game.life[drum.player] = life
+    }
+    close_drum(drum, game)
+}
+
 // A finger down on a player's life, or a wheel of its open drum (its
 // place), at a point in their frame: a turn begins there (a drum shown for
 // another player closes, and is theirs no longer).
@@ -1546,6 +1630,7 @@ press_drum :: (drum: *Life_Drum, game: Game, player: i64, at: V2, place: i32) {
     drum.grabbed = drum.turned
     drum.last = drum.turned
     drum.speed = 0
+    drum.seen = game.life[player]
 }
 
 // A spinning drum stopped at the row it's nearest (before it's closed with
@@ -1611,6 +1696,15 @@ step_drum :: (drum: *Life_Drum, game: Game, seconds: f32) {
         drum.change = 0
         return
     }
+    // (the life changed by something else while a finger's on it or it
+    // spins, damage or an undo: its turn and its start move on with it, so
+    // what it settles on keeps that change, and the cross undoes only its own)
+    if drum.pressed or drum.spinning {
+        outside := game.life[drum.player] - drum.seen
+        drum.from += outside
+        drum.start += outside
+        drum.seen = game.life[drum.player]
+    }
     way: f32 = if drum.open then 1 else -1
     drum.bend = Math.clamp(drum.bend + way * seconds / DRUM_FLATTEN, 0, 1)
     if drum.pressed {
@@ -1631,7 +1725,9 @@ step_drum :: (drum: *Life_Drum, game: Game, seconds: f32) {
     }
     else {
         drum.turned += (drum.goal - drum.turned) * Math.min(1, seconds * 25)
-        if drum.from + drum.place * i32'drum.goal != game.life[drum.player] and !drum.settled {
+        resting := drum.from + drum.place * i32'drum.goal
+        if resting != game.life[drum.player] and !drum.settled {
+            drum.start += game.life[drum.player] - resting
             drum.from = game.life[drum.player]
             drum.place = 1
             drum.turned = 0
@@ -1929,15 +2025,8 @@ draw_change :: (canvas: *Draw.Canvas, seat: Seat, fonts: Fonts, drum: Life_Drum,
 CHIP_RADIUS :: 0.28
 CHIP_GAP    :: 0.06
 
-// Where a part's commander damage slots go, one for each seat (places[j]
-// the chip of the damage j has done; places[k], its own, always empty): a
-// small map of the table below its life total, in its player's frame, each
-// slot where that seat's life total is on the screen, the whole shrunk till
-// the nearest two slots are a chip apart (so every player sees it as they
-// see the table, their own slot nearest them). A map that won't be inside
-// the part and clear of its colour toggles moves, whole, to the nearest
-// place it will; where there's none, a slot that won't is at the free place
-// nearest its own, of rows below and above the life and columns beside it.
+// Commander circles surround the life total. Their directions match the
+// commanders' places around the table; tight regions use the nearest free spot.
 chip_places :: (layout: Layout, k: i64, life_width: f32, life_height: f32 -> places: [MAX_PLAYERS] V2) {
     with scratch.rewind()
     places = ⟨⟩
@@ -1949,50 +2038,18 @@ chip_places :: (layout: Layout, k: i64, life_width: f32, life_height: f32 -> pla
     apart := 2 * r + CHIP_GAP * cell
     below := life_height / 2 + r + 0.25 * cell
     n := layout.count
-    // (the life totals' middles, shrunk till the nearest two are a chip apart)
-    *nearest: f32 = 1e30
-    for a: 0 < n {
-        for b: 0 < n {
-            if b > a then nearest = Math.min(nearest, Math.length(layout.seats[a].middle - layout.seats[b].middle))
-        }
-    }
-    scale := if nearest < 1e29 and nearest > 0 then apart / nearest else 0.0
-    // (in this player's frame, centred across under the life, its top slot
-    // just below it)
-    *map: [MAX_PLAYERS] V2
-    *low := V2⟨1e30, 1e30⟩
-    *high := V2⟨-1e30, -1e30⟩
-    for j: 0 < n {
-        map[j] = local_of(V2⟨0, 0⟩, seat.angle, (layout.seats[j].middle - layout.centre) * scale)
-        low = Math.min(low, map[j])
-        high = Math.max(high, map[j])
-    }
-    top := V2⟨0 - (low.x + high.x) / 2, below - low.y⟩
-    // (where it's nearest that and all of it fits, clear of the life: below
-    // it, else beside or above it)
     *fits: [MAX_PLAYERS] bool
-    *best_shift: f32 = 1e30
-    *found := false
-    for down: -16 <= 8 {
-        for across: -10 <= 10 {
-            shift := top + V2⟨f32'across * 0.5 * apart, f32'down * 0.5 * apart⟩
-            distance := Math.length(shift - top)
-            if distance >= best_shift then continue
-            *all := true
-            for j: 0 < n {
-                local := map[j] + shift
-                if Math.abs(local.x) < life_width / 2 + r and Math.abs(local.y) < life_height / 2 + r then all = false
-                else if !chip_fits(placed(seat.middle, seat.angle, local), points, toggles, r, cell) then all = false
-            }
-            if !all then continue
-            best_shift = distance
-            found = true
-            for j: 0 < n { places[j] = placed(seat.middle, seat.angle, map[j] + shift) }
-        }
-    }
     for j: 0 < n {
-        if !found then places[j] = placed(seat.middle, seat.angle, map[j] + top)
+        direction := Math.normalize(layout.seats[j].middle - layout.centre)
+        local := local_of(V2⟨0, 0⟩, seat.angle, direction)
+        // A rounded rectangle around the number leaves diagonal chips clear too.
+        gap := if j == k then 0.40 * cell else 0.20 * cell
+        edge_x := (life_width / 2 + r + gap) / Math.max(Math.abs(local.x), 0.001)
+        edge_y := (life_height / 2 + r + gap) / Math.max(Math.abs(local.y), 0.001)
+        radius := Math.min(edge_x, edge_y)
+        places[j] = seat.middle + direction * radius
         fits[j] = chip_fits(places[j], points, toggles, r, cell)
+        for m: 0 < j { if Math.length(places[j] - places[m]) < apart then fits[j] = false }
     }
     // (one that doesn't fit: the free place nearest its own)
     beside := life_width / 2 + r + 0.25 * cell
@@ -2008,7 +2065,8 @@ chip_places :: (layout: Layout, k: i64, life_width: f32, life_height: f32 -> pla
         own := places[j]
         *best: f32 = 1e30
         for local: spots {
-            if Math.abs(local.x) < life_width / 2 + r and Math.abs(local.y) < life_height / 2 + r then continue
+            tax_clearance := if j == k then 0.40 * cell else 0.0
+            if Math.abs(local.x) < life_width / 2 + r + tax_clearance and Math.abs(local.y) < life_height / 2 + r + tax_clearance then continue
             at := placed(seat.middle, seat.angle, local)
             score := Math.length(at - own)
             if score >= best or !chip_fits(at, points, toggles, r, cell) then continue
@@ -2024,6 +2082,38 @@ chip_places :: (layout: Layout, k: i64, life_width: f32, life_height: f32 -> pla
     }
 }
 
+// A commander with the current extra mana cost at its lower-right corner.
+draw_tax_button :: (canvas: *Draw.Canvas, fonts: Fonts, at: V2, angle: f32, cell: f32, tax: i32, shows: f32) {
+    if shows <= 0 then return
+    width := f32'fonts.attack.text_width(COMMANDER_GLYPH)
+    style := Draw.Text_Style⟨outline: Draw.rgba(0x000000, shows), outline_width: Math.max(1, cell * 0.018),
+                             shadow: Draw.rgba(0x000000, 0.45 * shows), shadow_offset: V2⟨0.03, 0.04⟩ * cell, shadow_soft: cell * 0.025⟩
+    canvas.draw_text(fonts.attack, placed(at, angle, ⟨-width / 2, f32'fonts.attack.cap_height / 2⟩),
+                     COMMANDER_GLYPH, Draw.rgba(0xFFFFFF, shows), style, angle)
+    text := "+«tax»"
+    badge_width := f32'fonts.small.text_width(text)
+    badge := placed(at, angle, ⟨cell * 0.22, cell * 0.23⟩)
+    canvas.draw_text(fonts.small, placed(badge, angle, ⟨-badge_width / 2, f32'fonts.small.cap_height / 2⟩),
+                     text, Draw.rgba(0xFFFFFF, shows), style, angle)
+}
+
+tax_button_at :: (layout: Layout, fonts: Fonts, game: Game, screen: Screen_State, at: V2 -> player: i64) [absent] {
+    for k: 0 < layout.count {
+        if is_out(game, k) or screen.pickers[k].open or screen.drums[k].open then continue
+        width := f32'fonts.life.text_width("«game.life[k]»")
+        places := chip_places(layout, k, width, f32'fonts.life.cap_height)
+        if Math.length(at - places[k]) <= 0.42 * cell_of(layout) then return k
+    }
+    fail: absent
+}
+
+raise_commander_tax :: (game: *Game, ready_at: *f64, player: i64, now: f64 -> bool) {
+    if now < ready_at then return false
+    game.tax[player] += 2
+    ready_at = now + 1
+    return true
+}
+
 // Whether a chip of radius r at a place is inside its part, clear of its
 // sides, and clear of its colour toggles.
 chip_fits :: (at: V2, points: [] V2, toggles: [5] V2, r: f32, cell: f32 -> bool) #pure {
@@ -2032,10 +2122,10 @@ chip_fits :: (at: V2, points: [] V2, toggles: [5] V2, r: f32, cell: f32 -> bool)
     return true
 }
 
-// A drag's amount, by the finger, facing whoever's dragging, and a slow
-// pulse of the dragger's colour at the life total it's aimed at (the
-// stream of motes to it is the motes').
-draw_drag :: (canvas: *Draw.Canvas, layout: Layout, game: Game, fonts: Fonts, drag: Drag, artifact: Draw.RGBA, time: f32) {
+// A drag's arrow, from its damage icon to the life total it's aimed at (or
+// to the finger, aimed at no one), and its amount above that life total,
+// facing whoever's dragging.
+draw_drag :: (canvas: *Draw.Canvas, layout: Layout, game: Game, fonts: Fonts, drag: Drag, artifact: Draw.RGBA) {
     cell := cell_of(layout)
     seat := layout.seats[drag.from]
     if to, amount := aim(layout, game, drag.from, drag.finger) is not missed {
@@ -2049,15 +2139,15 @@ draw_drag :: (canvas: *Draw.Canvas, layout: Layout, game: Game, fonts: Fonts, dr
                        Math.abs(Math.dot(up, victim.toward)) * f32'fonts.life.cap_height / 2
         label := victim.middle + up * (Math.max(life_extent, 0.85 * cell) + 0.75 * cell)
         text := if amount is { case damage: "«damage»"; case asked: "?" }
-        glyph := if drag.combat then COMBAT_GLYPH else SPELL_GLYPH
-        icon_width := f32'fonts.attack.text_width(glyph)
+        glyph := if drag.combat then COMMANDER_GLYPH else DAMAGE_GLYPH
+        icon_width := Math.max(f32'fonts.attack.text_width(glyph), cell * 0.6)
         number_width := f32'fonts.output.text_width(text)
         gap := 0.16 * cell
         left := (0 - icon_width - gap - number_width) / 2
         style := Draw.Text_Style⟨outline: Draw.rgb(0x000000), outline_width: Math.max(1.5, 0.025 * cell)⟩
-        symbol_at := placed(label, seat.angle, ⟨left, f32'fonts.attack.cap_height / 2⟩)
+        symbol_at := placed(label, seat.angle, ⟨left + icon_width / 2, 0⟩)
         number_at := placed(label, seat.angle, ⟨left + icon_width + gap, f32'fonts.output.cap_height / 2⟩)
-        canvas.draw_text(fonts.attack, symbol_at, glyph, Draw.rgb(0xFFFFFF), style, seat.angle)
+        draw_damage_symbol(canvas, fonts, symbol_at, seat.angle, cell, drag.combat, 1, style)
         canvas.draw_text(fonts.output, number_at, text, Draw.rgb(0xFFFFFF), style, seat.angle)
     }
     else {
@@ -2077,6 +2167,7 @@ Glass_Params :: struct {
     box:   V4    // its middle and half size (pixels)
     style: V4    // its corners' radius, the blur's step (pixels), the scene's size
     turn:  V4    // the cosine and sine of its turn (as placed's), how much it shows (0 to 1), unused
+    tint:  V4    // a colour it's tinted, and how much (0: clear)
 }
 
 glass_shade :: (from: Draw.Quad_Between, glass: Shader.Uniforms(Glass_Params), scene: Shader.Texture_2D, filtering: Shader.Sampler -> colour: V4) {
@@ -2099,6 +2190,7 @@ glass_shade :: (from: Draw.Quad_Between, glass: Shader.Uniforms(Glass_Params), s
         }
     }
     *rgb := Math.mix(sum / weights, V3⟨0.82, 0.85, 0.9⟩, 0.18) * 0.8
+    rgb = Math.mix(rgb, glass.tint.xyz, glass.tint.w)
     // (the rim: brightest where it faces the light)
     rim := 1 - Math.smoothstep(0, 2.5, 0 - d)
     lit := Math.max(Math.dot(Math.normalize(p / glass.box.zw + V2⟨0.00001, 0⟩), PART_LIGHT), 0)
@@ -2140,7 +2232,7 @@ draw_drum_glass :: (canvas: *Draw.Canvas, seat: Seat, fonts: Fonts, drum: Life_D
         scene := kept_surfaces.canvas.size
         params := Glass_Params⟨V4⟨middle.x, middle.y, (right - left) / 2, reach⟩,
                                 V4⟨radius, GLASS_BLUR * cell, f32'scene[0], f32'scene[1]⟩,
-                                V4⟨Math.cos(seat.angle), Math.sin(seat.angle), shows, 0⟩⟩
+                                V4⟨Math.cos(seat.angle), Math.sin(seat.angle), shows, 0⟩, V4⟨0, 0, 0, 0⟩⟩
         canvas.draw_shader_canvas(low - V2⟨2, 2⟩, high - low + V2⟨4, 4⟩, GLASS.code, GLASS.bindings.glass, params, kept_surfaces.canvas,
                                   GLASS.bindings.scene, GLASS.bindings.filtering)
     }
@@ -2156,33 +2248,12 @@ draw_picker :: (canvas: *Draw.Canvas, layout: Layout, fonts: Fonts, picker: Pick
     cell := cell_of(layout)
     origin, angle, pitch := picker_frame(layout, picker)
     // The glass: the grid's keys, and GLASS_PAD round them.
-    {
-        pad := GLASS_PAD * cell
-        half := f32'PICK_COLUMNS / 2 * pitch + pad
-        *low := V2⟨1e30, 1e30⟩
-        *high := V2⟨-1e30, -1e30⟩
-        for corner: [4] V2⟨⟨0 - half, pad⟩, ⟨half, pad⟩, ⟨0 - half, 0 - f32'PICK_ROWS * pitch - pad⟩, ⟨half, 0 - f32'PICK_ROWS * pitch - pad⟩⟩ {
-            at := placed(origin, angle, corner)
-            low = Math.min(low, at)
-            high = Math.max(high, at)
-        }
-        radius := 0.3 * cell
-        if holds_table {
-            // (a pane turned as the grid is, round its keys)
-            tall := f32'PICK_ROWS * pitch
-            middle := placed(origin, angle, V2⟨0, 0 - tall / 2⟩)
-            params := Glass_Params⟨V4⟨middle.x, middle.y, half, tall / 2 + pad⟩,
-                                    V4⟨radius, GLASS_BLUR * cell, f32'scene.size[0], f32'scene.size[1]⟩,
-                                    V4⟨Math.cos(angle), Math.sin(angle), 1, 0⟩⟩
-            canvas.draw_shader_canvas(low - V2⟨2, 2⟩, high - low + V2⟨4, 4⟩, GLASS.code, GLASS.bindings.glass, params, scene, GLASS.bindings.scene,
-                                      GLASS.bindings.filtering)
-        }
-        else {
-            canvas.fill_rounded_rect(low, high - low, radius, Draw.rgba(0x14161A, 0.7))
-        }
-    }
+    pad := GLASS_PAD * cell
+    tall := f32'PICK_ROWS * pitch
+    draw_pane(canvas, origin, angle, V2⟨0, 0 - tall / 2⟩, V2⟨f32'PICK_COLUMNS / 2 * pitch + pad, tall / 2 + pad⟩, 0.3 * cell, V4⟨0, 0, 0, 0⟩,
+              scene, holds_table, cell)
     // Each key's number straight over the table: white (the tens and units
-    // chosen gold), outlined in black, with a drop shadow down and to the
+    // chosen green), outlined in black, with a drop shadow down and to the
     // right, as the life totals have.
     cap := f32'fonts.output.cap_height
     style := Draw.Text_Style⟨outline: Draw.rgb(0x000000), outline_width: Math.max(1.5, cell * 0.03),
@@ -2194,10 +2265,10 @@ draw_picker :: (canvas: *Draw.Canvas, layout: Layout, fonts: Fonts, picker: Pick
             if pick_key(row, column) is {
             case tens:
                 label = if tens == 0 then "00" else "«tens»"
-                if tens == picker.tens then colour = Draw.rgb(0xE8C27A)
+                if tens == picker.tens then colour = PICK_CHOSEN
             case units:
                 label = "«units»"
-                if units == picker.units then colour = Draw.rgb(0xE8C27A)
+                if units == picker.units then colour = PICK_CHOSEN
             case accept, cancel, outside: _
             }
             width := f32'fonts.output.text_width(label)
@@ -2205,8 +2276,50 @@ draw_picker :: (canvas: *Draw.Canvas, layout: Layout, fonts: Fonts, picker: Pick
             canvas.draw_text(fonts.output, placed(origin, angle, middle + V2⟨0 - width / 2, cap / 2⟩), label, colour, style, angle)
         }
     }
-    cross, tick := picker_buttons(layout, picker)
-    draw_tick_and_cross(canvas, layout, angle, cross, tick, style.shadow_offset, 1)
+    // The cross and the tick: glass buttons below the keys' pane, tinted red
+    // and green, the cross's a cross and the tick's the attack it makes (its
+    // damage icon's symbol).
+    icon_style := Draw.Text_Style⟨outline: Draw.rgb(0x000000), outline_width: Math.max(1.5, cell * 0.025),
+                                   shadow: Draw.rgba(0x000000, 0.55), shadow_offset: V2⟨0.04, 0.055⟩ * cell, shadow_soft: 0.04 * cell⟩
+    for tick: [2] bool⟨false, true⟩ {
+        middle, half := picker_button(layout, tick)
+        tint := if tick then PICK_TICK_TINT else PICK_CROSS_TINT
+        draw_pane(canvas, origin, angle, middle, half, 0.2 * cell, tint, scene, holds_table, cell)
+        at := placed(origin, angle, middle)
+        if tick {
+            draw_damage_symbol(canvas, fonts, at, angle, cell, picker.combat, 1, icon_style)
+        }
+        else {
+            draw_outlined_icon(canvas, layout, CROSS_ICON, at, angle, style.shadow_offset, 1)
+        }
+    }
+}
+
+// A pane of the number grid's glass, in a frame (origin, angle): its middle
+// and half size there, its corners' radius, tinted (a colour, and how
+// much). It blurs scene where it holds the table, else it's a plain dark
+// pane of the tint.
+draw_pane :: (canvas: *Draw.Canvas, origin: V2, angle: f32, middle: V2, half: V2, radius: f32, tint: V4, scene: *Draw.Canvas, holds_table: bool,
+              cell: f32) {
+    *low := V2⟨1e30, 1e30⟩
+    *high := V2⟨-1e30, -1e30⟩
+    for corner: [4] V2⟨⟨0 - half.x, 0 - half.y⟩, ⟨half.x, 0 - half.y⟩, ⟨0 - half.x, half.y⟩, ⟨half.x, half.y⟩⟩ {
+        at := placed(origin, angle, middle + corner)
+        low = Math.min(low, at)
+        high = Math.max(high, at)
+    }
+    centre := placed(origin, angle, middle)
+    if holds_table {
+        params := Glass_Params⟨V4⟨centre.x, centre.y, half.x, half.y⟩,
+                                V4⟨radius, GLASS_BLUR * cell, f32'scene.size[0], f32'scene.size[1]⟩,
+                                V4⟨Math.cos(angle), Math.sin(angle), 1, 0⟩, tint⟩
+        canvas.draw_shader_canvas(low - V2⟨2, 2⟩, high - low + V2⟨4, 4⟩, GLASS.code, GLASS.bindings.glass, params, scene, GLASS.bindings.scene,
+                                  GLASS.bindings.filtering)
+    }
+    else {
+        plain := Math.mix(V3⟨0.078, 0.086, 0.102⟩, tint.xyz, tint.w)
+        canvas.fill_rounded_rect(low, high - low, radius, Draw.RGBA⟨plain.x, plain.y, plain.z, 0.7⟩)
+    }
 }
 
 // A cross and a tick, at the damage icons' size, turned (radians
@@ -2215,17 +2328,22 @@ draw_picker :: (canvas: *Draw.Canvas, layout: Layout, fonts: Fonts, picker: Pick
 draw_tick_and_cross :: (canvas: *Draw.Canvas, layout: Layout, angle: f32, cross: V2, tick: V2, shadow: V2, shows: f32) {
     cell := cell_of(layout)
     size := 0.7 * cell
-    for is_cross: [2] bool⟨true, false⟩ {
-        at := if is_cross then cross else tick
-        drawn := if is_cross then CROSS_ICON else TICK_ICON
-        draw_icon_at(canvas, drawn, at + shadow, size, Draw.rgba(0x000000, 0.65 * shows), angle)
-        ring := Math.max(1.5, cell * 0.03)
-        for step: 0 < 8 {
-            a := f32'step * f32'Math.TAU / 8
-            draw_icon_at(canvas, drawn, at + V2⟨Math.cos(a), Math.sin(a)⟩ * ring, size, Draw.rgba(0x000000, shows), angle)
-        }
-        draw_icon_at(canvas, drawn, at, size, Draw.rgba(0xFFFFFF, shows), angle)
+    draw_outlined_icon(canvas, layout, CROSS_ICON, cross, angle, shadow, shows)
+    draw_outlined_icon(canvas, layout, TICK_ICON, tick, angle, shadow, shows)
+}
+
+// An icon at the damage icons' size, turned: white, outlined in black, with
+// a drop shadow (offset), all as shown (0 to 1).
+draw_outlined_icon :: (canvas: *Draw.Canvas, layout: Layout, drawn: Icons.Icon, at: V2, angle: f32, shadow: V2, shows: f32) {
+    cell := cell_of(layout)
+    size := 0.7 * cell
+    draw_icon_at(canvas, drawn, at + shadow, size, Draw.rgba(0x000000, 0.65 * shows), angle)
+    ring := Math.max(1.5, cell * 0.03)
+    for step: 0 < 8 {
+        a := f32'step * f32'Math.TAU / 8
+        draw_icon_at(canvas, drawn, at + V2⟨Math.cos(a), Math.sin(a)⟩ * ring, size, Draw.rgba(0x000000, shows), angle)
     }
+    draw_icon_at(canvas, drawn, at, size, Draw.rgba(0xFFFFFF, shows), angle)
 }
 
 // A ring of people, a count of them, round a point, in a button a cell
@@ -2344,11 +2462,13 @@ draw_metal_bar :: (canvas: *Draw.Canvas, middle: V2, half: V2, shows: f32) {
 // What's happening on the screen besides the game: what's being dragged,
 // and what's open.
 Screen_State :: struct {
+    tax_ready_at: [MAX_PLAYERS] f64 // real-time debounce, independent of animation speed
     drags:         [MAX_PLAYERS] Drag   // each player's drag
     pickers:       [MAX_PLAYERS] Picker   // each player's number grid (pickers[k].from is k)
     counts:        Count_Picker
     moving_end:    i64 = -1      // the line whose end is being dragged along the edge
     line_finger:   V2            // ...and where its finger is
+    turning:       bool          // ...and a second finger's on a line: every line turns together
     can_undo:      bool
     can_redo:      bool
     previewing:    bool          // the lines are another count's, or moving to one
@@ -2369,8 +2489,8 @@ Screen_State :: struct {
 // How often the frames a second shown are worked out again, in seconds.
 FPS_WINDOW :: 0.5
 
-// The frames a second when nothing's being touched (the miasmas and the
-// surfaces still move): a frame's work, then a wait for input for the rest.
+// The frames a second when nothing's being touched (the surfaces still
+// move): a frame's work, then a wait for input for the rest.
 IDLE_FPS :: 60.0
 
 // The frames a second, top right, on a chip of the capsule's colour, upright
@@ -2513,7 +2633,7 @@ Channel_Touch :: shader { vertex: Draw.quad_place; fragment: channel_touch_shade
 CHANNEL_TOUCH :: Channel_Touch(Draw.SHADER_TARGET)
 
 draw_player_ui :: (canvas: *Draw.Canvas, layer: *Draw.Canvas, layout: Layout, game: Game, fonts: Fonts, screen: Screen_State,
-                   motes: Particles.System, elements: Elements, volleys: Volleys, targeted: i64) {
+                   volleys: Volleys, targeted: i64) {
     cell := cell_of(layout)
     for k: 0 < layout.count {
         // (the life jolted as bolts land, but not turned: text at a new angle
@@ -2521,7 +2641,7 @@ draw_player_ui :: (canvas: *Draw.Canvas, layer: *Draw.Canvas, layout: Layout, ga
         // recoil, which filled the glyph atlas over and over; moved, it's the
         // same glyphs)
         recoil, _ := life_recoil(volleys, k, cell)
-        draw_seat(canvas, layer, layout, game, fonts, k, k == targeted, screen.surface_time, screen.toggles.shown[k], screen.drums[k], true, recoil, 0)
+        draw_seat(canvas, layer, layout, game, fonts, k, targeted, screen.surface_time, screen.toggles.shown[k], screen.drums[k], true, recoil, 0)
         history := screen.history_changes[k]
         shows := change_showing(history, k)
         if shows > 0 and !drum_showing(screen.drums[k], k) {
@@ -2539,8 +2659,8 @@ draw_player_ui :: (canvas: *Draw.Canvas, layer: *Draw.Canvas, layout: Layout, ga
                                CHANNEL_TOUCH.code, CHANNEL_TOUCH.bindings.touch, params)
         }
     }
-    // The elements (each player's, a drag's stream, volleys) and their motes.
-    // (the dragger's hidden while their number grid's open)
+    // The damage icons (the dragger's hidden while their number grid's
+    // open), then the volleys and the points they take.
     draw_damage_icons(canvas, layout, game, screen, fonts)
     // (an open drum's tick and cross, coming in as its damage icons go)
     for drum, k: screen.drums {
@@ -2549,13 +2669,12 @@ draw_player_ui :: (canvas: *Draw.Canvas, layer: *Draw.Canvas, layout: Layout, ga
         cross, tick := drum_buttons(layout, fonts, drum, k)
         if shows > 0 then draw_tick_and_cross(canvas, layout, layout.seats[k].angle, cross, tick, V2⟨0.1, 0.14⟩ * f32'fonts.output.cap_height, shows)
     }
-    draw_elements(canvas, layer, layout, game, screen, elements, volleys)
-    motes.draw(canvas)
+    draw_elements(canvas, layer, layout, game, volleys)
     draw_bolt_losses(canvas, layout, fonts, volleys)
 }
 
-draw_table :: (canvas: *Draw.Canvas, layer: *Draw.Canvas, layout: Layout, game: Game, fonts: Fonts, screen: Screen_State, motes: Particles.System,
-         elements: Elements, volleys: Volleys = ⟨⟩, with_pill := true) {
+draw_table :: (canvas: *Draw.Canvas, layer: *Draw.Canvas, layout: Layout, game: Game, fonts: Fonts, screen: Screen_State,
+         volleys: Volleys = ⟨⟩, with_pill := true) {
     cell := cell_of(layout)
     targeted := first_aimed(layout, game, screen)
     // (the surfaces kept, a part's drawn again a frame, covering the whole
@@ -2568,12 +2687,12 @@ draw_table :: (canvas: *Draw.Canvas, layer: *Draw.Canvas, layout: Layout, game: 
     }
     visible := Math.min(screen.count_ui_visible, count_player_visibility(Math.max(screen.counts_shown, screen.settings_shown)))
     if visible >= 1 {
-        draw_player_ui(canvas, layer, layout, game, fonts, screen, motes, elements, volleys, targeted)
+        draw_player_ui(canvas, layer, layout, game, fonts, screen, volleys, targeted)
     }
     else if visible > 0 and prepare_player_ui(canvas.size) {
         // Blend a complete UI frame over the identical bare surfaces; clear is opaque.
         player_ui_canvas.draw_canvas(canvas, ⟨0, 0⟩)
-        draw_player_ui(player_ui_canvas, layer, layout, game, fonts, screen, motes, elements, volleys, targeted)
+        draw_player_ui(player_ui_canvas, layer, layout, game, fonts, screen, volleys, targeted)
         fade := Player_Fade_Params⟨⟨layout.size.x, layout.size.y, visible, 0⟩⟩
         canvas.draw_shader_canvas(⟨0, 0⟩, layout.size, PLAYER_FADE.code, PLAYER_FADE.bindings.fade, fade,
                                   player_ui_canvas, PLAYER_FADE.bindings.content, PLAYER_FADE.bindings.filtering)
@@ -2604,11 +2723,39 @@ sample_game :: (players: i64 -> game: Game) {
 // portrait too), a drag from the second player's icon half way into the
 // first's part, into folder as raza_2.png and the like; and the number
 // grid, facing the second, as raza_grid.png.
+save_attack_frames :: (folder: string) [failed: string] {
+    with scratch.rewind()
+    `scratch {
+    size := Wide.i32x2⟨960, 640⟩
+    *canvas: Draw.Canvas
+    if c := Draw.create_canvas(size) { canvas = c } else if os_error { fail: failed = "no canvas: " }
+    defer canvas.destroy()
+    *layer: Draw.Canvas
+    if l := Draw.create_canvas(size) { layer = l } else if os_error { fail: failed = "no layer: " }
+    defer layer.destroy()
+    layout := lay_out(⟨960, 640⟩, equal_splits(4, ⟨960, 640⟩))
+    *fonts: Fonts
+    if fonts.reload_fonts(TEXT_FAMILY, layout) is os_error then fail: failed = "no fonts: "
+    *game := new_game(4)
+    game.identity[1] = mono(.RED)
+    game.identity[2] = mono(.BLUE) | mono(.GREEN)
+    *volleys: Volleys
+    *pending: [MAX_PLAYERS] [MAX_PLAYERS] i32
+    strike(game, volleys, layout, pending, 1, 0, 12)
+    for frame: 0 < 72 {
+        if frame == 12 then strike(game, volleys, layout, pending, 2, 0, 5, false)
+        draw(canvas, layer, layout, shown_game(game, pending, volleys), fonts, ⟨surface_time: 2⟩, volleys)
+        path := `scratch "«folder»/frame_«frame».png"
+        if canvas.save_png(path) is os_error then fail: failed = "can't write frame: "
+        steer_volleys(volleys, pending, 1.0 / 24)
+    }
+    }
+}
+
 save_snapshots :: (folder: string) [failed: string] {
     sizes := [6] Wide.i32x2⟨⟨1440, 2160⟩, ⟨2160, 1440⟩, ⟨2160, 1440⟩, ⟨2160, 1440⟩, ⟨2160, 1440⟩, ⟨2160, 1440⟩⟩
     counts := [6] i64⟨2, 2, 3, 4, 5, 6⟩
     names := [6] string⟨"raza_2_portrait", "raza_2", "raza_3", "raza_4", "raza_5", "raza_6"⟩
-    elements := settled_elements()
     for size, i: sizes {
         *canvas: Draw.Canvas
         if c := Draw.create_canvas(size) { canvas = c } else if os_error { fail: failed = "no canvas: «os_error»" }
@@ -2627,48 +2774,47 @@ save_snapshots :: (folder: string) [failed: string] {
         entry := entry_point(layout.seats[1].icon, target.middle, target.outline[:target.count])
         inner := Math.dot(entry - layout.centre, target.toward)
         finger := entry + target.toward * (target.reach - inner) * 0.5
-        // (the second's stream to the finger)
-        still, _ := settled_motes(layout, game)
+        // (the second's arrow to the finger)
         *dragged: Screen_State = ⟨can_undo: true, fps: 60⟩
         dragged.drags[1] = ⟨active: true, from: 1, finger: finger⟩
-        draw(canvas, layer, layout, game, fonts, dragged, still, elements)
+        draw(canvas, layer, layout, game, fonts, dragged)
         path := `scratch "«folder»/«names[i]».png"
         if canvas.save_png(path) is os_error then fail: failed = "can't write «path»: «os_error»"
         if counts[i] == 5 {
             // (the number grid of a slanted seat's player, as raza_grid_5.png)
             *slanted: Screen_State = ⟨can_undo: true⟩
             slanted.pickers[1] = ⟨open: true, from: 1, to: 0⟩
-            draw(canvas, layer, layout, game, fonts, slanted, still, elements)
+            draw(canvas, layer, layout, game, fonts, slanted)
             slanted_path := `scratch "«folder»/raza_grid_5.png"
             if canvas.save_png(slanted_path) is os_error then fail: failed = "can't write «slanted_path»: «os_error»"
         }
         if counts[i] == 4 {
             // A volley of 12 from the second to the first, in flight, then landing.
             for age, a: [2] f32⟨0.35, 0.72⟩ {
-                flying, volleys := settled_motes(layout, game, 1, finger, 0, 12, age)
+                volleys := settled_volleys(layout, game, 1, 0, 12, age)
                 *pending: [MAX_PLAYERS] [MAX_PLAYERS] i32
                 for v: volleys.list { pending[v.to][v.from] += v.amount - v.landed }
                 *dealt := game
                 dealt.deal(1, 0, 12)
-                draw(canvas, layer, layout, shown_game(dealt, pending, volleys), fonts, ⟨can_undo: true⟩, flying, elements, volleys)
+                draw(canvas, layer, layout, shown_game(dealt, pending, volleys), fonts, ⟨can_undo: true⟩, volleys)
                 volley_path := `scratch "«folder»/raza_volley_«a».png"
                 if canvas.save_png(volley_path) is os_error then fail: failed = "can't write «volley_path»: «os_error»"
             }
-            // Black's strike of 12 from the third (white, black and green) to
-            // the first: its strands plunging, pulsing, then snapping.
+            // A volley of 12 from the third (white, black and green: its dots
+            // in those three colours) to the first, in flight, then landing.
             for age, a: [3] f32⟨0.36, 0.62, 0.92⟩ {
-                striking, volleys := settled_motes(layout, game, 2, layout.seats[0].middle, 0, 12, age)
+                volleys := settled_volleys(layout, game, 2, 0, 12, age)
                 *pending: [MAX_PLAYERS] [MAX_PLAYERS] i32
                 for v: volleys.list { pending[v.to][v.from] += v.amount - v.landed }
                 *dealt := game
                 dealt.deal(2, 0, 12)
-                draw(canvas, layer, layout, shown_game(dealt, pending, volleys), fonts, ⟨can_undo: true⟩, striking, elements, volleys)
+                draw(canvas, layer, layout, shown_game(dealt, pending, volleys), fonts, ⟨can_undo: true⟩, volleys)
                 black_path := `scratch "«folder»/raza_black_«a».png"
                 if canvas.save_png(black_path) is os_error then fail: failed = "can't write «black_path»: «os_error»"
             }
             *gridded: Screen_State = ⟨can_undo: true⟩
             gridded.pickers[1] = ⟨open: true, from: 1, to: 0⟩
-            draw(canvas, layer, layout, game, fonts, gridded, still, elements)
+            draw(canvas, layer, layout, game, fonts, gridded)
             grid_path := `scratch "«folder»/raza_grid.png"
             if canvas.save_png(grid_path) is os_error then fail: failed = "can't write «grid_path»: «os_error»"
             // The column dragged past five: the lines half way through
@@ -2678,8 +2824,7 @@ save_snapshots :: (folder: string) [failed: string] {
             moving := lay_out(screen_size, shown_splits(picking, none[:], screen_size))
             preview := game_for(game, moving.count, none[:], screen_size)
             if fonts.resize_life(TEXT_FAMILY, moving) is os_error then fail: failed = "no font: «os_error»"
-            moving_motes, _ := settled_motes(moving, preview)
-            draw(canvas, layer, moving, preview, fonts, ⟨counts: picking, counts_shown: 1, previewing: true, can_undo: true⟩, moving_motes, elements)
+            draw(canvas, layer, moving, preview, fonts, ⟨counts: picking, counts_shown: 1, previewing: true, can_undo: true⟩)
             counts_path := `scratch "«folder»/raza_counts.png"
             if canvas.save_png(counts_path) is os_error then fail: failed = "can't write «counts_path»: «os_error»"
             // The colour toggles folded into the five-colour icon, and half way.
@@ -2687,7 +2832,7 @@ save_snapshots :: (folder: string) [failed: string] {
                 *folded: Toggles
                 for *s: folded.shown { s = fold }
                 for *o: folded.open { o = false }
-                draw(canvas, layer, layout, game, fonts, ⟨toggles: folded, can_undo: true⟩, still, elements)
+                draw(canvas, layer, layout, game, fonts, ⟨toggles: folded, can_undo: true⟩)
                 folded_path := `scratch "«folder»/raza_folded_«f».png"
                 if canvas.save_png(folded_path) is os_error then fail: failed = "can't write «folded_path»: «os_error»"
             }
@@ -2705,25 +2850,23 @@ save_snapshots :: (folder: string) [failed: string] {
                 // (the surfaces kept, as the program does, for the drum's glass to blur)
                 *drummed: Screen_State = ⟨can_undo: true, keep_surfaces: true⟩
                 drummed.drums[0] = drum
-                draw(canvas, layer, layout, game, fonts, drummed, still, elements)
+                draw(canvas, layer, layout, game, fonts, drummed)
                 drum_path := `scratch "«folder»/raza_drum_«d».png"
                 if canvas.save_png(drum_path) is os_error then fail: failed = "can't write «drum_path»: «os_error»"
             }
             for step, morph_index: [3] f32⟨0, 0.35, 0.7⟩ {
-                draw(canvas, layer, moving, preview, fonts, ⟨counts: picking, counts_shown: step, previewing: true, can_undo: true⟩, moving_motes, elements)
+                draw(canvas, layer, moving, preview, fonts, ⟨counts: picking, counts_shown: step, previewing: true, can_undo: true⟩)
                 morph_path := `scratch "«folder»/raza_count_morph_«morph_index».png"
                 if canvas.save_png(morph_path) is os_error then fail: failed = "can't write «morph_path»: «os_error»"
             }
             // The settings: part of the way into the pill, then in.
             for shown, s: [2] f32⟨0.4, 1⟩ {
-                draw(canvas, layer, layout, game, fonts, ⟨settings_open: true, settings_shown: shown, motion: .SLOW, can_undo: true⟩, still, elements)
+                draw(canvas, layer, layout, game, fonts, ⟨settings_open: true, settings_shown: shown, motion: .SLOW, can_undo: true⟩)
                 settings_path := `scratch "«folder»/raza_settings_«s».png"
                 if canvas.save_png(settings_path) is os_error then fail: failed = "can't write «settings_path»: «os_error»"
             }
         }
     }
-    // Each element, large, on the background, at rest and drawn out, a few seconds in.
-    if save_element_sheet(folder) is failed then fail: failed
     // The frames: six players, each colour alone and all five (gold).
     {
         *canvas: Draw.Canvas
@@ -2739,8 +2882,7 @@ save_snapshots :: (folder: string) [failed: string] {
         layout := lay_out(screen_size, equal_splits(6, screen_size))
         *fonts: Fonts
         if fonts.reload_fonts(TEXT_FAMILY, layout) is os_error then fail: failed = "no font: «os_error»"
-        settled, _ := settled_motes(layout, game)
-        draw(canvas, layer, layout, game, fonts, ⟨can_undo: true⟩, settled, elements)
+        draw(canvas, layer, layout, game, fonts, ⟨can_undo: true⟩)
         path := `scratch "«folder»/raza_frames.png"
         if canvas.save_png(path) is os_error then fail: failed = "can't write «path»: «os_error»"
         // All ten hybrid pairs, plus gold for comparison on each sheet.
@@ -2748,34 +2890,19 @@ save_snapshots :: (folder: string) [failed: string] {
         for page: 0 < 2 {
             for k: 0 < 5 { game.identity[k] = hybrids[page * 5 + k] }
             game.identity[5] = 0x1F
-            hybrid_motes, _ := settled_motes(layout, game)
-            draw(canvas, layer, layout, game, fonts, ⟨surface_time: 2⟩, hybrid_motes, elements)
+            draw(canvas, layer, layout, game, fonts, ⟨surface_time: 2⟩)
             hybrid_path := `scratch "«folder»/raza_hybrids_«page».png"
             if canvas.save_png(hybrid_path) is os_error then fail: failed = "can't write «hybrid_path»: «os_error»"
         }
         for k: 0 < 5 { game.identity[k] = u8'1 << u8'k }
-        // Fixed particles and two surface times isolate material animation.
+        // Two surface times isolate material animation.
         game.identity[5] = 0
         for moment: [2] f32⟨0, 2⟩ {
-            draw(canvas, layer, layout, game, fonts, ⟨surface_time: moment⟩, settled, elements)
+            draw(canvas, layer, layout, game, fonts, ⟨surface_time: moment⟩)
             material_path := `scratch "«folder»/raza_materials_«i32'moment».png"
             if canvas.save_png(material_path) is os_error then fail: failed = "can't write «material_path»: «os_error»"
         }
     }
-}
-
-// The element sheet (draw_element_sheet's), into folder as raza_elements.png.
-save_element_sheet :: (folder: string) [failed: string] {
-    size := Wide.i32x2⟨2400, 1300⟩
-    *canvas: Draw.Canvas
-    if c := Draw.create_canvas(size) { canvas = c } else if os_error { fail: failed = "no canvas: «os_error»" }
-    defer canvas.destroy()
-    *layer: Draw.Canvas
-    if l := Draw.create_canvas(size) { layer = l } else if os_error { fail: failed = "no layer: «os_error»" }
-    defer layer.destroy()
-    draw_element_sheet(canvas, layer, 10)
-    path := `scratch "«folder»/raza_elements.png"
-    if canvas.save_png(path) is os_error then fail: failed = "can't write «path»: «os_error»"
 }
 
 ////////////////////////////////
@@ -2850,9 +2977,7 @@ store_lines :: (lines: Lines) {
 }
 
 Options :: struct {
-    tune: bool
-    background_tuning: string = "background-tuning.json"
-    elements: string ⟦help: "draw each element, at rest and drawn out, into raza_elements.png in this folder, and quit"⟧
+    attack_frames: string ⟦help: "render a three-second attack sequence as PNG frames, without opening a window"⟧
     snapshot: string ⟦help: "draw each count of players into PNGs in this folder (raza_2.png to raza_6.png, and raza_grid.png), and quit"⟧
     quit_after: f64 = 0 ⟦help: "quit after this many seconds, as if Quit were pressed (to profile it: rain -profile raza.rain -quit_after:15)"⟧
     busy: bool ⟦help: "a busy table, to measure: a strike between two players every half second and two players dragging, nothing stored (with -quit_after)"⟧
@@ -2860,6 +2985,7 @@ Options :: struct {
 
 // Display the original operation on undo (crossed out), the applied delta on redo.
 show_history_changes :: (screen: *Screen_State, before: Game, after: Game, undone: bool) {
+    // (the change each drum shows gives way to the step's)
     for *drum: screen.drums { drum = ⟨⟩ }
     screen.history_changes = ⟨⟩
     for k: 0 < Math.min(before.players, after.players) {
@@ -2886,7 +3012,6 @@ main :: (args: [] string) [failed: string] {
     else if bad_arguments {
         fail: failed = bad_arguments
     }
-    tuning_loaded := load_gold_tuning(options.background_tuning)
     // (the textures decoding, a thread each, while the window and the
     // device are made; made images once they are, take_textures')
     *decoders: [Texture] Thread
@@ -2895,9 +3020,9 @@ main :: (args: [] string) [failed: string] {
     defer control_image.destroy()
     defer under_table_image.destroy()
     defer five_colours_image.destroy()
-    if options.elements != "" {
+    if options.attack_frames != "" {
         if take_textures(decoders) is failed then fail: failed
-        if save_element_sheet(options.elements) is failed then fail: failed
+        if save_attack_frames(options.attack_frames) is failed then fail: failed
         return
     }
     if options.snapshot != "" {
@@ -2912,15 +3037,9 @@ main :: (args: [] string) [failed: string] {
         fail: failed = "can't open a window: «os_error»"
     }
     w.set_fullscreen(true)
-    *tuner: Gold_Tuner
-    tuner.saved = tuning_loaded
-    defer close_gold_tuner(tuner)
-    if options.tune {
-        if open_gold_tuner(tuner, w) is failed then fail: failed
-    }
     *canvas: Draw.Canvas
     if c := Draw.create_canvas(w.size, w.handle) { canvas = c } else if os_error { fail: failed = "no canvas: «os_error»" }
-    // (the light the elements give, drawn each frame, then added with its bloom)
+    // (the light the volleys give, drawn each frame, then added with its bloom)
     *layer: Draw.Canvas
     if l := Draw.create_canvas(w.size) { layer = l } else if os_error { fail: failed = "no light layer: «os_error»" }
     if take_textures(decoders) is failed then fail: failed
@@ -2929,13 +3048,20 @@ main :: (args: [] string) [failed: string] {
     // as they were left last time (Defaults': the registry's), or a new game
     // of four and lines as equal_splits starts them. (The font and the
     // frames' era were settings once: what was kept of them goes.)
-    *game := Defaults.get("game", new_game(4))
-    if game.players < 2 or game.players > MAX_PLAYERS then game = new_game(4)
+    // (none kept, or one this build can't read: a new game of four, given
+    // Reset's colours on the first frame, once the screen's size, and so
+    // which seat's at the top, is known)
+    *game, *colours_pending := kept_game(Defaults.get("game", Game⟨players: 0⟩))
     *timeline: Timeline
     // (the lines as a line's drag began, to undo it to)
     *lines_before: Lines
     // (the fingers moving a line and the count column: Pointer's ids)
     *line_pointer: u32 = 0
+    // (two fingers on the lines: the second's, the lines as they were when it
+    // touched, and the angle about the centre the fingers' middle had then)
+    *turn_pointer: u32 = 0
+    *turn_from: Splits
+    *turn_angle: f32 = 0
     *counts_pointer: u32 = 0
     // (Reset touched: done once the table's closed)
     *reset_pending := false
@@ -2961,13 +3087,11 @@ main :: (args: [] string) [failed: string] {
     // (the game carried on from the last run: its colours set, so each
     // player's toggles start folded, the five-colour icon to open them)
     fold_toggles(screen.toggles)
-    // The motes (miasmas, a drag's stream, volleys), and the damage dealt
-    // whose volleys haven't landed yet (pending[to][from]: shown undone).
-    *motes: Particles.System
-    *random := Random.generator()
+    // The volleys, and the damage dealt whose volleys haven't landed yet
+    // (pending[to][from]: shown undone); and -busy's strikes' numbers.
     *pending: [MAX_PLAYERS] [MAX_PLAYERS] i32
     *volleys: Volleys
-    *elements: Elements
+    *random := Random.generator()
 
     // (for -quit_after's report: each frame's work, from its start to its
     // present, its waits for input left out)
@@ -3007,12 +3131,11 @@ main :: (args: [] string) [failed: string] {
             woke = last_frame
             continue
         }
-        if w.keys[.F8].PRESSED {
-            if tuner.open then tuner.open = false
-            else if open_gold_tuner(tuner, w) is failed then fail: failed
-        }
-        tuning_input := step_gold_tuner(tuner, w, options.background_tuning)
         size := V2⟨f32'w.size[0], f32'w.size[1]⟩
+        if colours_pending {
+            game.identity = starting_colours(size, game.players)
+            colours_pending = false
+        }
         if canvas.size != w.size {
             if canvas.resize(w.size) is os_error then fail: failed = "can't resize the canvas"
             if layer.resize(w.size) is os_error then fail: failed = "can't resize the light layer"
@@ -3049,20 +3172,21 @@ main :: (args: [] string) [failed: string] {
         if w.keys[.F11].PRESSED then w.set_fullscreen(!w.is_fullscreen)
         if w.keys[.F12].PRESSED then screen.show_fps = !screen.show_fps
         if w.keys[.ESCAPE].PRESSED {
-            if tuner.open then tuner.open = false
-            else if any_grid_open(screen) { for *grid: screen.pickers { grid.open = false } }
+            if any_grid_open(screen) { for *grid: screen.pickers { grid.open = false } }
             else if screen.settings_open then screen.settings_open = false
-            else if screen.counts.open then screen.counts.open = false
+            else if screen.counts.open {
+                // (the count column let go of, the count as it was)
+                screen.counts.held = false
+                screen.counts.open = false
+                screen.counts.settling = true
+            }
             else if w.is_fullscreen then w.set_fullscreen(false)
         }
         // (Control+Z undoes; Control+Y, or Control+Shift+Z, redoes)
         if w.modifiers.CONTROL and (w.keys[.Z].PRESSED or w.keys[.Y].PRESSED) {
             again := w.keys[.Y].PRESSED or w.modifiers.SHIFT
-            before := game
-            moved := if again then timeline.redo(game, splits) else timeline.undo(game, splits)
-            if moved {
-                show_history_changes(screen, before, game, !again)
-                call_off_volleys(motes, volleys, pending)
+            if step_history(screen, timeline, game, splits, again) {
+                call_off_volleys(volleys, pending)
                 store_lines(splits)
             }
         }
@@ -3076,7 +3200,7 @@ main :: (args: [] string) [failed: string] {
         *quitting := false
         *locked := false
         for p: pointers {
-            if tuning_input or !p.pressed or screen.counts.open then continue
+            if !p.pressed or screen.counts.open then continue
             pressed_at := p.at
             if screen.settings_open {
                 setting := settings_part_at(layout, pressed_at)
@@ -3108,8 +3232,7 @@ main :: (args: [] string) [failed: string] {
                     value := picker.tens + picker.units
                     if value > 0 {
                         timeline.remember(game, splits)
-                        target := layout.seats[picker.to].middle
-                        strike(game, motes, volleys, random, layout, pending, picker.from, picker.to, value, target, picker.combat)
+                        strike(game, volleys, layout, pending, picker.from, picker.to, value, picker.combat)
                     }
                     picker.open = false
                     gridded = true
@@ -3130,12 +3253,7 @@ main :: (args: [] string) [failed: string] {
                 case accept:
                     // (the tick: the life as turned, a spin stopped where it
                     // is, the drum closed)
-                    stopped, changes := stop_drum(drum, game)
-                    if changes {
-                        timeline.remember(game, splits)
-                        game.life[k] = stopped
-                    }
-                    close_drum(drum, game)
+                    commit_drum(drum, game, timeline, splits)
                     wheeled = true
                 case cancel:
                     // (the cross: the life as the drum opened, the drum closed)
@@ -3158,22 +3276,13 @@ main :: (args: [] string) [failed: string] {
             if wheeled then continue
             if part := capsule_part_at(layout, pressed_at) is not absent {
                 if part is {
-                case .UNDO:
-                    before := game
-                    if timeline.undo(game, splits) {
-                        show_history_changes(screen, before, game, true)
-                        call_off_volleys(motes, volleys, pending)
-                        store_lines(splits)
-                    }
-                case .REDO:
-                    before := game
-                    if timeline.redo(game, splits) {
-                        show_history_changes(screen, before, game, false)
-                        call_off_volleys(motes, volleys, pending)
+                case .UNDO, .REDO:
+                    if step_history(screen, timeline, game, splits, part == .REDO) {
+                        call_off_volleys(volleys, pending)
                         store_lines(splits)
                     }
                 case .PLAYERS:
-                    end_gestures(screen, game)
+                    end_gestures(screen, game, timeline, splits)
                     locked = true
                     count := f32'game.players
                     screen.counts = ⟨open: true, held: true, grabbed: pressed_at.y, from: count, shown: count, laid: screen.counts.laid,
@@ -3185,27 +3294,27 @@ main :: (args: [] string) [failed: string] {
                     // too), no damage (undo brings the old one back).
                     timeline.remember(game, splits)
                     game = new_game(game.players, game.identity)
-                    call_off_volleys(motes, volleys, pending)
+                    call_off_volleys(volleys, pending)
                 case .SYSTEM:
-                    end_gestures(screen, game)
+                    end_gestures(screen, game, timeline, splits)
                     locked = true
                     screen.settings_open = true
                 }
                 continue
             }
-            // (a touch elsewhere in the part of a player whose grid or drum
-            // is open closes it, and does nothing else)
+            // (a touch elsewhere in the part of a player whose drum is open
+            // closes it, and does nothing else; a number grid ends only by
+            // its cross or tick)
             if mine := seat_at(layout, pressed_at) is not absent {
-                if screen.pickers[mine].open or screen.drums[mine].open {
-                    screen.pickers[mine].open = false
-                    stopped, changes := stop_drum(screen.drums[mine], game)
-                    if changes {
-                        timeline.remember(game, splits)
-                        game.life[mine] = stopped
-                    }
-                    close_drum(screen.drums[mine], game)
+                if screen.drums[mine].open {
+                    commit_drum(screen.drums[mine], game, timeline, splits)
                     continue
                 }
+            }
+            if tax_player := tax_button_at(layout, fonts, game, screen, pressed_at) is not absent {
+                before := game
+                if raise_commander_tax(game, screen.tax_ready_at[tax_player], tax_player, frame_start) then timeline.remember(before, splits)
+                continue
             }
             if seat, colour := toggle_at(layout, screen.toggles, pressed_at) is not absent {
                 // (one set: its pentagon folds TOGGLE_LINGER seconds from now,
@@ -3233,20 +3342,43 @@ main :: (args: [] string) [failed: string] {
                 screen.drums[who].pointer = p.id
             }
             else if line := line_at(layout, pressed_at, 0.5 * cell) is not absent {
-                // (a line at a time: another finger on one takes it over)
-                if screen.moving_end < 0 then lines_before = splits
-                screen.moving_end = line
-                screen.line_finger = pressed_at
-                line_pointer = p.id
+                if screen.moving_end >= 0 and p.id != line_pointer {
+                    // (a second finger on a line while one's dragged: every
+                    // line turns together about the centre, as the fingers'
+                    // middle goes round it)
+                    if !screen.turning {
+                        screen.turning = true
+                        turn_pointer = p.id
+                        turn_from = splits[game.players]
+                        turn_angle = angle_about(layout.centre, (screen.line_finger + pressed_at) / 2)
+                    }
+                }
+                else {
+                    lines_before = splits
+                    screen.moving_end = line
+                    screen.line_finger = pressed_at
+                    line_pointer = p.id
+                }
             }
         }
         if quitting then break
         // A dragged line follows its finger: its end goes where a line from
         // the centre through the finger meets the edge, kept between its
-        // neighbours.
+        // neighbours. With a second finger, every line turns by as much as
+        // the fingers' middle has gone round the centre since it touched (a
+        // turn that would crowd an attack button stops where it is).
         if screen.moving_end >= 0 {
             if line_held := pointer_with(pointers, line_pointer) is not absent then screen.line_finger = line_held.at
-            if aimed := share_through(layout, screen.line_finger) is not absent then splits[game.players].move_split_with_clearance(screen.moving_end, aimed, size)
+            if screen.turning {
+                if second := pointer_with(pointers, turn_pointer) is not absent {
+                    now := angle_about(layout.centre, (screen.line_finger + second.at) / 2)
+                    turned := turned_splits(turn_from, size, turn_between(turn_angle, now))
+                    if splits_fit(turned, game.players) and attack_buttons_clear(lay_out(size, turned)) then splits[game.players] = turned
+                }
+            }
+            else if aimed := share_through(layout, screen.line_finger) is not absent {
+                splits[game.players].move_split_with_clearance(screen.moving_end, aimed, size)
+            }
             layout = lay_out(size, splits[game.players])
         }
         // Each drum's wheel turns with its finger, toward its player and
@@ -3276,16 +3408,18 @@ main :: (args: [] string) [failed: string] {
                 if amount is {
                 case damage:
                     timeline.remember(game, splits)
-                    strike(game, motes, volleys, random, layout, pending, d.from, to, damage, d.finger, d.combat)
+                    strike(game, volleys, layout, pending, d.from, to, damage, d.combat)
                 case asked:
                     screen.pickers[d.from] = ⟨open: true, from: d.from, to: to, combat: d.combat⟩
                 }
             }
             d.active = false
         }
-        if screen.moving_end >= 0 and (locked or let_go(pointers, line_pointer)) {
-            // (a line moved: a step to undo, the lines as they were)
+        if screen.moving_end >= 0 and (locked or let_go(pointers, line_pointer) or (screen.turning and let_go(pointers, turn_pointer))) {
+            // (a line moved, or all turned, till a finger's lifted: a step to
+            // undo, the lines as they were)
             screen.moving_end = -1
+            screen.turning = false
             if splits[game.players] != lines_before[game.players] then timeline.remember(game, lines_before)
             if Defaults.set(`scratch "splits.«game.players»", splits[game.players]) is os_error { }
         }
@@ -3298,7 +3432,7 @@ main :: (args: [] string) [failed: string] {
             if count != game.players {
                 timeline.remember(game, splits)
                 game = game_for(game, count, splits[:], size)
-                call_off_volleys(motes, volleys, pending)
+                call_off_volleys(volleys, pending)
             }
             screen.counts.open = false
             screen.counts.settling = true
@@ -3342,8 +3476,7 @@ main :: (args: [] string) [failed: string] {
             if layout.count != game.players then shown = game_for(game, layout.count, splits[:], size)
         }
 
-        // The elements and their motes moved on: each stirred or settling,
-        // a drag's stream fed, the volleys' landings; and the game shown with
+        // The volleys moved on, their points landing; and the game shown with
         // what's still in flight not yet done.
         // (-busy: a strike between two players every half second, a new game
         // when a life runs low, so no one's out)
@@ -3353,19 +3486,16 @@ main :: (args: [] string) [failed: string] {
                 busy_clock -= 0.5
                 striker := random.below(layout.count)
                 struck := (striker + 1 + random.below(layout.count - 1)) % layout.count
-                strike(game, motes, volleys, random, layout, pending, striker, struck, i32'random.through(1, 9), layout.seats[struck].middle, random.chance(0.5))
+                strike(game, volleys, layout, pending, striker, struck, i32'random.through(1, 9), random.chance(0.5))
                 *low := false
                 for life: game.life[:game.players] { if life < 12 then low = true }
                 if low {
-                    call_off_volleys(motes, volleys, pending)
+                    call_off_volleys(volleys, pending)
                     game = new_game(game.players, game.identity)
                 }
             }
         }
-        stir_elements(elements, layout, game, screen, volleys, seconds)
-        motes.flow_scale = MOTE_FLOW * cell
-        motes.update(seconds)
-        steer_volleys(motes, volleys, random, layout, game, pending, seconds)
+        steer_volleys(volleys, pending, seconds)
         if !screen.previewing then shown = shown_game(game, pending, volleys)
 
         // What changed this frame, stored (a failure to store isn't the game's).
@@ -3383,8 +3513,9 @@ main :: (args: [] string) [failed: string] {
         // made again only when the size changes.
         if fonts.resize_life(TEXT_FAMILY, layout) is os_error then fail: failed = "no font: «os_error»"
 
-        screen.can_undo = timeline.past.count > 0
-        screen.can_redo = timeline.future.count > 0
+        // (greyed while something's under way, as they wait till it's done)
+        screen.can_undo = timeline.past.count > 0 and !under_way(screen)
+        screen.can_redo = timeline.future.count > 0 and !under_way(screen)
         // (the settings coming into the pill, or going)
         opening: f32 = if screen.settings_open then 1 else -1
         screen.settings_shown = Math.clamp(screen.settings_shown + opening * seconds / SETTINGS_TIME, 0, 1)
@@ -3406,7 +3537,7 @@ main :: (args: [] string) [failed: string] {
             layout = lay_out(size, splits[game.players])
             reset_colours := starting_colours(size, game.players)
             game = new_game(game.players, reset_colours)
-            call_off_volleys(motes, volleys, pending)
+            call_off_volleys(volleys, pending)
             screen.drums = ⟨⟩
             screen.history_changes = ⟨⟩
             speed = Motion.SLOW
@@ -3438,8 +3569,7 @@ main :: (args: [] string) [failed: string] {
         surface_time += seconds * MOTION_RATES[speed]
         screen.motion = speed
         screen.surface_time = surface_time
-        draw(canvas, layer, layout, shown, fonts, screen, motes, elements, volleys)
-        draw_gold_tuner(canvas, tuner)
+        draw(canvas, layer, layout, shown, fonts, screen, volleys)
         canvas.present(w.handle, vsync: true)
         worked := Time.seconds_since_start() - frame_start
         if busy_frames == 0 {
@@ -3455,8 +3585,8 @@ main :: (args: [] string) [failed: string] {
         scratch.reset()
         still := !dragging(screen) and screen.moving_end < 0 and !screen.counts.held and !screen.counts.settling and !screen.previewing
         // (still, it waits for input, but only for what's left of the frame
-        // after its work: the miasmas always swirl, at IDLE_FPS, and anything
-        // touched is answered at once)
+        // after its work: it's drawn at IDLE_FPS even so, as the surfaces
+        // move, and anything touched is answered at once)
         if still {
             // (the frame's whole time, its windows' messages too, from the
             // last wait's end)

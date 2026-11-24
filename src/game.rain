@@ -93,6 +93,7 @@ reseated :: (game: Game, order: Seating, players: i64 -> moved: Game) #pure {
     moved = ⟨players: players⟩
     for k: 0 < MAX_PLAYERS {
         moved.life[k] = game.life[order[k]]
+        moved.tax[k] = game.tax[order[k]]
         moved.identity[k] = game.identity[order[k]]
         for j: 0 < MAX_PLAYERS { moved.commander[k][j] = game.commander[order[k]][order[j]] }
     }
@@ -104,6 +105,7 @@ reseated :: (game: Game, order: Seating, players: i64 -> moved: Game) #pure {
 forget_the_absent :: (game: *Game, colours: [MAX_PLAYERS] Identity) {
     for k: game.players < MAX_PLAYERS {
         game.life[k] = STARTING_LIFE
+        game.tax[k] = 0
         game.identity[k] = colours[k]
         for j: 0 < MAX_PLAYERS {
             game.commander[k][j] = 0
@@ -148,6 +150,7 @@ starting_colours ::(size: V2, players: i64 -> identity: [MAX_PLAYERS] Identity) 
 Game :: struct {
     players:   i64 = 4
     life:      [MAX_PLAYERS] i32
+    tax:       [MAX_PLAYERS] i32
     // commander[to][from]: what from's commander has done to to.
     commander: [MAX_PLAYERS] [MAX_PLAYERS] i32
     // Each player's commander's colours, as they've set them.
@@ -160,6 +163,15 @@ Game :: struct {
 new_game :: (players: i64, identity: [MAX_PLAYERS] Identity = ⟨⟩ -> game: Game) #pure {
     game = ⟨players: Math.clamp(players, 2, MAX_PLAYERS), identity: identity⟩
     for *l: game.life { l = STARTING_LIFE }
+}
+
+// The game kept from the last run (Defaults', got with no players as its
+// default), or a new game of four whose colours are still to be given
+// (fresh): none was kept, or a build whose Game was another size kept it,
+// which Defaults can't give back, so it gives the default.
+kept_game :: (kept: Game -> game: Game, fresh: bool) #pure {
+    fresh = kept.players < 2 or kept.players > MAX_PLAYERS
+    game = if fresh then new_game(4) else kept
 }
 
 // Whether a player has lost: no life left, or a commander's lethal damage.
@@ -187,9 +199,19 @@ deal_spell :: (game: *Game, from: i64, to: i64, amount: i32) {
 }
 
 // Progress from the region entry to the life total along the source-to-life
-// line: nine equal bands, then a number to pick (asked).
+// line: equal slots, each amount 1 to 9 taking DRAG_SLOTS of them (the small
+// amounts, the commonest, wider to hit: 1 three, 2 two, the rest one), then a
+// number to pick (asked).
 QUESTION_FROM :: 1.0
 MOST_BY_DRAG :: 9
+DRAG_SLOTS :: [MOST_BY_DRAG] i32⟨3, 2, 1, 1, 1, 1, 1, 1, 1⟩
+DRAG_SLOT_COUNT :: slot_total(DRAG_SLOTS)
+
+slot_total :: (slots: [MOST_BY_DRAG] i32 -> i32) #pure {
+    *total: i32 = 0
+    for s: slots { total += s }
+    return total
+}
 
 Drag_Amount :: union {
     damage: i32
@@ -198,6 +220,11 @@ Drag_Amount :: union {
 
 amount_for :: (share: f32 -> Drag_Amount) #pure {
     if share > QUESTION_FROM then return Drag_Amount.asked
-    steps := i32'Math.floor(Math.max(share, 0) / QUESTION_FROM * f32'MOST_BY_DRAG)
-    return Drag_Amount.damage(Math.clamp(steps + 1, 1, MOST_BY_DRAG))
+    slot := i32'Math.floor(Math.max(share, 0) / QUESTION_FROM * f32'DRAG_SLOT_COUNT)
+    *passed: i32 = 0
+    for slots, i: DRAG_SLOTS {
+        passed += slots
+        if slot < passed then return Drag_Amount.damage(i32'i + 1)
+    }
+    return Drag_Amount.damage(MOST_BY_DRAG)
 }

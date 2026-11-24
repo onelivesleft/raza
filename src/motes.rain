@@ -1,153 +1,7 @@
-// Damage as motes, and the volleys that carry it: a drag's stream's motes,
-// and each volley, gathering at its player's spot, thrown along the
-// stream's path to whoever it hit, and landing there, the life shown
-// counting down as it lands. Each colour's motes are its own: white's holy
-// light, blue's water, black's oily smoke, red's sparks, green's leaves on
-// the wind, an artifact's sparks.
-
-// A colour's motes: their colour over their life, how much light they add,
-// how they flicker, their size over their life and how long they live, how
-// they rise (toward the centre, from their player's side: negative falls
-// toward the player) and how the wind blows them (to their player's
-// right), how the flow field swirls them, how their speed dies, how fast
-// they start; how they're long (streaked along their motion, or ovals
-// turning); and a second colour some of them are, at a share of the size.
-Mote_Style :: struct {
-    colour:       Draw.RGBA
-    colour_end:   Draw.RGBA
-    add:          f32 = 0
-    flicker:      f32 = 0
-    size:         f32               // cells
-    size_end:     f32
-    life:         f32               // seconds
-    rise:         f32 = 0           // cells a second, a second
-    wind:         f32 = 0
-    swirl:        f32 = 0           // cells a second
-    drag:         f32 = 1
-    spread:       f32 = 0.3         // cells a second
-    streak:       f32 = 0           // seconds of motion
-    elongation:   f32 = 1
-    spin:         f32 = 0
-    glint:        Draw.RGBA
-    glint_chance: f32 = 0
-    glint_size:   f32 = 1
-    glint_add:    f32 = 1
-    shape:        Draw.Glow_Shape = .ROUND
-    glint_shape:  Draw.Glow_Shape = .ROUND
-}
-
-// Each element's (each colour's, WUBRG, then an artifact's).
-STYLES :: [Element] Mote_Style⟨
-    // White: holy light, warm gold flecks and white-hot sparkles.
-    ⟨colour: Draw.rgba(0xFFE9B0, 0.8), colour_end: Draw.rgba(0xFFD27A, 0.55), add: 1, flicker: 0.15, size: 0.035, size_end: 0.035,
-     life: 1.8, rise: 0.45, swirl: 0.35, drag: 1.4, spread: 0.3, glint: Draw.rgb(0xFFFFF4), glint_chance: 0.4, glint_size: 1.5,
-     glint_shape: .SPARK⟩,
-    // Blue: water, drops falling, streaked as they fall, eddying, some catching
-    // the light.
-    ⟨colour: Draw.rgba(0xA8E0FF, 0.9), colour_end: Draw.rgba(0x3B8ED6, 0.85), add: 0.3, flicker: 0.05, size: 0.045, size_end: 0.03,
-     life: 1.3, rise: -1.6, swirl: 1.4, drag: 0.9, spread: 0.7, streak: 0.03, glint: Draw.rgba(0xF2FBFF, 0.95), glint_chance: 0.3, glint_size: 0.6, glint_add: 0.8, shape: .DROP, glint_shape: .DROP⟩,
-    // Black: oily smoke, thick and dark, curling into tendrils (each wisp
-    // drawn long along its curl), a sheen of oil's colours now and then.
-    ⟨colour: Draw.rgba(0x0A090C, 0.8), colour_end: Draw.rgba(0x000000, 0.55), size: 0.10, size_end: 0.26,
-     life: 2.4, rise: 0.15, swirl: 2.6, drag: 0.7, spread: 0.35, streak: 0.35, glint: Draw.rgba(0x2E4A5A, 0.7), glint_chance: 0.2, glint_size: 0.7, glint_add: 0.5, shape: .WISP⟩,
-    // Red: sparks, small and white-hot, flying up (away from its player),
-    // streaking, wavering on the heat, gone quickly.
-    ⟨colour: Draw.rgb(0xFFF2C0), colour_end: Draw.rgb(0xFF6A20), add: 1, flicker: 0.4, size: 0.035, size_end: 0.015,
-     life: 0.8, rise: 1.8, swirl: 0.6, drag: 0.9, spread: 0.9, streak: 0.04, glint: Draw.rgb(0xFFFFFF), glint_chance: 0.25,
-     shape: .SPARK, glint_shape: .SPARK⟩,
-    // Green: leaves blown on the wind, tumbling, now and then an autumn one.
-    ⟨colour: Draw.rgba(0x8CCB5E, 0.95), colour_end: Draw.rgba(0x4E8A34, 0.9), add: 0.1, size: 0.038, size_end: 0.032,
-     life: 2.2, rise: -0.2, wind: 1.4, swirl: 1.0, drag: 1.2, spread: 0.5, elongation: 2.4, spin: 4,
-     glint: Draw.rgba(0xC9B44A, 0.95), glint_chance: 0.2, glint_add: 0.1, shape: .LEAF, glint_shape: .LEAF⟩,
-    // Artifact: metal sparks, flung out and falling.
-    ⟨colour: Draw.rgb(0xE8EEF2), colour_end: Draw.rgb(0x7A848C), add: 0.9, flicker: 0.3, size: 0.05, size_end: 0.02,
-     life: 0.6, rise: -0.8, swirl: 0.2, drag: 2.0, spread: 1.6, streak: 0.03, glint: Draw.rgb(0xFFD99A), glint_chance: 0.2, shape: .SPARK, glint_shape: .SPARK⟩
-⟩
-
-// A mote's tag: what it is (the stream's, a landing's).
-STREAM_MOTE  :: u32'2 << 16
-SPLASH_MOTE  :: u32'8 << 16
-
-// Every mote's size, against its style's.
-MOTE_SCALE :: 1.0
-
-// A mote of a player's, of one of their elements (chosen at random), at a
-// place, moving, in their frame (up: away from them, toward the centre).
-mote_of :: (random: *Random.Generator, identity: Identity, at: V2, velocity: V2, up: V2, cell: f32, tag: u32 -> Particles.Mote) {
-    *list: [6] Element
-    n := elements_of(identity, list)
-    return mote_of_style(random, list[random.below(n)], at, velocity, up, cell, tag)
-}
-
-// A mote of an element's style, as mote_of.
-mote_of_style :: (random: *Random.Generator, which: Element, at: V2, velocity: V2, up: V2, cell: f32, tag: u32 -> Particles.Mote) {
-    style := STYLES[which]
-    glinting := random.chance(f64'style.glint_chance)
-    colour := if glinting then style.glint else style.colour
-    colour_end := if glinting then style.glint else style.colour_end
-    add := if glinting then style.glint_add else style.add
-    size: f32 = if glinting then style.glint_size else 1
-    shape := if glinting then style.glint_shape else style.shape
-    // (a random direction and speed up to its spread, and a life within a
-    // third either way of its own; the wind to its player's right)
-    angle := f32'random.below(0.0, Math.TAU)
-    speed := f32'random.below(0.0, 1.0) * style.spread * cell
-    life := style.life * f32'random.below(0.7, 1.3)
-    right := V2⟨0 - up.y, up.x⟩
-    return ⟨at: at, velocity: velocity + V2⟨Math.cos(angle), Math.sin(angle)⟩ * speed, life: life,
-            size: style.size * size * MOTE_SCALE * cell, size_end: style.size_end * size * MOTE_SCALE * cell, colour: colour, colour_end: colour_end,
-            add: add, flicker: style.flicker, gravity: (up * style.rise + right * style.wind) * cell, drag: style.drag,
-            swirl: style.swirl * cell, streak: style.streak, elongation: style.elongation, spin: style.spin,
-            tag: tag, seed: f32'random.below(0.0, 100.0), shape: shape⟩
-}
-
-// How many are born in a frame at a rate a second: the whole number, and
-// the rest by chance.
-births :: (random: *Random.Generator, rate: f32, seconds: f32 -> i64) {
-    expected := rate * seconds
-    whole := i64'Math.floor(expected)
-    if random.chance(f64'(expected - f32'whole)) then return whole + 1
-    return whole
-}
-
-// The stream's path, as a drag's finger aims it: from the dragger's spot
-// to the life total of whoever it's over (to the finger, over no one),
-// bent toward the finger (a curve through start and end, pulled toward bend).
-STREAM_BEND :: 0.6               // how far the bend goes toward the finger from the middle
-
-stream_path :: (layout: Layout, game: Game, from: i64, finger: V2 -> start: V2, bend: V2, end: V2) {
-    start = layout.seats[from].icon
-    *ends := finger
-    if to, _ := aim(layout, game, from, finger) is not missed then ends = layout.seats[to].middle
-    end = ends
-    middle := (start + ends) / 2
-    bend = middle + (finger - middle) * STREAM_BEND
-}
-
-// The stream's motes for a frame of a drag: each of the dragger's elements
-// shedding its own along its braid of the curve, thrown on along it.
-STREAM_RATE :: 8
-feed_stream :: (motes: *Particles.System, random: *Random.Generator, layout: Layout, game: Game, from: i64, finger: V2, seconds: f32) {
-    cell := cell_of(layout)
-    seat := layout.seats[from]
-    if Math.length(finger - seat.icon) < 0.5 * cell then return
-    start, bend, end := stream_path(layout, game, from, finger)
-    *list: [6] Element
-    n := elements_of(game.identity[from], list)
-    for which, i: list[:n] {
-        braid := braided(start, bend, end, i, n, cell)
-        for _: 0 < births(random, STREAM_RATE / f32'n, seconds) {
-            t := f32'random.below(0.1, 1.0)
-            at := curve_at(start, braid, end, t)
-            ahead := curve_at(start, braid, end, Math.min(t + 0.02, 1)) - curve_at(start, braid, end, Math.max(t - 0.02, 0))
-            *way := V2⟨0, 0⟩
-            if Math.length(ahead) > 0.0001 then way = Math.normalize(ahead)
-            *m := mote_of_style(random, which, at, way * (1.5 * cell), seat.toward * -1, cell, STREAM_MOTE)
-            m.life = m.life * 0.6
-            motes.add(m)
-        }
-    }
-}
+// The volleys that carry damage: a dot a point, each flying from the
+// attacker's damage icon along a raised arc to the life total of whoever it
+// hit, one after another, the life shown counting down a point as each
+// lands and recoiling from it. (elements.rain draws them.)
 
 // The point t of the way along a curve from a to c, pulled toward b.
 curve_at :: (a: V2, b: V2, c: V2, t: f32 -> V2) #pure {
@@ -165,8 +19,7 @@ Volley :: struct {
     amount: i32
     landed: i32
     lethal: bool
-    black:  bool
-    combat: bool       // commander damage (its combat damage); else a spell's, life alone
+    combat: bool       // commander damage (its combat damage); else damage, life alone
     age:    f32
 }
 
@@ -175,34 +28,31 @@ Volleys :: struct {
     next_id: u32 = 1
 }
 
-// A volley's times (seconds): gathering at its player's spot, thrown along
-// its path, landing (its points counting off the life shown over it), and
-// its splash fading after.
+// A volley's times (seconds): gathering at its player's spot, each dot's
+// flight along its arc, and about how long its points take to come off the
+// life shown.
 VOLLEY_GATHER :: 0.14
 VOLLEY_TRAVEL :: 0.42
 VOLLEY_LAND :: 0.36
-VOLLEY_LINGER :: 0.3
-
-// Black's strike's times, after it's gathered (seconds): its tendrils
-// plunging in, pulsing, then snapping toward their glob's hit, and the pool
-// it leaves fading.
-BLACK_REACH :: 0.32
-BLACK_PULSE :: 0.3
-BLACK_SNAP :: 0.26
-BLACK_RESIDUE :: 0.35
 
 // One bolt per point; large volleys finish launching within two seconds.
 bolt_spacing :: (count: i64 -> f32) #pure {
     return Math.min(0.065, 2.0 / f32'Math.max(count - 1, 1))
 }
+// Small deterministic variations retain arrival order and reproducible replays.
+bolt_delay :: (j: i64, count: i64 -> f32) #pure {
+    return (f32'j + Math.sin(f32'j * 2.39996) * 0.22) * bolt_spacing(count)
+}
 volley_landing :: (v: Volley -> f32) #pure { return VOLLEY_GATHER + VOLLEY_TRAVEL }
-volley_land :: (v: Volley -> f32) #pure { return f32'Math.max(v.amount - 1, 0) * bolt_spacing(i64'v.amount) }
+volley_land :: (v: Volley -> f32) #pure { return bolt_delay(i64'Math.max(v.amount - 1, 0), i64'v.amount) }
 volley_after :: (v: Volley -> f32) #pure { return volley_land(v) + 1.0 }
 bolt_impact :: (v: Volley, j: i64 -> f32) #pure {
-    return volley_landing(v) + f32'j * bolt_spacing(i64'v.amount)
+    return volley_landing(v) + bolt_delay(j, i64'v.amount)
 }
 bolt_bend :: (v: Volley, j: i64, cell: f32 -> V2) #pure {
-    return v.bend + across_path(v.start, v.end) * (Math.sin(f32'j * 2.39996) * cell * 0.65)
+    phase := f32'j * 2.39996 + f32'v.id * 1.73
+    return v.bend + across_path(v.start, v.end) * (Math.sin(phase) * cell * 0.85) +
+           V2⟨0, Math.cos(phase * 1.37) * cell * 0.55⟩
 }
 bolt_direction :: (v: Volley, j: i64, cell: f32 -> V2) #pure {
     delta := v.end - bolt_bend(v, j, cell)
@@ -226,12 +76,12 @@ life_recoil :: (volleys: Volleys, player: i64, cell: f32 -> offset: V2, turn: f3
 
 // Damage dealt as a volley: combat damage (commander damage: life, and the
 // commander's count toward lethal), or a spell's (life alone). The game
-// changed at once (so undo is as before), the volley thrown along the
-// stream's path from where the finger let go (finger), the life shown
-// counting down as it lands (by pending, until it has). It's lethal when
-// this commander damage made it so.
-strike :: (game: *Game, motes: *Particles.System, volleys: *Volleys, random: *Random.Generator, layout: Layout,
-           pending: *[MAX_PLAYERS] [MAX_PLAYERS] i32, from: i64, to: i64, amount: i32, finger: V2, combat := true) {
+// changed at once (so undo is as before), the volley thrown from the
+// attacker's damage icon along an arc raised above the table to their life
+// total, the life shown counting down as it lands (by pending, until it
+// has). It's lethal when this commander damage made it so.
+strike :: (game: *Game, volleys: *Volleys, layout: Layout, pending: *[MAX_PLAYERS] [MAX_PLAYERS] i32,
+           from: i64, to: i64, amount: i32, combat := true) {
     if amount <= 0 or from == to then return
     was := game.commander[to][from]
     if combat { game.deal(from, to, amount) } else { game.deal_spell(from, to, amount) }
@@ -245,25 +95,19 @@ strike :: (game: *Game, motes: *Particles.System, volleys: *Volleys, random: *Ra
     id := volleys.next_id
     volleys.next_id = if volleys.next_id >= 0xFFFF then 1 else volleys.next_id + 1
     `global volleys.list.add(⟨id: id, from: from, to: to, start: start, bend: bend, end: end, amount: amount, lethal: lethal,
-                             black: false, combat: combat⟩)
+                             combat: combat⟩)
 }
 
 // The volleys moved on a frame: each as it lands has its points come off
-// what's pending over its landing, a point at a time, its splash of motes
-// thrown out as it begins (a lethal one's a burst); one whose splash has
-// faded is done. How many bursts there were.
-steer_volleys :: (motes: *Particles.System, volleys: *Volleys, random: *Random.Generator, layout: Layout, game: Game,
-                  pending: *[MAX_PLAYERS] [MAX_PLAYERS] i32, seconds: f32 -> bursts: i64) {
-    bursts = 0
+// what's pending over its landing, a point at a time; one whose last point
+// landed a second ago (its recoil and "-1"s over) is done.
+steer_volleys :: (volleys: *Volleys, pending: *[MAX_PLAYERS] [MAX_PLAYERS] i32, seconds: f32) {
     for *volley: volleys.list {
         landing := volley_landing(volley)
-        before := volley.age
         volley.age += Math.max(seconds, 0)
-        if before < landing and volley.age >= landing {
-            if volley.lethal then bursts += 1
-        }
         if volley.age >= landing {
-            should := Math.min(volley.amount, 1 + i32'Math.floor((volley.age - landing) / bolt_spacing(i64'volley.amount)))
+            *should := volley.landed
+            while should < volley.amount and volley.age >= bolt_impact(volley, i64'should) { should += 1 }
             newly := should - volley.landed
             if newly > 0 {
                 pending[volley.to][volley.from] = Math.max(pending[volley.to][volley.from] - newly, 0)
@@ -271,40 +115,6 @@ steer_volleys :: (motes: *Particles.System, volleys: *Volleys, random: *Random.G
             }
         }
         if volley.age >= landing + volley_after(volley) then remove volley
-    }
-}
-
-// A leaf mote made a twig: brown, long and thin, tumbling.
-twig :: (m: *Particles.Mote) {
-    m.colour = Draw.rgba(0x6E4B2A, 0.95)
-    m.colour_end = Draw.rgba(0x4A3220, 0.9)
-    m.elongation = 5
-    m.size = m.size * 0.75
-    m.size_end = m.size
-    m.add = 0
-    m.shape = .LEAF
-}
-
-// A landing's splash at a place: motes of the attacker's thrown out from
-// it; a lethal volley's a much bigger burst.
-splash :: (motes: *Particles.System, random: *Random.Generator, layout: Layout, identity: Identity, to: i64, at: V2, lethal: bool) {
-    cell := cell_of(layout)
-    count := if lethal then 48 else 12
-    reach: f32 = if lethal then 3 else 1.8
-    for _: 0 < count {
-        angle := f32'random.below(0.0, Math.TAU)
-        speed := f32'random.below(0.3, 1.0) * reach * cell
-        *s := mote_of(random, identity, at, V2⟨Math.cos(angle), Math.sin(angle)⟩ * speed, layout.seats[to].toward * -1, cell, SPLASH_MOTE)
-        s.drag = 3
-        if lethal {
-            s.life = s.life * 1.2
-            s.size = s.size * 1.8
-            s.size_end = s.size_end * 1.5
-        }
-        else {
-            s.life = s.life * 0.5
-        }
-        motes.add(s)
     }
 }
 
@@ -321,38 +131,20 @@ shown_game :: (game: Game, pending: [MAX_PLAYERS] [MAX_PLAYERS] i32, volleys: Vo
     }
 }
 
-// Every volley forgotten, its splash's motes gone, and nothing pending (an
-// undo, a new game).
-call_off_volleys :: (motes: *Particles.System, volleys: *Volleys, pending: *[MAX_PLAYERS] [MAX_PLAYERS] i32) {
-    for *m: motes.motes {
-        if m.tag & SPLASH_MOTE != 0 then remove m
-    }
+// Every volley forgotten, and nothing pending (an undo, a new game).
+call_off_volleys :: (volleys: *Volleys, pending: *[MAX_PLAYERS] [MAX_PLAYERS] i32) {
     volleys.list.clear()
     for *row: pending { for *p: row { p = 0 } }
 }
 
-// The motes and volleys as they'd be ten seconds in (for snapshots, the
-// same each time), with a volley of volley from from to to (combat damage,
-// or a spell's), let go at finger, the given seconds before the end (0:
-// none).
-SETTLE_FRAMES :: 600
-settled_motes :: (layout: Layout, game: Game, from: i64 = -1, finger: V2 = ⟨0, 0⟩, to: i64 = 0, volley: i32 = 0, volley_age: f32 = 0.3, combat := true
-                  -> motes: Particles.System, volleys: Volleys) {
-    *made: Particles.System = ⟨flow_scale: MOTE_FLOW * cell_of(layout)⟩
+// A volley of volley from from to to (combat damage, or a spell's) as it is
+// volley_age seconds after it was thrown, stepped a sixtieth of a second at
+// a time (for snapshots, the same each time).
+settled_volleys :: (layout: Layout, game: Game, from: i64, to: i64, volley: i32, volley_age: f32, combat := true -> volleys: Volleys) {
     *thrown: Volleys
-    *random := Random.generator(seed: 1)
     *pending: [MAX_PLAYERS] [MAX_PLAYERS] i32
     *dealt := game
-    thrown_at := SETTLE_FRAMES - i64'(volley_age * 60)
-    for frame: 0 < SETTLE_FRAMES {
-        seconds: f32 = 1.0 / 60
-        if frame == thrown_at and volley > 0 then strike(dealt, made, thrown, random, layout, pending, from, to, volley, finger, combat)
-        made.update(seconds)
-        steer_volleys(made, thrown, random, layout, game, pending, seconds)
-    }
-    motes = made
+    strike(dealt, thrown, layout, pending, from, to, volley, combat)
+    for _: 0 < i64'(volley_age * 60) { steer_volleys(thrown, pending, 1.0 / 60) }
     volleys = thrown
 }
-
-// The flow field's eddies, in cells.
-MOTE_FLOW :: 1.5

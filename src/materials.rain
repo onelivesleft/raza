@@ -89,16 +89,6 @@ material_at :: (atlas: Shader.Texture_2D, filtering: Shader.Sampler, tile: i32, 
     return Math.mix(Math.mix(p11, p01, weight.x), Math.mix(p10, p00, weight.x), weight.y)
 }
 
-
-// Two scales moving against each other keep the detail from looking like a
-// scrolling photograph. This is density detail, never a replacement silhouette.
-material_flow :: (atlas: Shader.Texture_2D, filtering: Shader.Sampler, q: V2, time: f32, seed: f32 -> f32) {
-    drift := V2⟨time * 0.035, 0 - time * 0.09⟩
-    a := material_at(atlas, filtering, 7, q * 0.45 + drift + V2⟨seed, 0⟩).x
-    b := material_at(atlas, filtering, 7, V2⟨q.y, 0 - q.x⟩ * 0.73 - drift * 0.6).x
-    return Math.clamp(a * 0.65 + b * 0.35, 0, 1)
-}
-
 // The atlas follows WUBRG, then colourless and gold; never infer an identity
 // from its current RGB palette, which may change.
 material_tile :: (identity: Identity -> i32) #pure {

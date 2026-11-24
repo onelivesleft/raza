@@ -2,9 +2,10 @@
 
 What the parts' surfaces, the elements and the attacks are for, so a change
 can be checked against it. The code (in `src/`) says how: `frames.rain` (the parts),
-`elements.rain` (the elements and the attacks' looks), `motes.rain` (the
-motes and the volleys' timing), and the C:\rain modules they use (Draw's
-`draw_shader`, `draw_shader_image`, `add_light` and `Text_Style`, Patterns, Particles).
+`elements.rain` (the elements' colours and how the volleys are drawn),
+`motes.rain` (the volleys' paths and timing), and the C:\rain modules they
+use (Draw's `draw_shader`, `draw_shader_image`, `fill_glow`, `add_light`
+and `Text_Style`, and Patterns).
 
 ## The parts: each player's surface
 
@@ -91,30 +92,23 @@ stays behind what's on it.
 ## The elements: each colour's damage
 
 **Goal: damage is something a player draws from their own colours and
-throws**, each colour as its own element, as combat damage or a spell's.
+throws**, each colour as its own element, as damage or commander damage.
 
 - **Two damage icons per player**, at their damage spot, side by side as
-  they see it, each white with a black outline and drop shadow, turned to face them: Mana ms-battle
-  on their left for combat damage (commander damage: it takes life and
-  counts toward the 21 from that commander), Mana ms-sorcery on their right for a
-  spell's (or an ability's, or another creature's: life alone, never
-  toward the 21, as the rules count only a commander's combat damage).
+  they see it, each white with a black outline and drop shadow, turned to face them: Mana ms-counter-damage
+  on their left for damage (a spell's, an ability's, another creature's: life
+  alone, never toward the 21), and Mana ms-commander on their right for
+  commander damage (their commander's combat damage: it takes life and counts
+  toward the 21 from that commander, as the rules count only that).
   Both drag the same way with the same range (1 to 9 out to the life total,
   past it the picker); the one dragged from is lit. Nothing else is drawn
-  there at rest (the resting element fields and their motes are gone).
-- **Each colour's element** is what's drawn as the damage is
-  thrown (the volley, below):
-  - white: a sun's light, its depths a starfield's (Star Nest, by Pablo
-    Roman Andrioli, MIT licence);
-  - blue: water;
-  - black: shadowy tendrils out of a roiling glob of oil (lit from behind
-    at its steep edges, a rainbow where it's thin, after the liquid toy's
-    shading);
-  - red: fire and lightning;
-  - green: wind;
-  - colourless: liquid metal, sky and ground reflected in each swell.
-- **Light glows.** The sun's and fire's light go into a light layer added
-  with bloom (Draw's `add_light`).
+  there at rest.
+- **Each colour's element** gives the colour of the damage it throws (the
+  volley, below): white's sun a pale gold, blue's water blue, black's oil
+  violet, red's fire orange-red, green's wind green, and colourless metal
+  a dull gold.
+- **Light glows.** Each dot's light goes into a light layer added with
+  bloom (Draw's `add_light`).
 
 ## Selecting: the arrow while dragging
 
@@ -123,31 +117,33 @@ button in its player's frame. It curves up from the button, over the table,
 and down onto the chosen victim's life total. A soft down-right shadow falls
 over everything beneath it, including the table, controls and life counts.
 The arrow is drawn after those layers. Its shaft is 80% of an attack button's diameter. Before a victim is selected, its head points along the drag direction, away from the pressed button. It appears immediately on dragging, pointing at the finger until an eligible victim is selected. Its shadow lifts only through the arch, with both ends touching the table. The pending amount sits above the victim's life total and arrow tip in the attacker's frame, facing the attacker.
-Selection emits no element streams or particles; released attacks retain
-their elemental volleys and impacts.
+Nothing else is drawn while selecting.
+
 ## The attack: the volley on release
 
 The game changes at release (so undo is simple); what's shown counts down as
-the attack lands (life, and a combat attack's commander damage chip). Undo,
-or a new game, calls attacks off. Lethal commander damage ends in a much
-bigger burst. A spell's attack looks the same as combat damage's.
+the attack lands (life, and a commander damage attack's chip). Undo,
+or a new game, calls attacks off. Damage's attack looks the same as commander
+damage's, and every colour's the same but for its dots' colours.
 
-- **Its shape is each element's** (`VOLLEY_SHAPES`): blue surges as a
-  deluge, one great mass; red throws bolts of fire and white bolts of
-  energy (short beams), one after another, more for more damage, all landing
-  together; green a storm, a wide gust throwing off leaves and twigs as it
-  flies; colourless a gob of metal. Each lands as a splash of itself.
-- **Its times**: it gathers at the player's spot (0.14 s), flies along the stream's curve as it was let go (0.42 s), and lands,
-  its points coming off the life shown over 0.36 s, its splash fading
-  after.
-- **Black is one strike.** Its strands shoot out of the nest one after
-  another and plunge into the target (0.32 s), pinned there they pulse
-  (0.3 s), then snap toward it, pulling the glob at their base along the
-  path into it (0.26 s): all the damage in one hit, then a pool that fades.
-  More damage, more strands (3 up to 20) and a bigger glob. A player who's
-  black and other colours strikes as black.
-- **Bounded.** Bolts, strands and the glob grow with damage within limits,
-  so a huge hit costs no more to draw than a big one.
+- **A dot a point.** Each point of damage is a small bright dot with a
+  coloured aura and a soft shadow, drawn out a little along its flight, its
+  colour each of the attacker's colours in turn (WUBRG; colourless's own
+  for none).
+- **Along an arc.** The dots fly from the attacker's damage icon (damage's
+  or commander damage's) to the victim's life total, along an arc raised above the
+  table, each dot's arc swung a little to one side or the other so they
+  don't fly in single file.
+- **Its times**: it gathers at the player's spot (0.14 s), then the dots
+  leave one after another (0.065 s apart, closer for a big volley, so all
+  of them have left within 2 s), each flying 0.42 s.
+- **Landing.** As each dot lands the life shown goes down a point (and a
+  combat attack's commander damage chip up one), a "-1" flies off the life
+  total along the dot's way, and the life total recoils from the hit (a
+  damped spring, moved but not turned; hits at once add). A second after
+  the last lands, the volley's gone.
+- **Bounded.** A volley's dots all leave within 2 s, so a huge hit takes
+  no longer to land than a big one.
 
 ## The controls
 
@@ -157,9 +153,16 @@ system's (settings and quitting) at the right end, as a power button. Its
 edge is raised bronze piping (0.06 cells), a round bead lit from the top
 left with a highlight along it, casting a soft shadow down and to the right. The text is Crimson Pro.
 
+A line between parts is dragged by its end along the screen's edge. A
+second finger on a line while one's dragged turns every line together about
+the screen's centre, by as much as the two fingers' middle goes round it, so
+each player's part moves round the table with them; a turn that would crowd
+an attack button against a line stops where it is. Lifting either finger
+ends it.
+
 Undo goes back a step, and redo forward: damage dealt, a life drum's turn,
 a player's colours (their taps one after another, while their toggles stay
-open, one step), a line dragged, a new count, a new game and a reset (the
+open, one step), a line dragged or the lines turned, a new count, a new game and a reset (the
 colours, the players off the table and the lines it forgot). Each step keeps
 the game and every count's lines; the motion's a setting, and isn't undone.
 The steps last while Raza runs.
@@ -223,17 +226,16 @@ writes), `fonts/` and `textures/` the art it carries; `rain src/raza.rain`
 builds a dev build into `build/`, and `rain -release src/raza.rain` the
 tablet's into `release/` (both ignored by git).
 
-`Raza.exe -elements:folder` draws `raza_elements.png`: each element at rest,
-its stream as it selects, and its attack in flight. `Raza.exe
--snapshot:folder` draws each count of players (`raza_2.png` to
-`raza_6.png`, a drag's stream in each), `raza_frames.png` (each colour
+`Raza.exe -snapshot:folder` draws each count of players (`raza_2.png` to
+`raza_6.png`, a drag's arrow in each), `raza_frames.png` (each colour
 alone and all five as gold), `raza_volley_0.png` and `_1` (a volley in
-flight, then landing), `raza_black_0.png` to `_2` (black's strike plunging,
-pulsing, snapping), the grid, the counts, and the settings
+flight, then landing), `raza_black_0.png` to `_2` (a volley from a white,
+black and green player, its dots in their three colours, in flight and
+landing), the grid, the counts, and the settings
 (`raza_settings_0.png` part of the way open, `_1` open). The tests check
-what can be checked without looking: the stream's end and bend, volleys
-landing a point at a time and bolts together, black's strike landing once,
-chips off the toggles, the toggles' pentagon and its folding, the pill's
+what can be checked without looking: volleys arcing from the damage icon
+to the life total, landing a point at a time, their bolts in sequence,
+the life's recoil settling, chips off the toggles, the toggles' pentagon and its folding, the pill's
 buttons, the count runner, the settings' buttons, players kept across
 counts, the life drum's opening, turning, closing and its wheels' carrying.
 `raza_folded_0.png` and `_1` show the toggles folded and half way;
@@ -249,7 +251,7 @@ each frame one part's is drawn again, in turn, if it's moved since it was
 (none while Motion's off), and all of them when anything else they show
 changes (the size, the lines, a part's colours, who's out or aimed at).
 The light layer and its bloom are drawn only while something's lit (a
-drag, a volley). Draw_Vulkan keeps the driver's compiled pipelines in
+volley). Draw_Vulkan keeps the driver's compiled pipelines in
 %LOCALAPPDATA%\Raza\vulkan_pipelines.bin, saved only when one was compiled
 (it used to be kept only when it grew, so once the shaders changed every
 start compiled them again: 7 to 12 s). The part shader asks Patterns for
@@ -314,8 +316,10 @@ wide, with a smooth cosine bowl profile, no channel around the screen edge,
 and a thin highlight marking the divider being dragged.
 
 Drag damage projects the pointer onto the line from the attacker's source
-icon to the target's life counter. Nine equal bands run from its entry into
-that region (1) to the counter (9); beyond it is ?. Sideways movement does
+icon to the target's life counter. Twelve equal slots run from its entry into
+that region to the counter, the amounts 1 to 9 taking 3, 2, 1, 1, 1, 1, 1, 1
+and 1 of them (the small amounts, the commonest, are wider to hit); beyond
+it is ?. Sideways movement does
 not change the amount. Releasing on ? opens the number grid, five keys
 across and four up (a cell apart), facing the dragger to the nearest
 quarter turn and kept on the screen:
@@ -327,11 +331,14 @@ quarter turn and kept on the screen:
  0  1  2  3  4
 ```
 
-The dragger's damage icons are hidden while it's open, and in their
-places, at their size, are a cross (combat's place) and a tick (spell's),
-the grid just above them. It opens at 10 (10 and 0 chosen, shown gold).
-A tens or a units touched is chosen; only the tick deals the two together
-(00 and 0, nothing); the cross, or anywhere else, cancels. Behind the grid
+The dragger's damage icons are hidden while it's open, the grid just above
+where they were. Below its keys are two glass buttons, each half the grid's
+width: the cross on their left, its glass tinted red, and on their right one
+tinted green showing the attack it makes (the damage icon's symbol, the
+commander's or plain damage's). It opens at 10 (10 and 0 chosen, shown
+green). A tens or a units touched is chosen; the green button deals the two
+together (00 and 0, nothing) and the cross cancels. Only those two end it:
+a touch anywhere else does whatever it would without the grid. Behind the grid
 is a pane of frosted glass (the table under it blurred, seven by seven
 samples 0.05 cells apart, a little paler and darker, a fine rim lit from
 the top left: `glass_shade`, reading the table's own canvas); the screen
@@ -339,8 +346,8 @@ isn't darkened. The numbers are Crimson Pro, white, outlined in black with
 a drop shadow, as the life totals are.
 
 The snapshot command writes raza_materials_0.png and raza_materials_2.png:
-all five colours plus artifact at two surface times with fixed particles,
-so material evolution can be inspected independently of the attacks.
+all five colours plus artifact at two surface times, so material
+evolution can be inspected independently of the attacks.
 
 Two-colour identities use Ravnica-inspired hybrid surfaces: the actual two
 materials, in WUBRG order from left to right in the section's local frame.
@@ -351,7 +358,7 @@ show all ten pairs alongside gold.
 
 ## Restrained attack effects
 
-At rest there are no element handles: each player's damage spot is its two damage icons (combat and spell). Targeting trails are narrower, less widely braided, and emit eight motes per second across their colours. Motes are smaller and bloom is weaker and tighter. Blue uses smooth volume shading without a flat water bitmap overlay; artifact reflections are warm and softened. Blue and green attacks have smaller, shorter bodies. Black retains its strand, plunge, pulse and single-hit strike sequence. Damage timing and hit testing are unchanged.
+At rest there are no element handles: each player's damage spot is its two damage icons (damage, and commander damage). Selecting draws only the arrow, and an attack only its volley's dots, the "-1"s and the life's recoil: no element fields, streams, splashes or particles. Bloom is weak and tight (0.25 cells, 0.65 strength).
 
 The central controls and player-count selector use textures/control-metal-v1.png, a dark brushed gunmetal material. Their existing rounded geometry and recessed lighting remain. The metal prompt is in textures/DARK-METAL-PROMPT.md; the separate transparent five-colour dot icon is documented in textures/CARD-BACK-ASSETS.md.
 
@@ -361,26 +368,9 @@ The count slider stays full length and rides above a narrow bronze-lined groove 
 
 The disk and extended count slider share a softly domed bronze finish, with warm reflections curving over the full face rather than a straight cylindrical stripe.
 
-### Live multicolour background tuning
+### Multicolour background
 
-F8 toggles a tuning panel drawn inside Raza; `-tune` opens it at launch.
-It starts at half the available height. Drag its title bar to move it, or
-any edge/corner to resize it. Its size and position survive closing and
-reopening within the run, and stay within the main window when it resizes.
-Its 68 sliders cover ambient RGB and strength, surface curvature and relief,
-reflection position/shape/colour/motion, highlight polish, perimeter-strip
-reach and blending, and each WUBRG light colour. Values update the shader
-uniforms and invalidate the surface cache immediately, even with Motion Off.
-Large text scales for monitor DPI. A visible scrollbar supports dragging and
-track clicks; the mouse wheel also scrolls. Up/Down selects a control;
-Left/Right adjusts it, with Shift for a finer step. Reset selected and Reset
-all restore the built-in defaults.
-
-Every edit is saved to `background-tuning.json` in the working folder (the
-project folder for normal development launches), using a temporary file and
-rename. JSON keys name the individual values so agents can inspect the result.
-All runs load it, whether the control panel is open or not. A different file
-can be selected with `-background_tuning:path`. Missing keys retain defaults;
-out-of-range values are reset to defaults; malformed input is reported and
-is not overwritten during loading. The panel shows save failures and offers
-a Save / retry button. Closing the control panel keeps the chosen settings.
+The gold background's look (its surface's relief and ripples, the moving
+reflections, the ambient light and each colour's perimeter light) is
+`Gold_Look` in src/frames.rain, its values the defaults the live tuner left
+(the tuner, F8, is gone).
