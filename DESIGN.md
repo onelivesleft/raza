@@ -249,13 +249,19 @@ second finger on a line while one's dragged turns every line together about
 the screen's centre, by as much as the two fingers' middle goes round it, so
 each player's part moves round the table with them; a turn that would crowd
 an attack button against a line stops where it is. Lifting either finger
-ends it.
+ends it. Each count keeps its lines for a landscape screen and its own for a
+portrait one, so turning the tablet over to the other and back finds them as
+they were.
 
 Undo goes back a step, and redo forward: damage dealt, a life drum's turn,
 a player's colours (their taps one after another, while their toggles stay
 open, one step), a line dragged or the lines turned, a new count, a new game and a reset (the
 colours, the players off the table and the lines it forgot). Each step keeps
-the game and every count's lines; the motion's a setting, and isn't undone.
+the game and every count's lines (the screen's way round's: a step's lines
+come back only on a screen the same way round as it was); the motion's a
+setting, and isn't undone. The game is kept between runs, each player's
+attacks a bit each of Attack's values, in a u16 (a game kept when they
+were a byte is read as it was, from_bytes').
 The steps last while Raza runs.
 
 The players' button: touched, the count runner grows out of the pill's

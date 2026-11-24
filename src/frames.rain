@@ -180,6 +180,22 @@ PART_LIGHT :: V2⟨-0.55, -0.83⟩
 PART_WARM :: V3⟨1.0, 0.92, 0.76⟩
 PART_COOL :: V3⟨0.5, 0.55, 0.74⟩
 
+// What each of red, green and blue gives to how light a colour looks
+// (Rec. 709's weights): Math.dot(rgb, LUMA).
+LUMA :: V3⟨0.2126, 0.7152, 0.0722⟩
+
+// A colour as it lies in a channel (between players, or where the table's
+// split): a smooth recess with a dark floor and curved walls rolling up to
+// a soft lip, the cosine bowl meeting both its floor and the surface with
+// no slope. across: from the channel's middle (0) to its lip (1); facing:
+// the wall's way out of the channel, dotted with PART_LIGHT.
+channel_wall :: (rgb: V3, across: f32, facing: f32 -> V3) #pure {
+    wall := Math.sin(across * f32'Math.PI)
+    floor := (1 + Math.cos(across * f32'Math.PI)) * 0.5
+    shaded := rgb * (1 - floor * 0.68) * (1 + Math.min(facing, 0) * wall * 0.48)
+    return Math.mix(shaded, PART_WARM, Math.max(facing, 0) * wall * 0.38)
+}
+
 // A part's colour at a pixel: its colours across it; its surface lightening
 // it toward a warm light and darkening it toward a cool shade (not white
 // and black: a hue-shifted light and shade, as a painted frame has); darker
@@ -258,14 +274,14 @@ part_shade :: (from: Draw.Quad_Between, part: Shader.Uniforms(Part_Params), atla
             }
         }
     }
-    else if tile == 6 {
+    else if tile == TILE_GOLD {
         // (gold: shallow fixed undulations reflecting moving studio lights)
         at := V2⟨local_x, local_y⟩ / Math.max(part.look.y * part.gold.texture_scale, 1) + V2⟨part.look.w * 0.17, part.look.w * 0.31⟩
         texel := material_at(atlas, filtering, tile, at)
-        luma := Math.dot(texel, V3⟨0.2126, 0.7152, 0.0722⟩)
+        luma := Math.dot(texel, LUMA)
         q := V2⟨local_x, local_y⟩ / Math.max(part.state.w * part.gold.surface_scale, 1)
-        height_x := Math.dot(material_at(atlas, filtering, tile, at + V2⟨part.gold.texture_step, 0⟩), V3⟨0.2126, 0.7152, 0.0722⟩)
-        height_y := Math.dot(material_at(atlas, filtering, tile, at + V2⟨0, part.gold.texture_step⟩), V3⟨0.2126, 0.7152, 0.0722⟩)
+        height_x := Math.dot(material_at(atlas, filtering, tile, at + V2⟨part.gold.texture_step, 0⟩), LUMA)
+        height_y := Math.dot(material_at(atlas, filtering, tile, at + V2⟨0, part.gold.texture_step⟩), LUMA)
         slope := V2⟨Math.sin(q.x * part.gold.freq_x + q.y * part.gold.cross_x) * part.gold.wave_x + q.x * part.gold.slope_x,
                     Math.sin(q.y * part.gold.freq_y + q.x * part.gold.cross_y) * part.gold.wave_y + q.y * part.gold.slope_y⟩ + V2⟨height_x - luma, height_y - luma⟩ * part.gold.texture_slope
         normal := Math.normalize(V3⟨slope.x, slope.y, 1⟩)
@@ -321,29 +337,24 @@ part_shade :: (from: Draw.Quad_Between, part: Shader.Uniforms(Part_Params), atla
             energy += falloff
         }
         tint := radiance / Math.max(energy, 0.0001)
-        brightness := Math.dot(rgb, V3⟨0.2126, 0.7152, 0.0722⟩)
-        tint_luma := Math.dot(tint, V3⟨0.2126, 0.7152, 0.0722⟩)
+        brightness := Math.dot(rgb, LUMA)
+        tint_luma := Math.dot(tint, LUMA)
         lit := tint * (brightness / Math.max(tint_luma, part.gold.strip_dark_floor))
         rgb = Math.mix(rgb, lit, Math.min(energy * part.gold.strip_strength, part.gold.strip_limit))
     }
     // Keep the sharpest reflections luminous even under coloured strip lighting.
     rgb = Math.mix(rgb, Math.max(rgb, V3⟨part.gold.polish_r, part.gold.polish_g, part.gold.polish_b⟩), gold_polish)
-    // A smooth recessed channel: dark floor, curved walls, soft rolled lip.
-    // Each panel shades its half, so adjacent regions share one groove.
+    // The channel along its edges with its neighbours (each panel shades its
+    // half, so adjacent regions share one groove).
     bevel := part.state.z
     if groove_distance < bevel {
         across := Math.clamp(groove_distance / bevel, 0, 1)
-        wall := Math.sin(across * f32'Math.PI)
         facing := Math.dot(inward * -1.0, PART_LIGHT)
-        floor := (1 + Math.cos(across * f32'Math.PI)) * 0.5
-        rgb = rgb * (1 - floor * 0.68)
-        rgb = rgb * (1 + Math.min(facing, 0) * wall * 0.48)
-        rgb = Math.mix(rgb, PART_WARM, Math.max(facing, 0) * wall * 0.38)
-        // A narrow bronze insert occupies only the floor; the old rolled edges remain.
+        rgb = channel_wall(rgb, across, facing)
+        // A narrow bronze insert occupies only the floor; the rolled edges remain.
         inset := 1 - Math.smoothstep(0.12, 0.30, across)
-        bronze := V3⟨0.58, 0.38, 0.19⟩ * (0.72 + Math.max(facing, 0) * wall * 0.3)
+        bronze := V3⟨0.58, 0.38, 0.19⟩ * (0.72 + Math.max(facing, 0) * Math.sin(across * f32'Math.PI) * 0.3)
         rgb = Math.mix(rgb, Math.mix(bronze, V3⟨1.0, 0.76, 0.38⟩, channel_lit), inset)
-        // The cosine bowl meets both its floor and the surface with zero slope.
     }
     // Dim eliminated players.
     rgb = Math.mix(rgb, V3⟨0.075, 0.075, 0.094⟩, part.state.x * 0.7)
@@ -419,10 +430,7 @@ draw_part :: (canvas: *Draw.Canvas, layout: Layout, k: i64, colours: [] Draw.RGB
             if !has_colour(identity, mana) then continue
             if colours.count == 2 {
                 look := LOOKS.colours[mana]
-                *hybrid_surface: Surface = .PATTERN
-                if mana == .BLUE then hybrid_surface = .WATER
-                else if mana == .GREEN then hybrid_surface = .FOREST
-                params.hybrid_looks[lamp] = V4⟨f32'u8'mana, f32'i32'look.kind, look.strength * SURFACE_QUIET, f32'u8'hybrid_surface⟩
+                params.hybrid_looks[lamp] = V4⟨f32'u8'mana, f32'i32'look.kind, look.strength * SURFACE_QUIET, f32'u8'surface_of(mana)⟩
                 lamp += 1
                 continue
             }
@@ -465,8 +473,7 @@ Surface_Key :: struct {
 }
 
 Kept_Surfaces :: struct {
-    canvas:   Draw.Canvas
-    made:     bool
+    kept:     Kept_Canvas
     key:      Surface_Key
     drawn_at: [MAX_PLAYERS] f32        // the surfaces' time each part was drawn at
     next:     i64                      // the part to look at first next
@@ -479,19 +486,14 @@ kept_surfaces: Kept_Surfaces
 // is).
 keep_surfaces :: (layout: Layout, game: Game, targeted: i64, time: f32 -> bool) {
     size := Wide.i32x2⟨i32'Math.round(layout.size.x), i32'Math.round(layout.size.y)⟩
-    if !kept_surfaces.made or kept_surfaces.canvas.size != size {
-        if kept_surfaces.made then kept_surfaces.canvas.destroy()
-        kept_surfaces.made = false
-        if made := Draw.create_canvas(size) { kept_surfaces.canvas = made } else if os_error { return false }
-        kept_surfaces.made = true
-        kept_surfaces.key = ⟨count: -1⟩
-    }
+    // (a new size is a new key, so a canvas made or resized is drawn whole)
+    if !kept_surfaces.kept.prepare(size) then return false
     *key := Surface_Key⟨size: layout.size, splits: layout.splits, count: layout.count, identity: game.identity, targeted: targeted⟩
     for k: 0 < layout.count { key.out[k] = is_out(game, k) }
     if key != kept_surfaces.key {
-        kept_surfaces.canvas.clear(BACKGROUND)
+        kept_surfaces.kept.canvas.clear(BACKGROUND)
         for k: 0 < layout.count {
-            draw_surface(kept_surfaces.canvas, layout, game, k, targeted, time)
+            draw_surface(kept_surfaces.kept.canvas, layout, game, k, targeted, time)
             kept_surfaces.drawn_at[k] = time
         }
         kept_surfaces.key = key
@@ -501,7 +503,7 @@ keep_surfaces :: (layout: Layout, game: Game, targeted: i64, time: f32 -> bool) 
         k := kept_surfaces.next % layout.count
         kept_surfaces.next += 1
         if kept_surfaces.drawn_at[k] != time {
-            draw_surface(kept_surfaces.canvas, layout, game, k, targeted, time)
+            draw_surface(kept_surfaces.kept.canvas, layout, game, k, targeted, time)
             kept_surfaces.drawn_at[k] = time
             break
         }
@@ -524,6 +526,17 @@ Surface :: enum u8 {
     WATER
     RUST
     FOREST
+}
+
+// A colour's surface, a part's of that colour alone or a hybrid's half's:
+// blue's open water, green's forest floor, the rest their look's pattern.
+surface_of :: (colour: Mana -> Surface) #pure {
+    return if colour is { case .BLUE: .WATER; case .GREEN: .FOREST; case .WHITE, .BLACK, .RED: .PATTERN }
+}
+
+// A surface as the shader has it (a float of its value), compared with one.
+is_surface :: (surface: f32, kind: Surface -> bool) #pure {
+    return Math.abs(surface - f32'u8'kind) < 0.5
 }
 
 // A part's fill, for its player's colours: its gradient's colours (into,
@@ -560,9 +573,7 @@ part_fill :: (identity: Identity, cell: f32, seat: i64, time: f32, angle: f32, i
         // open water, green's a forest floor, none's rusting metal)
         into[0] = look.ground
         count = 1
-        if colours == 0 then surface = .RUST
-        else if only == .BLUE then surface = .WATER
-        else if only == .GREEN then surface = .FOREST
+        surface = if colours == 0 then .RUST else surface_of(only)
     }
     // (every part's features one size, and quieter than the looks' own
     // contrast: the surface stays behind what's on it)
@@ -580,7 +591,7 @@ SURFACE_QUIET :: 0.6
 living_marble :: (atlas: Shader.Texture_2D, filtering: Shader.Sampler, q: V2, time: f32, seed: f32 -> V3) {
     uv := q * 0.18 + V2⟨seed * 0.17, seed * 0.31⟩
     mineral := material_at(atlas, filtering, 0, uv)
-    detail := Math.dot(mineral, V3⟨0.2126, 0.7152, 0.0722⟩)
+    detail := Math.dot(mineral, LUMA)
     cloud := Patterns.layered(q * 2.7 + V2⟨seed, 3.1⟩, 4)
     grain := Patterns.layered(q * 23 + V2⟨seed, 1.7⟩, 3)
     mineral_variation := Math.clamp((detail - 0.65) * 0.26, -0.06, 0.07)
@@ -625,7 +636,7 @@ living_cracks :: (q: V2, time: f32, seed: f32, base: V3 -> V3) {
 // Warm old artifact metal; corrosion follows granular material detail,
 // with a soft, irregular growing front instead of outlined painted islands.
 living_artifact :: (q: V2, texture: V3, time: f32, seed: f32 -> V3) {
-    detail := Math.dot(texture, V3⟨0.2126, 0.7152, 0.0722⟩)
+    detail := Math.dot(texture, LUMA)
     grain := Patterns.layered(q * 7 + V2⟨seed, 0⟩, 3)
     bend := Patterns.layered(q * 0.8 + V2⟨seed, 2.7⟩, 3)
     reflection := Math.fract(q.x * 0.19 + q.y * 0.11 + bend * 0.16 - time * 0.08)
@@ -675,7 +686,7 @@ layered_forest :: (atlas: Shader.Texture_2D, filtering: Shader.Sampler, uv: V2, 
         phase := Patterns.layered(at * 5 + V2⟨3.1, salt⟩, 3) * 9
         life := 0.5 + 0.5 * Math.sin(time * (0.19 + f32'i * 0.037) + phase + salt * 2)
         reveal := Math.smoothstep(0.40, 0.68, patch + (life - 0.5) * 0.42)
-        detail := Math.dot(copy, V3⟨0.2126, 0.7152, 0.0722⟩)
+        detail := Math.dot(copy, LUMA)
         leaf := Math.smoothstep(0.08, 0.24, detail)
         // The first overlay supplies solid cover while the base is absent.
         if i == 0 then rgb = Math.mix(copy, rgb, base.y)
@@ -700,20 +711,20 @@ material_cloud_light :: (rgb: V3, local: V2, look: V4, time: f32 -> V3) {
 // Shared by single-colour panels and both halves of a hybrid panel.
 shade_panel_material :: (p: V2, local_x: f32, local_y: f32, base: V3, look: V4, more: V4, angle: f32, surface: f32, tile: i32, atlas: Shader.Texture_2D, filtering: Shader.Sampler -> V3) {
     // Keep the evolving stone and cracks, with the shared light above them.
-    if tile == 0 then return material_cloud_light(living_marble(atlas, filtering, V2⟨local_x, local_y⟩ * 2 / Math.max(look.y * 5, 1), more.x, look.w), V2⟨local_x, local_y⟩, look, more.x)
-    if tile == 3 then return material_cloud_light(living_cracks(V2⟨local_x, local_y⟩ / Math.max(look.y, 1), more.x, look.w, base), V2⟨local_x, local_y⟩, look, more.x)
+    if tile == TILE_MARBLE then return material_cloud_light(living_marble(atlas, filtering, V2⟨local_x, local_y⟩ * 2 / Math.max(look.y * 5, 1), more.x, look.w), V2⟨local_x, local_y⟩, look, more.x)
+    if tile == TILE_CRACKS then return material_cloud_light(living_cracks(V2⟨local_x, local_y⟩ / Math.max(look.y, 1), more.x, look.w, base), V2⟨local_x, local_y⟩, look, more.x)
     light := Math.mix(base, PART_WARM, 0.55)
     shade := base * PART_COOL
     // (its surface: a forest floor, rusting metal, open water, or its look's pattern lighting
     // and shading it; the first two in its player's frame)
     *rgb := base
-    if surface > 2.5 {
+    if is_surface(surface, .FOREST) {
         rgb = base * 0.8
     }
-    else if surface > 1.5 {
+    else if is_surface(surface, .RUST) {
         rgb = base * 0.85
     }
-    else if surface > 0.5 {
+    else if is_surface(surface, .WATER) {
         rgb = open_water_at(V2⟨local_x, local_y⟩, base, look.y, look.w, more.x)
     }
     else {
@@ -729,24 +740,24 @@ shade_panel_material :: (p: V2, local_x: f32, local_y: f32, base: V3, look: V4, 
     // Authored detail under animated lighting, in the player's frame.
     // Water is entirely procedural; solid material detail stays anchored.
     at := V2⟨local_x, local_y⟩ / Math.max(look.y * 18, 1) + V2⟨look.w * 0.17, look.w * 0.31⟩
-    texel := if tile == 4 then layered_forest(atlas, filtering, at, more.x, look.w) else material_at(atlas, filtering, tile, at)
+    texel := if tile == TILE_FOREST then layered_forest(atlas, filtering, at, more.x, look.w) else material_at(atlas, filtering, tile, at)
     // Retain identity tint (especially multicolour gold) rather than painting
     // the atlas's colour over the panel's chosen identity.
-    luma := Math.dot(texel, V3⟨0.2126, 0.7152, 0.0722⟩)
+    luma := Math.dot(texel, LUMA)
     *authored := Math.mix(base, texel, 0.4)
-    if tile == 6 then authored = base * (0.65 + luma * 0.7)
-    if surface > 2.5 { authored = texel * V3⟨0.8, 1.12, 0.75⟩ }
-    else if surface > 1.5 { authored = Math.mix(base * (0.55 + luma), texel, 0.65) }
-    else if surface > 0.5 { authored = Math.mix(base, texel, 0.8) }
-    weight: f32 = if surface > 0.5 then 0.78 else 0.62
-    if tile != 1 and tile != 3 then rgb = Math.mix(rgb, authored, weight * (0.65 + more.y * 0.5))
+    if tile == TILE_GOLD then authored = base * (0.65 + luma * 0.7)
+    if is_surface(surface, .FOREST) { authored = texel * V3⟨0.8, 1.12, 0.75⟩ }
+    else if is_surface(surface, .RUST) { authored = Math.mix(base * (0.55 + luma), texel, 0.65) }
+    else if is_surface(surface, .WATER) { authored = Math.mix(base, texel, 0.8) }
+    weight: f32 = if is_surface(surface, .PATTERN) then 0.62 else 0.78
+    if tile != TILE_WATER and tile != TILE_CRACKS then rgb = Math.mix(rgb, authored, weight * (0.65 + more.y * 0.5))
     // Contrast only: preserve the original moving pattern and illumination.
-    if tile == 2 then rgb = Math.max((rgb - V3⟨0.16, 0.16, 0.16⟩) * 1.35 + V3⟨0.16, 0.16, 0.16⟩, V3⟨0.006, 0.006, 0.006⟩)
+    if tile == TILE_BLACK then rgb = Math.max((rgb - V3⟨0.16, 0.16, 0.16⟩) * 1.35 + V3⟨0.16, 0.16, 0.16⟩, V3⟨0.006, 0.006, 0.006⟩)
     // These materials evolve in place rather than sliding a photograph.
-    if tile == 5 {
+    if tile == TILE_ARTIFACT {
         rgb = living_artifact(V2⟨local_x, local_y⟩ / Math.max(look.y * 5, 1), texel, more.x, look.w)
     }
-    if tile != 1 and tile != 6 then return material_cloud_light(rgb, V2⟨local_x, local_y⟩, look, more.x)
+    if tile != TILE_WATER and tile != TILE_GOLD then return material_cloud_light(rgb, V2⟨local_x, local_y⟩, look, more.x)
     return rgb
 }
 

@@ -283,6 +283,45 @@ lines_turn_together :: () #test {
     assert(Math.abs(turn_between(angle_about(⟨0, 0⟩, ⟨0, 1⟩), angle_about(⟨0, 0⟩, ⟨-1, 0⟩)) - f32'Math.PI / 2) < 0.001, "down to left is a quarter turn clockwise")
 }
 
+// Undo brings back a moment's lines only for the orientation they were the
+// table's in: after it turns, the game comes back, the lines stay its own.
+undo_keeps_each_orientations_lines :: () #test {
+    with scratch.rewind()
+    `scratch {
+        *timeline: Timeline
+        *game := new_game(4)
+        *lines: Lines
+        lines[4] = equal_splits(4, LANDSCAPE)
+        timeline.remember(game, lines)
+        game.life[0] = 30
+        // (the table turns: portrait's own lines)
+        timeline.portrait = true
+        portrait_lines := lines
+        lines[4] = equal_splits(4, PORTRAIT)
+        tall := lines
+        assert(timeline.undo(game, lines) and game.life[0] == 40, "the game back")
+        assert(lines == tall and lines != portrait_lines, "portrait's lines kept, not landscape's")
+        assert(timeline.redo(game, lines) and game.life[0] == 30 and lines == tall, "redone, the lines still portrait's")
+    }
+}
+
+// A game kept by a build whose attacks were a byte each comes over as it
+// was: each attack's bit its own, LOSE_TWO on where plain damage's bit was
+// clear, plain damage always on.
+games_of_bytes_come_over :: () #test {
+    *old := Game_Of_Bytes⟨players: 3⟩
+    old.life[1] = 17
+    old.attacks[0] = 3                                   // damage, commander
+    old.attacks[1] = 0b0010_1000                         // lifelink, gain one; bit 0 clear: lose two
+    game := from_bytes(old)
+    assert(game.players == 3 and game.life[1] == 17, "the game as it was")
+    kinds0, n0 := attacks_of(game.attacks[0])
+    assert(n0 == 2 and kinds0[0] == .DAMAGE and kinds0[1] == .COMMANDER, "damage and commander: «kinds0[:n0]»")
+    assert(has_attack(game.attacks[1], .LIFELINK) and has_attack(game.attacks[1], .GAIN_ONE) and has_attack(game.attacks[1], .LOSE_TWO) and
+           !has_attack(game.attacks[1], .COMMANDER), "lifelink, gain one and lose two")
+    assert(from_bytes(Game_Of_Bytes⟨players: 0⟩).players == 0, "none kept: none")
+}
+
 // A game kept last time comes back as it was; none kept, or one a build
 // with another Game kept (Defaults gives the default, with no players), is a
 // new game of four whose colours are still to be given, not colourless
@@ -358,7 +397,7 @@ life_shortcuts_beside_damage :: () #test {
             chips := chip_places(layout, k, width, cell)
             *positions: [4] V2
             for kind, i: LIFE_SHORTCUTS {
-                world := life_shortcut_place(layout, k, kind, 254, chips, width)
+                world := life_shortcut_place(layout, k, kind, 0x1FF, chips, width)
                 assert(world.x > 0 and world.y > 0 and world.x < layout.size.x and world.y < layout.size.y)
                 positions[i] = local_of(seat.middle, seat.angle, world)
                 assert(positions[i].x < -width / 2)
@@ -423,7 +462,6 @@ attacks_do_what_they_say :: () #test {
     strike(struck, volleys, layout, pending, 2, 3, 10, .POISON)
     before := shown_game(struck, pending, volleys)
     assert(before.life[1] == 40 and before.life[0] == 40 and before.poison[3] == 0, "shown as it was while they fly: «before.life[1]», «before.poison[3]»")
-    assert(volleys.list[1].lethal, "ten poison is lethal")
     steer_volleys(volleys, pending, volley_landing(volleys.list[0]) + LIFELINK_ARRIVAL - 0.01)
     flying_back := shown_game(struck, pending, volleys)
     assert(flying_back.life[0] == 37 and flying_back.life[1] == 40, "damage landed, all three gains still returning")
@@ -445,7 +483,7 @@ options_are_in_the_bottom_right :: () #test {
             layout := laid_out(players, size)
             for seat, k: layout.seats[:players] {
                 colours, colours_middle, _ := toggle_places(layout, seat)
-                options, options_hub, button := toggle_places(layout, seat, true, OPTION_KINDS.count)
+                options, options_hub, button := toggle_places(layout, seat, options: true)
                 left := local_of(seat.middle, seat.angle, colours_middle).x
                 right := local_of(seat.middle, seat.angle, options_hub).x
                 assert(left < right, "«players» on «size», «k»: the options right of the colours")
@@ -469,7 +507,7 @@ options_in_squeezed_seats :: () #test {
         splits.move_split(0, splits.at[1] - LEAST_SPLIT)
         layout := lay_out(size, splits)
         seat := layout.seats[0]
-        _, middle, hub := toggle_places(layout, seat, true, OPTION_KINDS.count)
+        _, middle, hub := toggle_places(layout, seat, options: true)
         cell := cell_of(layout)
         half := option_panel_half(cell)
         assert(option_button_clear(local_of(hub, seat.angle, middle), half, cell))
@@ -870,7 +908,7 @@ toggles_make_a_pentagon :: () #test {
                 // Fixed screen/channel clearance determines the folded position; the open pentagon may sit nearer the corner.
                 if Math.length(corner - hub) > 0.1 * cell {
                     nearer := hub + Math.normalize(corner - hub) * 0.1 * cell
-                    assert(!pentagon_fits(layout, seat, points, nearer.x, nearer.y, 5, corner), "«players» on «size»: part «k»'s pentagon could come nearer its icon")
+                    assert(!pentagon_fits(layout, seat, points, nearer.x, nearer.y, corner), "«players» on «size»: part «k»'s pentagon could come nearer its icon")
                 }
                 for p, i: places[:5] {
                     assert(inside(p, points), "«players» on «size»: part «k»'s toggles are inside it")
@@ -1168,8 +1206,7 @@ motion_button_goes_round :: () #test {
 
 // A strike changes the game at once but shows it undone while its volley
 // gathers and flies; as it lands the life shown ticks down a point at a
-// time, and once it has, it's the game's. Commander damage that makes 21
-// is a lethal volley.
+// time, and once it has, it's the game's.
 volleys_land_a_point_at_a_time :: () #test {
     layout := laid_out(4, LANDSCAPE)
     *game := new_game(4)
@@ -1179,7 +1216,7 @@ volleys_land_a_point_at_a_time :: () #test {
     strike(game, volleys, layout, pending, 1, 0, 7)
     assert(game.life[0] == 33 and game.commander[0][1] == 22, "dealt at once: «game.life[0]», «game.commander[0][1]»")
     assert(shown_game(game, pending).life[0] == 40, "shown undone while it flies")
-    assert(volleys.list.count == 1 and volleys.list[0].lethal, "a lethal volley")
+    assert(volleys.list.count == 1, "a volley")
     landing: f32 = VOLLEY_GATHER + VOLLEY_TRAVEL
     *age: f32 = 0
     *shown_before: i32 = 40
@@ -1222,7 +1259,7 @@ volleys_land_apart :: () #test {
     *volleys: Volleys
     *pending: [MAX_PLAYERS] [MAX_PLAYERS] i32
     strike(game, volleys, layout, pending, 1, 0, 3)
-    steer_volleys(volleys, pending, VOLLEY_GATHER + VOLLEY_TRAVEL + VOLLEY_LAND)
+    steer_volleys(volleys, pending, bolt_impact(volleys.list[0], 2) + 0.01)
     strike(game, volleys, layout, pending, 1, 0, 7)
     steer_volleys(volleys, pending, 0.1)
     assert(pending[0][1] == 7 and shown_game(game, pending).life[0] == 37, "the first landed, the second in flight: «pending[0][1]»")
@@ -1795,7 +1832,7 @@ spells_take_life_alone :: () #test {
     *pending: [MAX_PLAYERS] [MAX_PLAYERS] i32
     strike(flying, volleys, layout, pending, 1, 0, 20, .DAMAGE)
     assert(flying.life[0] == 20 and flying.commander[0][1] == 6, "dealt at once, life alone: «flying.life[0]», «flying.commander[0][1]»")
-    assert(volleys.list.count == 1 and !volleys.list[0].lethal and volleys.list[0].kind == .DAMAGE, "a spell's volley, not lethal")
+    assert(volleys.list.count == 1 and volleys.list[0].kind == .DAMAGE, "a spell's volley")
     shown := shown_game(flying, pending, volleys)
     assert(shown.life[0] == 40 and shown.commander[0][1] == 6, "shown undone while it flies: «shown.life[0]», «shown.commander[0][1]»")
     steer_volleys(volleys, pending, 2)

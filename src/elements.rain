@@ -133,22 +133,16 @@ draw_poison_volley :: (canvas: *Draw.Canvas, layer: *Draw.Canvas, layout: Layout
 
 // The two labels share a small texture. Projecting the lettering with the disc
 // keeps it attached to the face all the way through the lifelink flip.
-loss_faces: Draw.Canvas
-loss_faces_ready: bool
+loss_faces: Kept_Canvas
 
 prepare_loss_faces :: (font: Draw.Font, side: i32 -> bool) {
     size := Wide.i32x2⟨side * 2, side⟩
-    if loss_faces_ready and loss_faces.size == size then return true
-    if loss_faces_ready {
-        if loss_faces.resize(size) is os_error then return false
-    } else {
-        if made := Draw.create_canvas(size) { loss_faces = made } else if os_error { return false }
-        loss_faces_ready = true
-    }
-    loss_faces.clear(Draw.rgb(0x000000))
+    if loss_faces.made and loss_faces.canvas.size == size then return true
+    if !loss_faces.prepare(size) then return false
+    loss_faces.canvas.clear(Draw.rgb(0x000000))
     for label, i: [2] string⟨"-1", "+1"⟩ {
         at := V2⟨(f32'i + 0.5) * f32'side, 0.5 * f32'side⟩
-        draw_centred(loss_faces, font, at, 0, label, Draw.rgb(0xFFFFFF))
+        draw_centred(loss_faces.canvas, font, at, 0, label, Draw.rgb(0xFFFFFF))
     }
     return true
 }
@@ -223,7 +217,7 @@ draw_bolt_losses :: (canvas: *Draw.Canvas, layout: Layout, fonts: Fonts, volleys
             params := Loss_Disc_Params⟨⟨at.x, at.y, radius, fade⟩, ⟨Math.cos(turn), Math.sin(turn), facing, face⟩⟩
             half := V2⟨radius + 1, radius + 1⟩
             canvas.draw_shader_canvas(at - half, half * 2, LOSS_DISC.code, LOSS_DISC.bindings.token, params,
-                                      loss_faces, LOSS_DISC.bindings.labels, LOSS_DISC.bindings.filtering)
+                                      loss_faces.canvas, LOSS_DISC.bindings.labels, LOSS_DISC.bindings.filtering)
         }
     }
 }

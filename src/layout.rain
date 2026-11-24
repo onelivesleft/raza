@@ -18,7 +18,8 @@ MAX_PLAYERS :: 6
 // lines, and the corners between them.
 MAX_OUTLINE :: 8
 
-// Fixed distance above the life counter in the player's frame, in cells.
+// The least distance from a life total's middle up to its attack spot, in
+// the player's frame, in cells (more where the totals are big: lay_out's).
 ATTACK_ABOVE_CELLS :: 2.2
 
 // The least share of the way round the edge a part keeps when a line's end
@@ -336,12 +337,6 @@ halfway_between :: (centre: V2, first: V2, next: V2 -> f32) #pure {
     return a + wrapped(b - a) / 2
 }
 
-// Which way a player between two lines faces (as an angle from the centre,
-// y down): halfway round from the first line to the next.
-facing_between :: (centre: V2, first: V2, next: V2 -> f32) #pure {
-    return halfway_between(centre, first, next)
-}
-
 // How wide a part is across its life total: along a line through the life
 // total's centre, square to halfway between the part's lines (as its player
 // faces, unrounded), from one of its lines (from the centre, on past the
@@ -414,46 +409,47 @@ lay_out :: (size: V2, splits: Splits -> layout: Layout) #pure {
         points := seat.outline[:seat.count]
         area_middle := centroid(points)
 
-        // Its player faces it halfway between its lines.
-        facing := facing_between(centre, layout.ends[k], layout.ends[(k + 1) % n])
+        // Its player faces it halfway between its lines, and its life total
+        // is on that line, slightly nearer them than the part's centroid.
+        facing := halfway_between(centre, layout.ends[k], layout.ends[(k + 1) % n])
         seat.toward = ⟨Math.cos(facing), Math.sin(facing)⟩
         seat.angle = text_angle(seat.toward)
-        // Centre between the channels, slightly nearer the player than the centroid.
-        bisector := halfway_between(centre, layout.ends[k], layout.ends[(k + 1) % n])
-        centre_line := V2⟨Math.cos(bisector), Math.sin(bisector)⟩
-        depth := Math.dot(area_middle - centre, centre_line) + 0.35 * cell_of(layout)
-        seat.middle = centre + centre_line * depth
-        seat.icon = clear_of_controls(size, centre, seat.middle, seat.middle - seat.toward * (ATTACK_ABOVE_CELLS * cell_of(layout)))
-        seat.clear = controls_clearance(size, centre, seat.icon)
-        *room: f32 = 1e30
+        depth := Math.dot(area_middle - centre, seat.toward) + 0.35 * cell_of(layout)
+        seat.middle = centre + seat.toward * depth
         *reach: f32 = 0
-        for a, i: points {
-            room = Math.min(room, distance_to_segment(seat.middle, a, points[(i + 1) % points.count]))
-            reach = Math.max(reach, Math.dot(a - centre, seat.toward))
-        }
-        seat.room = room
+        for a: points { reach = Math.max(reach, Math.dot(a - centre, seat.toward)) }
+        seat.room = room_round(seat.middle, points)
         seat.reach = reach
         layout.seats[k] = seat
     }
-    // (each attack spot far enough from its life total, however big the
-    // totals are drawn (life_size_of's, from the parts' room), for a
-    // commander chip between them: two player's totals in portrait are big)
-    // (where the controls pull a spot back toward its life total, the life
-    // total goes down toward its player by as much instead; then the totals'
-    // size fitted again, their spinners from where they are now)
+    // Each attack spot far enough from its life total, however big the
+    // totals are drawn (fitted_life_size's, from the parts' room), for a
+    // commander chip between them (two players' totals in portrait are
+    // big). Where the controls in the middle hold a spot back, the life
+    // total goes down toward its player instead, as far as keeps its
+    // capitals, and a little, inside its part; its room is measured again
+    // there, and the totals' size fitted again from where they are now.
     life_half := f32'fitted_life_size(layout) * LIFE_CAP_SHARE / 2
     for *seat: layout.seats[:n] {
         above := Math.max(ATTACK_ABOVE_CELLS * cell_of(layout), life_half + ATTACK_LIFE_GAP * cell_of(layout))
         seat.icon = clear_of_controls(size, centre, seat.middle, seat.middle - seat.toward * above)
-        // (no further than keeps the life total's capitals, and a little,
-        // inside its part toward its player)
-        *short := above - Math.dot(seat.middle - seat.icon, seat.toward)
-        along := Math.dot(seat.middle - centre, seat.toward)
-        short = Math.min(short, seat.reach - life_half - 0.3 * cell_of(layout) - along)
-        if short > 0 then seat.middle = seat.middle + seat.toward * short
+        held_back := above - Math.dot(seat.middle - seat.icon, seat.toward)
+        room_ahead := seat.reach - life_half - 0.3 * cell_of(layout) - Math.dot(seat.middle - centre, seat.toward)
+        down := Math.min(held_back, room_ahead)
+        if down > 0 {
+            seat.middle = seat.middle + seat.toward * down
+            seat.room = room_round(seat.middle, seat.outline[:seat.count])
+        }
         seat.clear = controls_clearance(size, centre, seat.icon)
     }
     layout.life_size = fitted_life_size(layout)
+}
+
+// How far a point is from the nearest side of a part's outline.
+room_round :: (at: V2, points: [] V2 -> f32) #pure {
+    *room: f32 = 1e30
+    for a, i: points { room = Math.min(room, distance_to_segment(at, a, points[(i + 1) % points.count])) }
+    return room
 }
 
 // A life total's capitals' height, as a share of its font's size (Crimson

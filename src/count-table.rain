@@ -1,7 +1,6 @@
 // The table opens over a stationary count slider. This canvas contains only
 // the table surface and its controls; popups stay above it.
-count_table_canvas: Draw.Canvas
-count_table_made: bool
+count_table: Kept_Canvas
 
 COUNT_OPEN_TIME :: 0.12
 COUNT_CLOSE_TIME :: 0.22
@@ -22,25 +21,6 @@ step_count_opening :: (opened: f32, held: bool, seconds: f32 -> f32) #pure {
     if held then return Math.min(1, opened + seconds / COUNT_OPEN_TIME)
     return Math.max(0, opened - seconds / COUNT_CLOSE_TIME)
 }
-prepare_count_table :: (size: Wide.i32x2 -> bool) {
-    if !count_table_made {
-        if made := Draw.create_canvas(size) { count_table_canvas = made }
-        else if os_error { return false }
-        count_table_made = true
-    }
-    else if count_table_canvas.size != size {
-        if count_table_canvas.resize(size) is os_error then return false
-    }
-    return true
-}
-destroy_count_table :: () {
-    if count_table_made then count_table_canvas.destroy()
-    count_table_made = false
-    if player_ui_made then player_ui_canvas.destroy()
-    player_ui_made = false
-    if pill_made then pill_canvas.destroy()
-    pill_made = false
-}
 Count_Split_Params :: struct {
     screen: V4       // size, split x, half separation
     button: V4       // centre, hole radius, edge bevel
@@ -57,15 +37,10 @@ count_table_shade :: (from: Draw.Quad_Between, split: Shader.Uniforms(Count_Spli
     coverage := Math.clamp(Math.min(distance, hole) + 0.5, 0, 1)
     if coverage <= 0 then return ⟨0, 0, 0, 0⟩
     surface := Shader.sample_level(table, filtering, source / split.screen.xy, 0)
-    // The same cosine bowl and rolled wall as the channels between players.
-    depth := Math.min(distance, hole)
-    across := Math.clamp(depth / Math.max(split.button.w, 1), 0, 1)
-    wall := Math.sin(across * f32'Math.PI)
-    floor := (1 + Math.cos(across * f32'Math.PI)) * 0.5
+    // (walled as the channels between players are)
+    across := Math.clamp(Math.min(distance, hole) / Math.max(split.button.w, 1), 0, 1)
     outward := if hole < distance then Math.normalize(split.button.xy - source) else V2⟨0 - side, 0⟩
-    facing := Math.dot(outward, PART_LIGHT)
-    shaded := surface.xyz * (1 - floor * 0.68) * (1 + Math.min(facing, 0) * wall * 0.48)
-    rgb := Math.mix(shaded, PART_WARM, Math.max(facing, 0) * wall * 0.38)
+    rgb := channel_wall(surface.xyz, across, Math.dot(outward, PART_LIGHT))
     return V4⟨rgb.x, rgb.y, rgb.z, surface.w⟩ * coverage
 }
 Count_Split :: shader { vertex: Draw.quad_place; fragment: count_table_shade }
@@ -129,10 +104,10 @@ draw_count_ring :: (canvas: *Draw.Canvas, layout: Layout, screen: Screen_State) 
 // The settings: the system's button splits the table along its horizontal
 // seam, the halves above and below sliding apart (SETTINGS_SPLIT_HALF
 // cells each) out from under the pill, which stays where it is, its buttons
-// as they are, lying on them (drawn apart, over them). In
-// the steel channel that opens, the motion's button to the left of undo,
-// Reset to the right of the system's button, and Quit to the right of
-// Reset.
+// as they are, lying on them (drawn apart, over them). In the steel channel
+// that opens are the settings' buttons (draw_settings'): the motion's left
+// of undo; Reset, the orientation's, the brightness slider and Quit right
+// of the system's button.
 
 SETTINGS_SPLIT_HALF :: CAPSULE_HALF + 0.06
 
@@ -163,16 +138,12 @@ settings_split_shade :: (from: Draw.Quad_Between, split: Shader.Uniforms(Setting
     coverage := Math.clamp(depth + 0.5, 0, 1)
     surface := Shader.sample_level(table, filtering, source / split.screen.xy, 0)
     across := Math.clamp(depth / Math.max(split.button.w, 1), 0, 1)
-    wall := Math.sin(across * f32'Math.PI)
-    floor := (1 + Math.cos(across * f32'Math.PI)) * 0.5
     outward := if hole < seam then Math.normalize(split.button.xy - source) else V2⟨0, 0 - side⟩
-    facing := Math.dot(outward, PART_LIGHT)
-    shaded := surface.xyz * (1 - floor * 0.68) * (1 + Math.min(facing, 0) * wall * 0.48)
-    rgb := Math.mix(shaded, PART_WARM, Math.max(facing, 0) * wall * 0.38)
+    rgb := channel_wall(surface.xyz, across, Math.dot(outward, PART_LIGHT))
     return V4⟨rgb.x, rgb.y, rgb.z, 1⟩ * coverage
 }
 
-// The pill, drawn apart (pill_canvas), laid over the halves: its shape, but
+// The pill, drawn apart (pill_layer), laid over the halves: its shape, but
 // for the players' button's hole.
 pill_over_shade :: (from: Draw.Quad_Between, split: Shader.Uniforms(Settings_Split_Params), pill: Shader.Texture_2D, filtering: Shader.Sampler -> colour: V4) {
     p := from.pixel
@@ -184,20 +155,8 @@ Pill_Over :: shader { vertex: Draw.quad_place; fragment: pill_over_shade }
 PILL_OVER :: Pill_Over(Draw.SHADER_TARGET)
 
 // The canvas the pill's drawn in apart, while the table's split.
-pill_canvas: Draw.Canvas
-pill_made: bool
+pill_layer: Kept_Canvas
 
-prepare_pill :: (size: Wide.i32x2 -> bool) {
-    if !pill_made {
-        if made := Draw.create_canvas(size) { pill_canvas = made }
-        else if os_error { return false }
-        pill_made = true
-    }
-    else if pill_canvas.size != size {
-        if pill_canvas.resize(size) is os_error then return false
-    }
-    return true
-}
 // How far a point is outside the pill (pill: its middle, half width, half
 // height; negative inside).
 pill_at :: (q: V2, pill: V4 -> f32) #pure {
@@ -237,9 +196,9 @@ draw_settings_split :: (canvas: *Draw.Canvas, layout: Layout, screen: Screen_Sta
     cell := cell_of(layout)
     s := settings_split_offset(cell, screen.settings_shown)
     *pill_drawn := false
-    if prepare_pill(canvas.size) {
-        pill_canvas.clear(Draw.rgb(0x000000))
-        draw_capsule(pill_canvas, layout, game, screen)
+    if pill_layer.prepare(canvas.size) {
+        pill_layer.canvas.clear(Draw.rgb(0x000000))
+        draw_capsule(pill_layer.canvas, layout, game, screen)
         pill_drawn = true
     }
     draw_steel(canvas, layout)
@@ -253,24 +212,24 @@ draw_settings_split :: (canvas: *Draw.Canvas, layout: Layout, screen: Screen_Sta
                                     ⟨0.18 * cell, 0.14 * cell, Math.max(0.10 * cell, 1), Math.smoothstep(0, 0.3 * cell, s) * 0.42⟩⟩
     canvas.draw_shader(⟨0, 0⟩, layout.size, SETTINGS_SHADOW.code, SETTINGS_SHADOW.bindings.split, params)
     canvas.draw_shader_canvas(⟨0, 0⟩, layout.size, SETTINGS_SPLIT.code, SETTINGS_SPLIT.bindings.split, params,
-                              count_table_canvas, SETTINGS_SPLIT.bindings.table, SETTINGS_SPLIT.bindings.filtering)
+                              count_table.canvas, SETTINGS_SPLIT.bindings.table, SETTINGS_SPLIT.bindings.filtering)
     if pill_drawn {
         reach := V2⟨CAPSULE_REACH + 0.4, CAPSULE_HALF + 0.4⟩ * cell
         canvas.draw_shader_canvas(layout.centre - reach, reach * 2, PILL_OVER.code, PILL_OVER.bindings.split, params,
-                                  pill_canvas, PILL_OVER.bindings.pill, PILL_OVER.bindings.filtering)
+                                  pill_layer.canvas, PILL_OVER.bindings.pill, PILL_OVER.bindings.filtering)
     }
 }
 
 draw :: (canvas: *Draw.Canvas, layer: *Draw.Canvas, layout: Layout, game: Game, fonts: Fonts, screen: Screen_State, volleys: Volleys = ⟨⟩) {
     cell := cell_of(layout)
     shift := count_split_offset(cell, screen.counts_shown)
-    if screen.settings_shown > 0 and prepare_count_table(canvas.size) {
+    if screen.settings_shown > 0 and count_table.prepare(canvas.size) {
         // (the table without the pill, which lies over its halves)
-        draw_table(count_table_canvas, layer, layout, game, fonts, screen, volleys, with_pill: false)
+        draw_table(count_table.canvas, layer, layout, game, fonts, screen, volleys, with_pill: false)
         draw_settings_split(canvas, layout, screen, game)
     }
-    else if prepare_count_table(canvas.size) {
-        draw_table(count_table_canvas, layer, layout, game, fonts, screen, volleys)
+    else if count_table.prepare(canvas.size) {
+        draw_table(count_table.canvas, layer, layout, game, fonts, screen, volleys)
         // The stationary mechanism is revealed by the opening, not painted on top.
         canvas.clear(Draw.rgb(0x101318))
         draw_count_bed(canvas, layout, shift)
@@ -281,7 +240,7 @@ draw :: (canvas: *Draw.Canvas, layer: *Draw.Canvas, layout: Layout, game: Game, 
                                      ⟨0.22 * cell, 0.14 * cell, Math.max(0.10 * cell, 1), Math.smoothstep(0, 0.3 * cell, shift) * 0.42⟩⟩
         canvas.draw_shader(⟨0, 0⟩, layout.size, COUNT_GULLEY_SHADOW.code, COUNT_GULLEY_SHADOW.bindings.split, params)
         canvas.draw_shader_canvas(⟨0, 0⟩, layout.size, COUNT_SPLIT.code, COUNT_SPLIT.bindings.split, params,
-                                  count_table_canvas, COUNT_SPLIT.bindings.table, COUNT_SPLIT.bindings.filtering)
+                                  count_table.canvas, COUNT_SPLIT.bindings.table, COUNT_SPLIT.bindings.filtering)
     }
     else {
         draw_table(canvas, layer, layout, game, fonts, screen, volleys)
@@ -294,7 +253,7 @@ draw :: (canvas: *Draw.Canvas, layer: *Draw.Canvas, layout: Layout, game: Game, 
     for d: screen.drags { if d.active then draw_drag(canvas, layout, game, fonts, d, screen.foil_time) }
     for picker: screen.pickers {
         // (its glass blurs the table, drawn apart, where it was)
-        if picker.open then draw_picker(canvas, layout, fonts, picker, game, ARTIFACT, count_table_canvas, count_table_made)
+        if picker.open then draw_picker(canvas, layout, fonts, picker, count_table.canvas, count_table.made)
     }
     // (each player's colour toggles and options, over everything else)
     if screen.settings_shown <= 0 {
@@ -311,8 +270,7 @@ draw :: (canvas: *Draw.Canvas, layer: *Draw.Canvas, layout: Layout, game: Game, 
 
 UNDER_TABLE_BYTES :: #data "../textures/under-table-steel-v1.png"
 under_table_image: Draw.Image
-player_ui_canvas: Draw.Canvas
-player_ui_made: bool
+player_ui: Kept_Canvas
 
 count_player_visibility :: (opened: f32 -> f32) #pure {
     t := Math.clamp(opened, 0, 1)
@@ -326,17 +284,6 @@ step_count_player_ui :: (visible: f32, opened: f32, held: bool, seconds: f32 -> 
     }
     if held then return visible
     return Math.min(1, visible + seconds / COUNT_UI_RETURN_TIME)
-}
-prepare_player_ui :: (size: Wide.i32x2 -> bool) {
-    if !player_ui_made {
-        if made := Draw.create_canvas(size) { player_ui_canvas = made }
-        else if os_error { return false }
-        player_ui_made = true
-    }
-    else if player_ui_canvas.size != size {
-        if player_ui_canvas.resize(size) is os_error then return false
-    }
-    return true
 }
 Player_Fade_Params :: struct { screen: V4 }
 player_fade_shade :: (from: Draw.Quad_Between, fade: Shader.Uniforms(Player_Fade_Params), content: Shader.Texture_2D, filtering: Shader.Sampler -> colour: V4) {
@@ -363,7 +310,7 @@ count_bed_shade :: (from: Draw.Quad_Between, bed: Shader.Uniforms(Count_Bed_Para
         outward := Math.normalize(V2⟨gx, gy⟩ + V2⟨0.00001, 0⟩)
         facing := Math.dot(outward, PART_LIGHT)
         rim := Math.exp(0 - Math.pow((d + bed.material.y * 0.35) / Math.max(bed.material.y, 1), 2))
-        grain := Math.dot(texel, V3⟨0.2126, 0.7152, 0.0722⟩)
+        grain := Math.dot(texel, LUMA)
         floor := V3⟨0.008, 0.006, 0.004⟩ * (0.9 + grain * 0.25)
         bronze := V3⟨0.62, 0.43, 0.23⟩ + V3⟨0.28, 0.25, 0.18⟩ * Math.max(facing, 0)
         lining := Math.mix(floor, bronze, rim)

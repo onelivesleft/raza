@@ -19,7 +19,6 @@ Volley :: struct {
     amount: i32
     returned: i32   // lifelink points that reached the attacker
     landed: i32
-    lethal: bool
     kind:   Attack     // what it does as it lands (deal_attack's)
     age:    f32
 }
@@ -34,7 +33,6 @@ Volleys :: struct {
 // life shown.
 VOLLEY_GATHER :: 0.14
 VOLLEY_TRAVEL :: 0.42
-VOLLEY_LAND :: 0.36
 LOSS_OUTWARD :: 0.72
 LOSS_DURATION :: 1.35
 LIFELINK_TURN :: 0.45
@@ -86,16 +84,11 @@ life_recoil :: (volleys: Volleys, player: i64, cell: f32 -> offset: V2, turn: f3
 // the table to their life total, what it does shown happening as it lands:
 // the life counting down (by pending, until it has), and a lifelink's
 // attacker's life up, a poison's counters up, a commander's damage chip
-// growing (shown_game's). It's lethal when it made its commander's damage
-// or the poison lethal.
+// growing (shown_game's).
 strike :: (game: *Game, volleys: *Volleys, layout: Layout, pending: *[MAX_PLAYERS] [MAX_PLAYERS] i32,
            from: i64, to: i64, amount: i32, kind := Attack.COMMANDER) {
     if amount <= 0 or from == to then return
-    was := game.commander[to][from]
-    poisoned := game.poison[to]
     game.deal_attack(kind, from, to, amount)
-    lethal := (is_commander(kind) and was < LETHAL_COMMANDER_DAMAGE and game.commander[to][from] >= LETHAL_COMMANDER_DAMAGE) or
-              (kind == .POISON and poisoned < LETHAL_POISON and game.poison[to] >= LETHAL_POISON)
     if kind != .POISON then pending[to][from] += amount
     // (the path ends at their life total whatever the finger's over now)
     start := attack_icon(layout, game, from, kind)
@@ -104,13 +97,13 @@ strike :: (game: *Game, volleys: *Volleys, layout: Layout, pending: *[MAX_PLAYER
     bend := middle + V2⟨0, -Math.min(Math.length(end - start) * 0.45, cell_of(layout) * 3.5)⟩
     id := volleys.next_id
     volleys.next_id = if volleys.next_id >= 0xFFFF then 1 else volleys.next_id + 1
-    `global volleys.list.add(⟨id: id, from: from, to: to, start: start, bend: bend, end: end, amount: amount, lethal: lethal,
-                             kind: kind⟩)
+    `global volleys.list.add(⟨id: id, from: from, to: to, start: start, bend: bend, end: end, amount: amount, kind: kind⟩)
 }
 
 // The volleys moved on a frame: each as it lands has its points come off
 // what's pending over its landing, a point at a time; one whose last point
-// landed a second ago (its recoil and "-1"s over) is done.
+// landed LOSS_DURATION seconds ago (its recoil and "-1"s over, a lifelink's
+// points back with their attacker) is done.
 steer_volleys :: (volleys: *Volleys, pending: *[MAX_PLAYERS] [MAX_PLAYERS] i32, seconds: f32) {
     for *volley: volleys.list {
         landing := volley_landing(volley)

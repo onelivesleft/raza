@@ -89,22 +89,32 @@ material_at :: (atlas: Shader.Texture_2D, filtering: Shader.Sampler, tile: i32, 
     return Math.mix(Math.mix(p11, p01, weight.x), Math.mix(p10, p00, weight.x), weight.y)
 }
 
-// The atlas follows WUBRG, then colourless and gold; never infer an identity
-// from its current RGB palette, which may change.
+// The atlas's tiles: WUBRG's (a colour's tile is its Mana's value), then
+// colourless's and gold's. (Never infer an identity from its current RGB
+// palette, which may change.)
+TILE_MARBLE   :: 0       // white's
+TILE_WATER    :: 1       // blue's
+TILE_BLACK    :: 2
+TILE_CRACKS   :: 3       // red's
+TILE_FOREST   :: 4       // green's
+TILE_ARTIFACT :: 5       // colourless's
+TILE_GOLD     :: 6       // two colours or more
+
 material_tile :: (identity: Identity -> i32) #pure {
     *count: i32 = 0
-    *tile: i32 = 5
+    *tile: i32 = TILE_ARTIFACT
     for colour: [5] Mana⟨.WHITE, .BLUE, .BLACK, .RED, .GREEN⟩ {
         if has_colour(identity, colour) { count += 1; tile = i32'u8'colour }
     }
-    return if count > 1 then 6 else tile
+    return if count > 1 then TILE_GOLD else tile
 }
 
 material_tiles_follow_identity :: () #test {
-    assert(material_tile(0) == 5)
+    assert(material_tile(0) == TILE_ARTIFACT)
     for i: 0 < 5 { assert(material_tile(u8'1 << u8'i) == i32'i) }
+    assert(material_tile(u8'1 << u8'Mana.WHITE) == TILE_MARBLE and material_tile(u8'1 << u8'Mana.RED) == TILE_CRACKS)
     for i: 0 < 5 {
-        for j: i + 1 < 5 { assert(material_tile((u8'1 << u8'i) | (u8'1 << u8'j)) == 6) }
+        for j: i + 1 < 5 { assert(material_tile((u8'1 << u8'i) | (u8'1 << u8'j)) == TILE_GOLD) }
     }
 }
 

@@ -22,22 +22,19 @@ Attack :: enum u8 {
 }
 
 // A player's attacks turned on: a bit for each, by Attack's value (DAMAGE's
-// always set).
-Attacks :: #alias u8
+// always set, and always on).
+Attacks :: #alias u16
 STARTING_ATTACKS :: Attacks'3                  // damage, and commander damage
 EVERY_STARTING_ATTACKS :: [MAX_PLAYERS] Attacks⟨3, 3, 3, 3, 3, 3⟩
 
 has_attack :: (attacks: Attacks, kind: Attack -> bool) #pure {
     if kind == .DAMAGE then return true
-    // Plain damage was always enabled in saved games. Reuse its set bit
-    // to mean LOSE_TWO is off, preserving the existing one-byte format.
-    if kind == .LOSE_TWO then return attacks & 1 == 0
     return attacks & attack_bit(kind) != 0
 }
 
+// An attack's bit in Attacks.
 attack_bit :: (kind: Attack -> Attacks) #pure {
-    if kind == .LOSE_TWO then return 1
-    return u8'1 << u8'kind
+    return Attacks'1 << Attacks'u8'kind
 }
 
 self_life_delta :: (kind: Attack -> i32) #pure {
@@ -106,10 +103,11 @@ facing_of :: (seat: Seat -> f32) #pure {
 // comes back.
 GOING :: [MAX_PLAYERS + 1] Identity⟨0, 0, 0, mono(.GREEN), mono(.BLACK), mono(.WHITE), 0⟩
 
-// Which of a count's seats holds a slot's name (or colours), or -1.
-seat_of :: (identity: [MAX_PLAYERS] Identity, count: i64, name: Identity -> i64) #pure {
+// Which of a count's seats holds a slot's name (or colours); absent if none
+// does.
+seat_of :: (identity: [MAX_PLAYERS] Identity, count: i64, name: Identity -> i64) [absent] #pure {
     for c, k: identity[:count] { if c == name then return k }
-    return -1
+    fail: absent
 }
 
 // Every one of the six players is kept, at the table or not: a game of n
@@ -214,7 +212,11 @@ starting_colours ::(size: V2, players: i64 -> identity: [MAX_PLAYERS] Identity) 
     for colours, i: from_top { identity[(top + i) % MAX_PLAYERS] = colours }
     *n: i64 = MAX_PLAYERS
     while n > Math.clamp(players, 2, MAX_PLAYERS) {
-        identity = carried_down(identity, equal_splits(n - 1, size), equal_splits(n, size), seat_of(identity, n, GOING[n]))
+        // (the slot GOING names, whose seat goes; where none has its name,
+        // whichever seat moves the lines least: morph_choice's -1)
+        *going: i64 = -1
+        if seat := seat_of(identity, n, GOING[n]) is not absent then going = seat
+        identity = carried_down(identity, equal_splits(n - 1, size), equal_splits(n, size), going)
         n -= 1
     }
 }
@@ -238,6 +240,29 @@ Game :: struct {
 new_game :: (players: i64, identity: [MAX_PLAYERS] Identity = ⟨⟩, attacks: [MAX_PLAYERS] Attacks = EVERY_STARTING_ATTACKS -> game: Game) #pure {
     game = ⟨players: Math.clamp(players, 2, MAX_PLAYERS), identity: identity, attacks: attacks⟩
     for *l: game.life { l = STARTING_LIFE }
+}
+
+// The Game as builds before Attacks had a bit for each kept it: the same,
+// but each player's attacks a byte, with the bit of LOSE_TWO (Attack 8,
+// past a byte) kept in plain damage's (always on): set, LOSE_TWO off.
+Game_Of_Bytes :: struct {
+    players:   i64 = 4
+    life:      [MAX_PLAYERS] i32
+    tax:       [MAX_PLAYERS] i32
+    commander: [MAX_PLAYERS] [MAX_PLAYERS] i32
+    identity:  [MAX_PLAYERS] Identity
+    poison:    [MAX_PLAYERS] i32
+    attacks:   [MAX_PLAYERS] u8 = ⟨3, 3, 3, 3, 3, 3⟩
+}
+
+// A Game_Of_Bytes as a Game: its attacks a bit each (no players, kept as
+// none: nothing was kept that way either).
+from_bytes :: (old: Game_Of_Bytes -> game: Game) #pure {
+    game = ⟨players: old.players, life: old.life, tax: old.tax, commander: old.commander, identity: old.identity, poison: old.poison⟩
+    for byte, k: old.attacks {
+        lose_two := if byte & 1 == 0 then attack_bit(.LOSE_TWO) else Attacks'0
+        game.attacks[k] = Attacks'byte | 1 | lose_two
+    }
 }
 
 // The game kept from the last run (Defaults', got with no players as its
