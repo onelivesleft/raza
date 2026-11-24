@@ -1184,7 +1184,8 @@ volleys_land_a_point_at_a_time :: () #test {
     *age: f32 = 0
     *shown_before: i32 = 40
     *steps := 0
-    for _: 0 < 120 {
+    frames := i64'Math.ceil((bolt_impact(volleys.list[0], 6) + LOSS_DURATION) * 60) + 1
+    for _: 0 < frames {
         steer_volleys(volleys, pending, 1.0 / 60)
         age += 1.0 / 60
         now := shown_game(game, pending).life[0]
@@ -1225,7 +1226,7 @@ volleys_land_apart :: () #test {
     strike(game, volleys, layout, pending, 1, 0, 7)
     steer_volleys(volleys, pending, 0.1)
     assert(pending[0][1] == 7 and shown_game(game, pending).life[0] == 37, "the first landed, the second in flight: «pending[0][1]»")
-    steer_volleys(volleys, pending, 2)
+    steer_volleys(volleys, pending, bolt_impact(volleys.list[1], 6) + LOSS_DURATION)
     assert(pending[0][1] == 0 and shown_game(game, pending).life[0] == 30 and volleys.list.count == 0)
 }
 
@@ -2023,4 +2024,15 @@ forest_reseeds_only_while_hidden :: () #test {
     }
     assert(active_ticks < 480)
     for count: changes { assert(count >= 2) }
+}
+
+lifelink_face_follows_reversal :: () #test {
+    pivot := V2⟨40, 20⟩
+    attacker := V2⟨-100, 20⟩
+    assert(lifelink_disc_facing(pivot, ⟨0, 0⟩, attacker) == 1)
+    assert(lifelink_disc_facing(pivot, ⟨0, 4⟩, attacker) == 1)
+    started := lifelink_disc_facing(pivot, ⟨-2, 0⟩, attacker)
+    assert(started > 0 and started < 1)
+    assert(lifelink_disc_facing(pivot, ⟨-28, 0⟩, attacker) < 0)
+    assert(lifelink_disc_facing(pivot, attacker - pivot, attacker) == -1)
 }

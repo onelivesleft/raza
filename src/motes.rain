@@ -35,7 +35,9 @@ Volleys :: struct {
 VOLLEY_GATHER :: 0.14
 VOLLEY_TRAVEL :: 0.42
 VOLLEY_LAND :: 0.36
-LIFELINK_TURN :: 0.20
+LOSS_OUTWARD :: 0.72
+LOSS_DURATION :: 1.35
+LIFELINK_TURN :: 0.45
 LIFELINK_FLIGHT :: 0.58
 LIFELINK_ARRIVAL :: LIFELINK_TURN + LIFELINK_FLIGHT
 
@@ -49,7 +51,7 @@ bolt_delay :: (j: i64, count: i64 -> f32) #pure {
 }
 volley_landing :: (v: Volley -> f32) #pure { return VOLLEY_GATHER + VOLLEY_TRAVEL }
 volley_land :: (v: Volley -> f32) #pure { return bolt_delay(i64'Math.max(v.amount - 1, 0), i64'v.amount) }
-volley_after :: (v: Volley -> f32) #pure { return volley_land(v) + 1.0 }
+volley_after :: (v: Volley -> f32) #pure { return volley_land(v) + LOSS_DURATION }
 bolt_impact :: (v: Volley, j: i64 -> f32) #pure {
     return volley_landing(v) + bolt_delay(j, i64'v.amount)
 }

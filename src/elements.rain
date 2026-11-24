@@ -172,6 +172,15 @@ loss_disc_shade :: (from: Draw.Quad_Between, token: Shader.Uniforms(Loss_Disc_Pa
 Loss_Disc :: shader { vertex: Draw.quad_place; fragment: loss_disc_shade }
 LOSS_DISC :: Loss_Disc(Draw.SHADER_TARGET)
 
+// Positive shows the loss face, zero is edge-on, negative shows the gain.
+// Only displacement back toward the attacker can reveal the gain face.
+lifelink_disc_facing :: (pivot: V2, return_travel: V2, attacker: V2 -> f32) #pure {
+    home := attacker - pivot
+    fraction_back := Math.dot(return_travel, home) / Math.max(Math.dot(home, home), 0.001)
+    flip := Math.smoothstep(0, 0.55, Math.sqrt(Math.clamp(fraction_back, 0, 1)))
+    return Math.cos(f32'Math.PI * flip)
+}
+
 // Each landed point of life flies out along the impact, facing the victim:
 // a "-1" of their life (poison's tokens are their own count: none).
 draw_bolt_losses :: (canvas: *Draw.Canvas, layout: Layout, fonts: Fonts, volleys: Volleys) {
@@ -186,29 +195,31 @@ draw_bolt_losses :: (canvas: *Draw.Canvas, layout: Layout, fonts: Fonts, volleys
         seat := layout.seats[v.to]
         for j: 0 < i64'v.landed {
             age := v.age - bolt_impact(v, j)
-            duration: f32 = if link then LIFELINK_ARRIVAL else 0.85
+            duration: f32 = if link then LIFELINK_ARRIVAL else LOSS_DURATION
             if age < 0 or age >= duration then continue
             way := bolt_direction(v, j, cell)
             spread := Math.sin(f32'j * 2.39996 + f32'v.id * 1.73)
             side := V2⟨0 - way.y, way.x⟩ * spread
-            brake: f32 = if link then LIFELINK_TURN else 0.40
+            brake: f32 = if link then LIFELINK_TURN else LOSS_OUTWARD
             remaining := 1 - Math.clamp(age / brake, 0, 1)
             out_time := brake / 3 * (1 - remaining * remaining * remaining)
-            *at := v.end + (way * (0.45 + out_time * 8) + side * (0.28 + out_time * 4)) * cell
+            origin := v.end + (way * 0.45 + side * 0.28) * cell
+            push := (way * 10 + side * 5) * cell
+            pivot := origin + push * (brake / 3)
+            outbound := if age >= brake then pivot else origin + push * out_time
+            *at := outbound
             *turn := seat.angle + spread * out_time * 1.1
-            returning := link and age >= LIFELINK_TURN
-            if returning {
-                attacker := layout.seats[v.from]
+            attacker := layout.seats[v.from]
+            if link and age >= LIFELINK_TURN {
                 progress := (age - LIFELINK_TURN) / LIFELINK_FLIGHT
-                bend := (at + attacker.middle) / 2 + across_path(at, attacker.middle) * (cell * spread * 0.9)
-                at = curve_at(at, bend, attacker.middle, progress * progress)
+                bend := (pivot + attacker.middle) / 2 + across_path(pivot, attacker.middle) * (cell * spread * 0.9)
+                at = curve_at(pivot, bend, attacker.middle, progress * progress)
                 delta := attacker.angle - turn
                 turn += Math.atan2(Math.sin(delta), Math.cos(delta)) * Math.smoothstep(0, 1, progress)
             }
-            flip := if link then Math.smoothstep(LIFELINK_TURN - 0.16, LIFELINK_TURN + 0.16, age) else 0
-            facing := Math.cos(f32'Math.PI * flip)
-            fade: f32 = if link then 1 else 1 - Math.smoothstep(0.40, duration, age)
-            face: f32 = if returning then 1 else 0
+            facing: f32 = if link then lifelink_disc_facing(pivot, at - outbound, attacker.middle) else 1
+            fade: f32 = if link then 1 else 1 - Math.smoothstep(LOSS_OUTWARD, duration, age)
+            face: f32 = if facing < 0 then 1 else 0
             params := Loss_Disc_Params⟨⟨at.x, at.y, radius, fade⟩, ⟨Math.cos(turn), Math.sin(turn), facing, face⟩⟩
             half := V2⟨radius + 1, radius + 1⟩
             canvas.draw_shader_canvas(at - half, half * 2, LOSS_DISC.code, LOSS_DISC.bindings.token, params,

@@ -1245,7 +1245,7 @@ load_fonts :: (family: string, layout: Layout -> fonts: Fonts) [os_error: Draw.D
     fonts.life_size = life
     if change := Draw.load_font(family, i32'(f32'life * DRUM_CHANGE), 500) { fonts.change = change } else if os_error { fail: os_error }
     if small := Draw.load_font(family, i32'(cell * 0.3), 600) { fonts.small = small } else if os_error { fail: os_error }
-    if loss := Draw.load_font(family, i32'(cell * 0.27), 600) { fonts.loss = loss } else if os_error { fail: os_error }
+    if loss := Draw.load_font(family, 2 * i32'(cell * 0.27), 600) { fonts.loss = loss } else if os_error { fail: os_error }
     if label := Draw.load_font(family, i32'(cell * 0.45), 500) { fonts.label = label } else if os_error { fail: os_error }
     if output := Draw.load_font(family, i32'(cell * 0.8), 500) { fonts.output = output } else if os_error { fail: os_error }
     if mana := Draw.load_font(ICON_FAMILY, i32'(cell * MANA_EM)) { fonts.mana = mana } else if os_error { fail: os_error }
