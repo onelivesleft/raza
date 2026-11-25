@@ -21,9 +21,6 @@ starting it.
 
 ## Known follow-ups
 
-- [ ] **The release build is behind the code.** `release/Raza.exe` was
-  built before the latest changes: rebuild it and commit it with the next
-  change meant for the tablet.
 - [ ] **One slow start after the surface shader changes.** A release
   build shows its first frame 0.6 s from the start. But the first start
   after the parts' surface shader changes (every colour's material, the
