@@ -382,8 +382,12 @@ change beside it.
 The parts' surfaces are the costliest thing drawn (one shader with every
 material), and they move slowly, so they're kept in a canvas of their own:
 each frame one part's is drawn again, in turn, if it's moved since it was
-(none while Motion's off), and all of them when anything else they show
-changes (the size, the lines, a part's colours, who's out or aimed at).
+(none while Motion's off); a part again at once when anything else it
+shows changes (its shape as a line beside it moves, its colours, whether
+it's out or its channels lit), over what was there, so a line's drag
+redraws its two parts alone, and all of them from clear once nothing's
+changed for a quarter of a second; and all of them when the size or the
+count changes.
 The light layer and its bloom are drawn only while something's lit (a
 volley). Draw_Vulkan keeps the driver's compiled pipelines in
 %LOCALAPPDATA%\Raza\vulkan_pipelines.bin, saved only when one was compiled
@@ -397,9 +401,13 @@ when Intel's own shader cache has dropped them).
 The four textures' PNGs are decoded on threads of their own while the
 window and the device are made (materials.rain's start_textures and
 take_textures). Text with an outline or a shadow is drawn by Draw_Vulkan
-once a glyph (its outline and shadow kept in its atlas), and a life's
-recoil moves it but doesn't turn it: every new angle of a big life total is
-new glyphs, outlines and shadows, which filled the atlas over and over.
+once a glyph (its outline and shadow kept in its atlas), upright, and drawn
+turned at any angle; icons likewise (Icons makes each once, upright). A
+new size is new glyphs, so while a line's dragged the life totals keep
+their size until it's 15% out, fitting exactly once it's let go. Placing
+the toggles and options is a search, so each part's are kept until the
+part changes (a line's drag, its two parts'), the search going out from
+the button in rings and stopping once nothing nearer can fit.
 
 `Raza.exe -quit_after:8` prints when the first frame was shown, and the
 frames' work after it; `-busy` (with it) is a busy table to measure: a
@@ -465,9 +473,10 @@ quarter turn and kept on the screen:
  0  1  2  3  4
 ```
 
-The dragger's damage icons are hidden while it's open, the grid (its keys
-and buttons together) centred on where the finger let go, moved onto the
-screen if it must be. Below its keys are two glass buttons, each half the grid's
+The grid (its keys and buttons together) is centred on where it was asked
+for (where the finger let go, or the life+, life- or drum's + or - was
+touched), moved onto the screen if it must be; the player's damage icons,
+shortcuts and tax stay as they are, and work as they do without it. Below its keys are two glass buttons, each half the grid's
 width: the cross on their left, its glass tinted red, and on their right one
 tinted green showing the attack it makes (the damage icon's symbol, the
 commander's or plain damage's). It opens at 10 (10 and 0 chosen, shown

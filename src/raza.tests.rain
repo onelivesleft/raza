@@ -128,7 +128,7 @@ grids_centred_where_asked :: () #test {
         cell := cell_of(layout)
         for k: 0 < 4 {
             seat := layout.seats[k]
-            origin, angle, pitch := picker_frame(layout, Picker⟨open: true, from: k, to: k, kind: .LIFE_UP, centred: true, at: layout.centre⟩)
+            origin, angle, pitch := picker_frame(layout, Picker⟨open: true, from: k, to: k, kind: .LIFE_UP, at: layout.centre⟩)
             below := (GLASS_PAD + PICK_BUTTON_GAP + PICK_BUTTON_TALL) * cell
             middle := placed(origin, angle, V2⟨0, (below - f32'PICK_ROWS * pitch) / 2⟩)
             assert(Math.length(middle - layout.centre) < 0.01, "«size», «k»: the grid centred where it was asked for: «middle»")
@@ -676,12 +676,11 @@ covers_the_screen_once :: (layout: Layout) {
     }
 }
 
-// The number grid, for each player of each count either way up, faces the
-// quarter turn nearest its player (an eighth of a turn from them at most),
-// its bottom along their damage icons' (unless the screen's edge moves it),
-// is on the screen, and each of its keys is the key it's drawn as (the
-// units 0 to 9 in the bottom two rows, the tens 00 to 90 above), the tick
-// and the cross where the damage icons are.
+// The number grid, for each player of each count either way up, let go
+// over the next player's life total, faces the quarter turn nearest its
+// player (an eighth of a turn from them at most), is on the screen, and
+// each of its keys is the key it's drawn as (the units 0 to 9 in the bottom
+// two rows, the tens 00 to 90 above), the tick and the cross below them.
 the_number_grid_is_by_its_player :: () #test {
     part_code :: (part: Picker_Part -> i64) {
         return if part is { case tens: 100 + i64'tens; case units: i64'units; case accept: -2; case cancel: -3; case outside: -1 }
@@ -691,7 +690,9 @@ the_number_grid_is_by_its_player :: () #test {
             layout := laid_out(players, size)
             cell := cell_of(layout)
             for seat, k: layout.seats[:players] {
-                picker := Picker⟨open: true, from: k, to: (k + 1) % players⟩
+                // (let go over the next player's life total)
+                to := (k + 1) % players
+                picker := Picker⟨open: true, from: k, to: to, at: layout.seats[to].middle⟩
                 origin, angle, pitch := picker_frame(layout, picker)
                 off := seat.angle - angle
                 assert(Math.abs(Math.atan2(Math.sin(off), Math.cos(off))) <= f32'Math.PI / 4 + 0.001, "«players» on «size», «k»: faces within an eighth of a turn")

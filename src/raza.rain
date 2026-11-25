@@ -18,6 +18,8 @@
 // each frame's work about two thirds of a debug build's.
 
 Raza :: program {
+    // (Windows' alone: Vulkan's renderer, the tablet's display and touch)
+    os: .WINDOWS
     icon: "../textures/raza.ico"
     subsystem: .WINDOWS
     debug {
@@ -33,7 +35,7 @@ Raza :: program {
 
 #import Draw(RENDERER: .VULKAN)
 #import Window
-#if #program.os == .WINDOWS { #import OS_Windows }
+#import OS_Windows
 #import Math
 #import System
 #import Wide
@@ -874,8 +876,8 @@ COMMANDER_BRONZE :: Draw.rgb(0xD09A5C)
 draw_damage_icons :: (canvas: *Draw.Canvas, layout: Layout, game: Game, screen: Screen_State, fonts: Fonts) {
     cell := cell_of(layout)
     for k: 0 < layout.count {
-        // (a player who isn't out, but for those whose number grids are open)
-        if is_out(game, k) or screen.pickers[k].open then continue
+        // (a player who isn't out)
+        if is_out(game, k) then continue
         seat := layout.seats[k]
         kinds, count := attacks_of(game.attacks[k])
         for kind: kinds[:count] {
@@ -1534,11 +1536,11 @@ aim :: (layout: Layout, game: Game, from: i64, at: V2, kind: Attack = .DAMAGE ->
     amount = amount_for(share, kind)
 }
 
-// The number grid, asked for by a drag past the life total along the aim
-// line: five keys across and four up, its bottom along the top of the
-// dragger's damage icons (hidden while it's open). The two rows nearest
-// them are the units, 0 to 4 then 5 to 9; the two above, the tens, 00 to
-// 40 then 50 to 90. It opens at 10 (10 and 0 chosen, shown green); a tens
+// The number grid, asked for by a drag let go past the life total along
+// the aim line, by life+ or life-, or by an open drum's + or -: five keys
+// across and four up, keys and buttons together centred where it was asked
+// for (at). The two rows nearest its player are the units, 0 to 4 then 5
+// to 9; the two above, the tens, 00 to 40 then 50 to 90. It opens at 10 (10 and 0 chosen, shown green); a tens
 // or a units touched is chosen. Below its keys are two glass buttons, each
 // half its width: the cross (tinted red, on its player's left) cancels,
 // and the tick (tinted green, showing the attack it makes) deals the two
@@ -1551,8 +1553,7 @@ Picker :: struct {
     tens:        i32 = 10      // the tens chosen (0, 10, ... 90)
     units:       i32           // the units chosen (0 to 9)
     kind:        Attack = .COMMANDER   // the drag's attack (life+'s or life-'s: its player's own life)
-    centred:     bool          // centred on at (where the finger let go, or touched), not over the damage icons
-    at:          V2
+    at:          V2            // where it was asked for: where the finger let go, or touched
 }
 
 // A key touched: its tens or units chosen.
@@ -1574,24 +1575,20 @@ picker_angle :: (layout: Layout, picker: Picker -> f32) #pure {
     return layout.seats[picker.from].angle
 }
 
-// Where the number grid is: the middle of its keys' bottom edge (the
-// bottom of the dragger's damage icons, as their player sees it, moved so
-// the grid's on the screen), the way it faces, and a key's pitch. In its
-// frame the keys are PICK_COLUMNS pitches across, centred on that point,
-// and PICK_ROWS up from it.
+// Where the number grid is: the middle of its keys' bottom edge (keys and
+// buttons together centred on where it was asked for, moved so the grid's
+// on the screen), the way it faces, and a key's pitch. In its frame the
+// keys are PICK_COLUMNS pitches across, centred on that point, and
+// PICK_ROWS up from it.
 picker_frame :: (layout: Layout, picker: Picker -> origin: V2, angle: f32, pitch: f32) #pure {
     cell := cell_of(layout)
     pitch = PICK_PITCH * cell
     angle = picker_angle(layout, picker)
-    seat := layout.seats[picker.from]
     margin := 0.15 * cell
     half := f32'PICK_COLUMNS / 2 * pitch + GLASS_PAD * cell
     up := f32'PICK_ROWS * pitch
     below := (GLASS_PAD + PICK_BUTTON_GAP + PICK_BUTTON_TALL) * cell
-    // (centred, keys and buttons, on where it was asked for; or just above
-    // the cross and the tick, which take the damage icons' places)
-    origin = if picker.centred then placed(picker.at, angle, V2⟨0, (up - below) / 2⟩)
-             else placed(seat.icon, seat.angle, V2⟨0, 0 - DAMAGE_ICON_RADIUS * cell⟩)
+    origin = placed(picker.at, angle, V2⟨0, (up - below) / 2⟩)
     // (moved, if it must be, to keep the keys and the buttons below them a
     // little in from the screen's edges)
     *low := V2⟨1e30, 1e30⟩
@@ -3310,7 +3307,7 @@ life_shortcut_at :: (layout: Layout, fonts: Fonts, game: Game, screen: Screen_St
     shortcut = .GAIN_ONE
     for i: 0 < layout.count {
         k := layout.count - 1 - i
-        if is_out(game, k) or screen.pickers[k].open or screen.drums[k].open then continue
+        if is_out(game, k) or screen.drums[k].open then continue
         width := life_area_width(fonts, game.life[k])
         chips := chip_places(layout, k, width, f32'fonts.life.cap_height, game.poison[k] > 0)
         for kind: LIFE_SHORTCUTS {
@@ -3327,7 +3324,7 @@ life_shortcut_at :: (layout: Layout, fonts: Fonts, game: Game, screen: Screen_St
 
 tax_button_at :: (layout: Layout, fonts: Fonts, game: Game, screen: Screen_State, at: V2 -> player: i64) [absent] {
     for k: 0 < layout.count {
-        if is_out(game, k) or screen.pickers[k].open or screen.drums[k].open then continue
+        if is_out(game, k) or screen.drums[k].open then continue
         width := life_area_width(fonts, game.life[k])
         places := chip_places(layout, k, width, f32'fonts.life.cap_height, game.poison[k] > 0)
         button := sliding_tax_place(layout, k, width, f32'fonts.life.cap_height, places[k], game.poison[k] > 0, screen.tax_slides[k])
@@ -4126,12 +4123,11 @@ draw_player_ui :: (canvas: *Draw.Canvas, layer: *Draw.Canvas, layout: Layout, ga
                                CHANNEL_TOUCH.code, CHANNEL_TOUCH.bindings.touch, params)
         }
     }
-    // The damage icons (the dragger's hidden while their number grid's
-    // open), then the volleys and the points they take.
+    // The damage icons, then the volleys and the points they take.
     draw_damage_icons(canvas, layout, game, screen, fonts)
     // (an open drum's tick and cross, coming in as its damage icons go)
     for drum, k: screen.drums {
-        if k >= layout.count or screen.pickers[k].open or !drum_showing(drum, k) then continue
+        if k >= layout.count or !drum_showing(drum, k) then continue
         shows := 1 - player_controls_visibility(drum, k)
         cross, tick, half := drum_buttons(layout, fonts, drum, k)
         if shows > 0 {
@@ -4269,7 +4265,7 @@ save_snapshots :: (folder: string) [failed: string] {
         if counts[i] == 5 and size[0] > size[1] {
             // (the number grid of a slanted seat's player, as raza_grid_5.png)
             *slanted: Screen_State = ⟨can_undo: true⟩
-            slanted.pickers[1] = ⟨open: true, from: 1, to: 0⟩
+            slanted.pickers[1] = ⟨open: true, from: 1, to: 0, at: finger⟩
             draw(canvas, layer, layout, game, fonts, slanted)
             slanted_path := `scratch "«folder»/raza_grid_5.png"
             if canvas.save_png(slanted_path) is os_error then fail: failed = "can't write «slanted_path»: «os_error»"
@@ -4308,7 +4304,7 @@ save_snapshots :: (folder: string) [failed: string] {
                 if canvas.save_png(black_path) is os_error then fail: failed = "can't write «black_path»: «os_error»"
             }
             *gridded: Screen_State = ⟨can_undo: true⟩
-            gridded.pickers[1] = ⟨open: true, from: 1, to: 0⟩
+            gridded.pickers[1] = ⟨open: true, from: 1, to: 0, at: finger⟩
             draw(canvas, layer, layout, game, fonts, gridded)
             grid_path := `scratch "«folder»/raza_grid.png"
             if canvas.save_png(grid_path) is os_error then fail: failed = "can't write «grid_path»: «os_error»"
@@ -4686,7 +4682,7 @@ main :: (args: [] string) [failed: string] {
             echo("«f64'(busy_frames - 1) / (Time.seconds_since_start() - first_shown), ⟨precision: 1⟩» frames a second after it")
         }
     }
-    #if #program.os == .WINDOWS { *was_minimized := false }
+    *was_minimized := false
     while Window.update_windows() {
         frame_start := Time.seconds_since_start()
         if w.close_requested then w.destroy()
@@ -4694,13 +4690,12 @@ main :: (args: [] string) [failed: string] {
         if !w.is_open then break
         // Taskbar restoration can precede keyboard focus. Repaint once on
         // restore, then use the current foreground window to resume frames.
-        idle_window := #if #program.os == .WINDOWS {
-            minimized := w.handle.is_iconic()
-            restored := was_minimized and !minimized
-            was_minimized = minimized
-            minimized or (!restored and OS_Windows.foreground_window() != w.handle)
-        } #else { !w.has_focus }
-        if idle_window and options.quit_after <= 0 {
+        minimized := w.handle.is_iconic()
+        restored := was_minimized and !minimized
+        was_minimized = minimized
+        idle_window := minimized or (!restored and OS_Windows.foreground_window() != w.handle)
+        // Paint once even when Windows starts the window without foreground focus.
+        if busy_frames > 0 and idle_window and options.quit_after <= 0 {
             if _ := Window.wait_for_input(milliseconds: 100) is timed_out { }
             scratch.reset()
             last_frame = Time.seconds_since_start()
@@ -4907,7 +4902,7 @@ main :: (args: [] string) [failed: string] {
                 if sign := drum_sign_at(layout, fonts, drum, k, pressed_at) is not absent {
                     commit_drum(drum, game, timeline, splits)
                     grid_kind := if sign > 0 then Attack.LIFE_UP else Attack.LIFE_DOWN
-                    screen.pickers[k] = ⟨open: true, from: k, to: k, kind: grid_kind, centred: true, at: pressed_at⟩
+                    screen.pickers[k] = ⟨open: true, from: k, to: k, kind: grid_kind, at: pressed_at⟩
                     wheeled = true
                     continue
                 }
@@ -5003,7 +4998,7 @@ main :: (args: [] string) [failed: string] {
                     // (life+ and life-: the number grid, for how much; the
                     // others their change at once)
                     if shortcut == .LIFE_UP or shortcut == .LIFE_DOWN {
-                        screen.pickers[shortcut_player] = ⟨open: true, from: shortcut_player, to: shortcut_player, kind: shortcut, centred: true,
+                        screen.pickers[shortcut_player] = ⟨open: true, from: shortcut_player, to: shortcut_player, kind: shortcut,
                                                            at: pressed_at⟩
                     }
                     else {
@@ -5100,7 +5095,7 @@ main :: (args: [] string) [failed: string] {
                     // (asked for where it's let go: confirmed, it strikes)
                     screen.confirms[d.from] = ⟨open: true, from: d.from, to: to, kind: d.kind, amount: damage, at: d.finger⟩
                 case asked:
-                    screen.pickers[d.from] = ⟨open: true, from: d.from, to: to, kind: d.kind, centred: true, at: d.finger⟩
+                    screen.pickers[d.from] = ⟨open: true, from: d.from, to: to, kind: d.kind, at: d.finger⟩
                 }
             }
             d.active = false
