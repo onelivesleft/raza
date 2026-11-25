@@ -251,6 +251,10 @@ draw :: (canvas: *Draw.Canvas, layer: *Draw.Canvas, layout: Layout, game: Game, 
     }
     draw_count_ring(canvas, layout, screen)
     for d: screen.drags { if d.active then draw_drag(canvas, layout, game, fonts, d, screen.foil_time) }
+    // (a damage being confirmed: its arrow, as it was let go)
+    for c: screen.confirms {
+        if c.open then draw_drag(canvas, layout, game, fonts, Drag⟨active: true, from: c.from, kind: c.kind, finger: c.at⟩, screen.foil_time, labelled: false)
+    }
     for picker: screen.pickers {
         // (its glass blurs the table, drawn apart, where it was)
         if picker.open then draw_picker(canvas, layout, fonts, picker, count_table.canvas, count_table.made)
@@ -263,6 +267,8 @@ draw :: (canvas: *Draw.Canvas, layer: *Draw.Canvas, layout: Layout, game: Game, 
         for k: 0 < layout.count { draw_options(canvas, layout, game, fonts, screen, k) }
         for k: 0 < layout.count { draw_options_button(canvas, layout, fonts, screen, k) }
     }
+    // (a damage being confirmed: its buttons over those too)
+    for c: screen.confirms { if c.open then draw_confirm(canvas, layout, fonts, c, count_table.canvas, count_table.made) }
     if screen.show_fps then draw_fps(canvas, layout, fonts, screen.fps)
     // (everything dimmed to the brightness, last)
     if screen.brightness < 1 then canvas.fill_rect(⟨0, 0⟩, layout.size, Draw.rgba(0x000000, 1 - Math.max(screen.brightness, MIN_BRIGHTNESS)))

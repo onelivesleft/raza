@@ -49,7 +49,11 @@ stays behind what's on it.
 - **The life total is always white with a black border and a drop shadow**,
   on any surface (half clear when the player's out). Its shadow is cast from
   the screen's centre, falling away from it (down as its player reads it)
-  and a little to their right. Nothing behind it is softened. Every life
+  and a little to their right. Nothing behind it is softened. Its place
+  is one width whatever its digits: the widest digit's for each, two at
+  least (and its minus below 0), the number centred in it, so its chips,
+  shortcuts and tax don't move as it goes from 40 to 39 or 9, only past 99
+  or below 0 (life_area_width). Every life
   total is one size: as big as the smallest part's room allows (so each
   fits its part), from a cell up to six, and no bigger than lets each
   player's spinner, open with its cross and tick, fit on the screen (it's
@@ -108,7 +112,11 @@ stays behind what's on it.
   and tick too, off the screen, onto it), sliding back as it flattens, over blurred
   glass, with a glass button either side as tall as that glass: the cross
   (red, on the player's left: the life as it opened) and the tick (green,
-  on their right: the life as turned), each closing it. A press
+  on their right: the life as turned), each closing it. A square as wide
+  as the tick is taken off each of its ends, a hair apart: a + at the end
+  away from the player and a - toward them, each the life as turned, the
+  drum closed, and the number grid centred where it was touched, its tick
+  adding its number to that life or taking it away. A press
   that moves less than 0.15 of the life's capitals is a tap. Drawn by drawing the rows flat into the light
   layer (a canvas is opaque, so their fill, border and shadow go in its
   red, green and blue) and wrapping that round the cylinder in the Drum
@@ -148,10 +156,17 @@ throws**, each colour as its own element, as damage or commander damage.
 - **Options**, in each player's bottom right corner, mirroring the colour
   toggles in their bottom left: the options button (Mana's
   ms-ability-improvise alone, at the attack icons' size, outlined, at 80%
-  opacity) opens four toggles round their
-  middle, commander damage, commander damage with lifelink, lifelink and
-  poison clockwise from the top, each its attack's symbol in a dark circle,
-  white and ringed in white when it's on, dim when it's off.
+  opacity) opens a panel of toggles, four across and three down: +1, +2,
+  life+ and commander damage along the top; -1, -2, life- and commander
+  damage with lifelink below them (each gain above its loss); then
+  lifelink and poison, and commander damage alone (counted toward the 21,
+  no life taken: the commander with no badge) under the other commanders.
+  Each is its symbol in a dark circle, white and ringed in white when it's
+  on, dim when it's off. The life shortcuts stand by the life total as
+  hearts in columns, the ones nearest it, then the twos, then life+ and
+  life- (a heart with + or -), which open the number grid, centred where
+  they're touched, its tick adding its number to that player's life or
+  taking it away.
   The button stays while they're open, and they stay open until it's
   touched again (or their middle is): they don't fold by themselves. They're
   undone as the colours are, a run of taps one step. An attack turned off
@@ -188,12 +203,27 @@ A white arrow with a black outline starts just above the pressed attack
 button in its player's frame. It curves up from the button, over the table,
 and down onto the chosen victim's life total. A soft down-right shadow falls
 over everything beneath it, including the table, controls and life counts.
-The arrow is drawn after those layers. Its shaft is 80% of an attack button's diameter. Before a victim is selected, its head points along the drag direction, away from the pressed button. It appears immediately on dragging, pointing at the finger until an eligible victim is selected. Its shadow lifts only through the arch, with both ends touching the table. The pending amount, on foil glass, sits just beyond the arrow's tip (its nearest edge a little past it, along the way the arrow points), in the attacker's frame, facing the attacker, and kept on the screen (near an edge it may overlap the arrowhead).
+The arrow is drawn after those layers. Its shaft is 80% of an attack button's diameter. Before a victim is selected, its head points along the drag direction, away from the pressed button. It appears immediately on dragging, pointing at the finger until an eligible victim is selected. Its shadow lifts only through the arch, with both ends touching the table. The pending amount, on foil glass, sits just beyond the arrow's tip (its nearest edge a little past it, along the way the arrow points), in the attacker's frame, facing the attacker, and kept on the screen (near an edge it may overlap the arrowhead). The same label lies over the attack icon the drag began at, so it's read where the drag started too.
 Nothing else is drawn while selecting.
+
+## Confirming: the buttons on release
+
+Let go over a player, a drag doesn't strike at once: where the finger let
+go (moved onto the screen if it must be), facing the attacker, are glass
+buttons of the number grid's, a hair apart: the amount's, tinted green as
+the grid's tick, a square as wide as the drag's amount label (which is one
+width whatever the amount: room for two digits), its number twice the
+grid's; above it (as the attacker sees it) one more's and below one
+less's, as wide and half as tall; and beyond those two more's and two
+less's, half as wide and half as tall as the amount's (none below 1).
+The arrow stays aimed at the victim. A button touched strikes with its
+damage (a step to undo); a touch anywhere else calls it off and does
+nothing more. While it's open something's under way, so undo waits. A
+drag past the life total still opens the number grid instead.
 
 ## The attack: the volley on release
 
-The game changes at release (so undo is simple); what's shown counts down as
+The game changes as the damage is confirmed (so undo is simple); what's shown counts down as
 the attack lands (life, and a commander damage attack's chip). Undo,
 or a new game, calls attacks off. Damage's attack looks the same as commander
 damage's, and every colour's the same but for its dots' colours.
@@ -330,7 +360,8 @@ builds a dev build into `build/`, and `rain -release src/raza.rain` the
 tablet's into `release/` (both ignored by git).
 
 `Raza.exe -snapshot:folder` draws each count of players (`raza_2.png` to
-`raza_6.png`, a drag's arrow in each), `raza_frames.png` (each colour
+`raza_6.png`, a drag's arrow in each), `raza_confirm.png` and
+`raza_confirm_portrait.png` (that drag let go, its damage asked for), `raza_frames.png` (each colour
 alone and all five as gold), `raza_volley_0.png` and `_1` (a volley in
 flight, then landing), `raza_black_0.png` to `_2` (a volley from a white,
 black and green player, its dots in their three colours, in flight and
@@ -434,8 +465,9 @@ quarter turn and kept on the screen:
  0  1  2  3  4
 ```
 
-The dragger's damage icons are hidden while it's open, the grid just above
-where they were. Below its keys are two glass buttons, each half the grid's
+The dragger's damage icons are hidden while it's open, the grid (its keys
+and buttons together) centred on where the finger let go, moved onto the
+screen if it must be. Below its keys are two glass buttons, each half the grid's
 width: the cross on their left, its glass tinted red, and on their right one
 tinted green showing the attack it makes (the damage icon's symbol, the
 commander's or plain damage's). It opens at 10 (10 and 0 chosen, shown

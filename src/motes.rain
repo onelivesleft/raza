@@ -89,7 +89,7 @@ strike :: (game: *Game, volleys: *Volleys, layout: Layout, pending: *[MAX_PLAYER
            from: i64, to: i64, amount: i32, kind := Attack.COMMANDER) {
     if amount <= 0 or from == to then return
     game.deal_attack(kind, from, to, amount)
-    if kind != .POISON then pending[to][from] += amount
+    if takes_life(kind) then pending[to][from] += amount
     // (the path ends at their life total whatever the finger's over now)
     start := attack_icon(layout, game, from, kind)
     end := layout.seats[to].middle
@@ -113,7 +113,7 @@ steer_volleys :: (volleys: *Volleys, pending: *[MAX_PLAYERS] [MAX_PLAYERS] i32, 
             while should < volley.amount and volley.age >= bolt_impact(volley, i64'should) { should += 1 }
             newly := should - volley.landed
             if newly > 0 {
-                if volley.kind != .POISON then pending[volley.to][volley.from] = Math.max(pending[volley.to][volley.from] - newly, 0)
+                if takes_life(volley.kind) then pending[volley.to][volley.from] = Math.max(pending[volley.to][volley.from] - newly, 0)
                 volley.landed = should
             }
         }

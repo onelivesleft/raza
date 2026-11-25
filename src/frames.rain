@@ -54,8 +54,8 @@ MOTION_RATES :: [Motion] f32⟨0, 0.04, 0.24, 1.05⟩
 // card's frame is fine-grained for its size, and a part is far bigger).
 SURFACE_SCALE :: 0.32
 
-// How far gold leans toward each of a part's colours.
-GOLD_TINT :: 0.06
+// Width of the polished frame around three or more materials, in cells.
+GOLD_BORDER :: 0.44
 
 // An artifact's colour (a colourless player's own colour).
 ARTIFACT :: LOOKS.artifact.ground
@@ -161,6 +161,8 @@ gold_hue :: (mana: Mana -> Draw.RGBA) {
 // its bevel's width (pixels) and how wide its noise's octaves go.
 Part_Params :: struct {
     points: [MAX_OUTLINE] V4     // position, cumulative perimeter, edge length
+    fan: V4                     // polygon centroid, starting angle, ray count
+    rays: [MAX_OUTLINE] V4      // clockwise angle from the first corner
     stops:  [5] V4
     middle: V4
     toward: V4
@@ -168,7 +170,7 @@ Part_Params :: struct {
     look:   V4
     more:   V4
     lamp_colours: [5] V4
-    hybrid_looks: [2] V4         // tile, pattern kind, strength, surface
+    hybrid_looks: [5] V4         // tile, pattern kind, strength, surface
     material: V4                 // atlas tile, feature scale, perimeter, closing channel lit
     gold: Gold_Look
     state:  V4
@@ -253,28 +255,39 @@ part_shade :: (from: Draw.Quad_Between, part: Shader.Uniforms(Part_Params), atla
     tile := i32'(part.material.x + 0.5)
     *rgb := V3⟨0, 0, 0⟩
     *gold_polish: f32 = 0
-    if stops == 2 {
-        left := part.hybrid_looks[0]
-        right := part.hybrid_looks[1]
-        left_look := V4⟨left.y, part.look.y, left.z, part.look.w⟩
-        right_look := V4⟨right.y, part.look.y, right.z, part.look.w⟩
-        // Centre the blend on the life total's local vertical axis, not
-        // the midpoint of an asymmetric region's projected bounds.
-        blend_half := Math.max((part.frame.z - part.frame.y) * 0.15, 1)
-        blend := Math.smoothstep(0 - blend_half, blend_half, local_x)
-        // (each side's material, as much of it as the blend takes: one call
-        // in a loop, not one a side, so the material's code is in the stage
-        // once, which the driver compiles in a fraction of the time)
+    gold_width := GOLD_BORDER * part.state.w
+    border := if stops > 2 then 1 - Math.smoothstep(gold_width * 0.65, gold_width * 1.35, closest) else 0
+    if stops > 1 and border < 1 {
+        delta := p - part.fan.xy
+        turn := wrapped(Math.atan2(delta.y, delta.x) - part.fan.z)
+        count := i32'part.fan.w
+        *sector: i32 = 0
+        for i: 1 < count {
+            if turn >= part.rays[i].x then sector = i32'i
+        }
+        next := (sector + 1) % count
+        start := part.rays[sector].x
+        end := if next == 0 then f32'Math.TAU else part.rays[next].x
+        fraction := (turn - start) / Math.max(end - start, 0.00001)
+        neighbour := if fraction < 0.5 then (sector + count - 1) % count else next
+        first := sector * stops / count
+        second := neighbour * stops / count
+        blend := if first == second then 0 else 0.5 * (1 - Math.smoothstep(0, 0.22, Math.min(fraction, 1 - fraction)))
         for side: 0 < 2 {
             weight := if side == 0 then 1 - blend else blend
             if weight > 0 {
-                hybrid := part.hybrid_looks[side]
-                look := if side == 0 then left_look else right_look
-                rgb = rgb + shade_panel_material(p, local_x, local_y, part.stops[side].xyz, look, part.more, angle, hybrid.w, i32'hybrid.x, atlas, filtering) * weight
+                index := if side == 0 then first else second
+                hybrid := part.hybrid_looks[index]
+                look := V4⟨hybrid.y, part.look.y, hybrid.z, part.look.w⟩
+                rgb = rgb + shade_panel_material(p, local_x, local_y, part.stops[index].xyz, look, part.more, angle, hybrid.w, i32'hybrid.x, atlas, filtering) * weight
             }
         }
     }
-    else if tile == TILE_GOLD {
+    else if stops == 1 {
+        rgb = shade_panel_material(p, local_x, local_y, base, part.look, part.more, angle, part.toward.w, tile, atlas, filtering)
+    }
+    interior := rgb
+    if border > 0 {
         // (gold: shallow fixed undulations reflecting moving studio lights)
         at := V2⟨local_x, local_y⟩ / Math.max(part.look.y * part.gold.texture_scale, 1) + V2⟨part.look.w * 0.17, part.look.w * 0.31⟩
         texel := material_at(atlas, filtering, tile, at)
@@ -302,15 +315,13 @@ part_shade :: (from: Draw.Quad_Between, part: Shader.Uniforms(Part_Params), atla
         ambient := V3⟨part.gold.ambient_r, part.gold.ambient_g, part.gold.ambient_b⟩ * part.gold.ambient_strength * (1 - part.gold.ambient_shape + normal.z * part.gold.ambient_shape)
         rgb = ambient + highlights
     }
-    else {
-        rgb = shade_panel_material(p, local_x, local_y, base, part.look, part.more, angle, part.toward.w, tile, atlas, filtering)
-    }
     // (darker toward its player's edge, gold too)
     depth := Math.clamp(Math.dot(p - part.middle.zw, part.toward.xy) / Math.max(part.toward.z, 1), 0, 1)
-    rgb = Math.mix(rgb, shade * 0.8, Math.smoothstep(0.55, 1.0, depth) * 0.32)
+    vignette := Math.smoothstep(0.55, 1.0, depth) * 0.32
+    rgb = Math.mix(rgb, shade * 0.8, vignette)
     // Each colour owns an equal arc length of the polygon's perimeter.
     // Split at corners, so every strip follows the real boundary.
-    if stops > 2 {
+    if border > 0 {
         *radiance := V3⟨0, 0, 0⟩
         *energy: f32 = 0
         strip_length := part.material.z / f32'stops
@@ -344,6 +355,7 @@ part_shade :: (from: Draw.Quad_Between, part: Shader.Uniforms(Part_Params), atla
     }
     // Keep the sharpest reflections luminous even under coloured strip lighting.
     rgb = Math.mix(rgb, Math.max(rgb, V3⟨part.gold.polish_r, part.gold.polish_g, part.gold.polish_b⟩), gold_polish)
+    if border > 0 and border < 1 then rgb = Math.mix(Math.mix(interior, shade * 0.8, vignette), rgb, border)
     // The channel along its edges with its neighbours (each panel shades its
     // half, so adjacent regions share one groove).
     bevel := part.state.z
@@ -397,6 +409,46 @@ BEVEL_CELLS :: 0.075
 
 // A part drawn by its shader: its colours across it and its surface
 // (part_fill's), out or aimed at.
+material_fan :: (params: *Part_Params, points: [] V2, colours: i64) {
+    centre := centroid(points)
+    *count: i64 = 0
+    *start: f32 = 0
+    for q, i: points {
+        prev := points[(i + points.count - 1) % points.count]
+        next := points[(i + 1) % points.count]
+        a := q - prev
+        b := next - q
+        // A channel junction on a straight edge is not a corner.
+        if Math.abs(a.x * b.y - a.y * b.x) <= 0.00001 * Math.length(a) * Math.length(b) then continue
+        angle := Math.atan2(q.y - centre.y, q.x - centre.x)
+        if count == 0 then start = angle
+        ray := wrapped(angle - start)
+        *slot := count
+        while slot > 0 and params.rays[slot - 1].x > ray {
+            params.rays[slot] = params.rays[slot - 1]
+            slot -= 1
+        }
+        params.rays[slot].x = ray
+        count += 1
+    }
+    // More colours than corners: bisect the widest remaining sector.
+    if count == 0 then count = 1
+    while count < colours {
+        *wide: f32 = 0
+        *after: i64 = 0
+        for i: 0 < count {
+            end := if i + 1 == count then f32'Math.TAU else params.rays[i + 1].x
+            span := end - params.rays[i].x
+            if span > wide { wide = span; after = i }
+        }
+        *slot := count
+        while slot > after + 1 { params.rays[slot] = params.rays[slot - 1]; slot -= 1 }
+        params.rays[after + 1].x = params.rays[after].x + wide / 2
+        count += 1
+    }
+    params.fan = V4⟨centre.x, centre.y, start, f32'count⟩
+}
+
 draw_part :: (canvas: *Draw.Canvas, layout: Layout, k: i64, colours: [] Draw.RGBA, pattern: Draw.Pattern, surface: Surface, identity: Identity, out: bool, targeted: i64) {
     seat := layout.seats[k]
     cell := cell_of(layout)
@@ -425,15 +477,12 @@ draw_part :: (canvas: *Draw.Canvas, layout: Layout, k: i64, colours: [] Draw.RGB
     // (two colours: each half's own look; three or more: gold, lit by a
     // perimeter strip of each colour, which the shader reads only then)
     if colours.count > 1 {
+        material_fan(params, points, colours.count)
         *lamp: i64 = 0
         for mana: [5] Mana⟨.WHITE, .BLUE, .BLACK, .RED, .GREEN⟩ {
             if !has_colour(identity, mana) then continue
-            if colours.count == 2 {
-                look := LOOKS.colours[mana]
-                params.hybrid_looks[lamp] = V4⟨f32'u8'mana, f32'i32'look.kind, look.strength * SURFACE_QUIET, f32'u8'surface_of(mana)⟩
-                lamp += 1
-                continue
-            }
+            look := LOOKS.colours[mana]
+            params.hybrid_looks[lamp] = V4⟨f32'u8'mana, f32'i32'look.kind, look.strength * SURFACE_QUIET, f32'u8'surface_of(mana)⟩
             tint := gold_hue(mana)
             params.lamp_colours[lamp] = V4⟨tint.r, tint.g, tint.b, 1⟩
             lamp += 1
@@ -459,22 +508,37 @@ draw_part :: (canvas: *Draw.Canvas, layout: Layout, k: i64, colours: [] Draw.RGB
 // (its materials, over a quarter of the screen or more), and its surface
 // moves slowly, so the surfaces are kept in a canvas of their own, a part's
 // drawn again each frame in turn, those whose surface has moved since they
-// were (none while the surfaces are still); and all of them when anything
-// else they show changes (the screen's size, the lines, a part's colours,
-// who's out or aimed at).
+// were (none while the surfaces are still); a part again at once when
+// anything else it shows changes (its shape, as a line beside it moves; its
+// colours; whether it's out, or its channels lit as it or a neighbour's
+// aimed at), drawn over what was there, so a line's drag redraws its two
+// parts alone, and all of them, cleanly, the first frame nothing changes
+// after; and all of them when the screen's size or the count changes.
 
 Surface_Key :: struct {
     size:     V2
-    splits:   Splits
     count:    i64
-    identity: [MAX_PLAYERS] Identity
-    out:      [MAX_PLAYERS] bool
-    targeted: i64
+}
+
+// The frames parts drawn over what was there wait, unchanged, before all
+// are drawn again from clear.
+SETTLED_FRAMES :: 15
+
+// What a part's surface shows besides its surface's movement.
+Part_Key :: struct {
+    seat:      Seat
+    identity:  Identity
+    out:       bool
+    first_lit: bool
+    last_lit:  bool
 }
 
 Kept_Surfaces :: struct {
     kept:     Kept_Canvas
     key:      Surface_Key
+    parts:    [MAX_PLAYERS] Part_Key
+    changing: bool                     // parts were redrawn over what was there: all again once they stop
+    still:    i64                      // ...the frames since one last was (all again only after SETTLED_FRAMES)
     drawn_at: [MAX_PLAYERS] f32        // the surfaces' time each part was drawn at
     next:     i64                      // the part to look at first next
 }
@@ -488,15 +552,43 @@ keep_surfaces :: (layout: Layout, game: Game, targeted: i64, time: f32 -> bool) 
     size := Wide.i32x2⟨i32'Math.round(layout.size.x), i32'Math.round(layout.size.y)⟩
     // (a new size is a new key, so a canvas made or resized is drawn whole)
     if !kept_surfaces.kept.prepare(size) then return false
-    *key := Surface_Key⟨size: layout.size, splits: layout.splits, count: layout.count, identity: game.identity, targeted: targeted⟩
-    for k: 0 < layout.count { key.out[k] = is_out(game, k) }
-    if key != kept_surfaces.key {
+    key := Surface_Key⟨size: layout.size, count: layout.count⟩
+    *parts: [MAX_PLAYERS] Part_Key
+    n := layout.count
+    for k: 0 < n {
+        parts[k] = ⟨seat: layout.seats[k], identity: game.identity[k], out: is_out(game, k),
+                    first_lit: targeted == k or targeted == (k + n - 1) % n, last_lit: targeted == k or targeted == (k + 1) % n⟩
+    }
+    // (each part whose key's changed drawn again over what was there)
+    *changed := false
+    if key == kept_surfaces.key {
+        for k: 0 < n {
+            if parts[k] == kept_surfaces.parts[k] then continue
+            draw_surface(kept_surfaces.kept.canvas, layout, game, k, targeted, time)
+            kept_surfaces.drawn_at[k] = time
+            kept_surfaces.parts[k] = parts[k]
+            changed = true
+        }
+    }
+    if changed {
+        kept_surfaces.changing = true
+        kept_surfaces.still = 0
+        return true
+    }
+    // (all of them, from clear: a new size or count, or the changes over,
+    // SETTLED_FRAMES with none: a finger dragging a line doesn't move it
+    // every frame, and all of them each frame it didn't cost as much as no
+    // keeping)
+    if kept_surfaces.changing then kept_surfaces.still += 1
+    if key != kept_surfaces.key or (kept_surfaces.changing and kept_surfaces.still >= SETTLED_FRAMES) {
         kept_surfaces.kept.canvas.clear(BACKGROUND)
-        for k: 0 < layout.count {
+        for k: 0 < n {
             draw_surface(kept_surfaces.kept.canvas, layout, game, k, targeted, time)
             kept_surfaces.drawn_at[k] = time
         }
         kept_surfaces.key = key
+        kept_surfaces.parts = parts
+        kept_surfaces.changing = false
         return true
     }
     for _: 0 < layout.count {
@@ -558,11 +650,11 @@ part_fill :: (identity: Identity, cell: f32, seat: i64, time: f32, angle: f32, i
     *look := looks.artifact
     count = 0
     if colours >= 2 {
-        // Gold, shaded across toward each colour (WUBRG).
+        // Keep the selected grounds in WUBRG order for the material bands.
         look = looks.gold
         for each, colour: looks.colours {
             if has_colour(identity, colour) {
-                into[count] = if colours == 2 then each.ground else Math.mix(look.ground, each.ground, GOLD_TINT)
+                into[count] = each.ground
                 count += 1
             }
         }
@@ -761,15 +853,17 @@ shade_panel_material :: (p: V2, local_x: f32, local_y: f32, base: V3, look: V4, 
     return rgb
 }
 
-hybrid_fills_use_their_own_colours :: () #test {
-    for a: 0 < 5 {
-        for b: a + 1 < 5 {
-            *colours: [5] Draw.RGBA
-            identity := (u8'1 << u8'a) | (u8'1 << u8'b)
-            count, _, _ := part_fill(identity, 100, 0, 0, 0, colours[:])
-            assert(count == 2)
-            assert(colours[0] == LOOKS.colours[Mana'u8'a].ground)
-            assert(colours[1] == LOOKS.colours[Mana'u8'b].ground)
+selected_materials_use_their_own_colours :: () #test {
+    for mask: 1 < 32 {
+        identity := Identity'mask
+        *colours: [5] Draw.RGBA
+        count, _, _ := part_fill(identity, 100, 0, 0, 0, colours[:])
+        *i: i64 = 0
+        for look, mana: LOOKS.colours {
+            if !has_colour(identity, mana) then continue
+            assert(colours[i] == look.ground)
+            i += 1
         }
+        assert(count == i)
     }
 }

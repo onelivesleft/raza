@@ -8,7 +8,9 @@ LETHAL_POISON :: 10
 // The attacks a player can make, in the order their icons stand: plain
 // damage (always theirs, leftmost), then those they turn on in their
 // options: commander damage (on to start with), commander damage with
-// lifelink, lifelink, and poison.
+// lifelink, commander damage alone (counted toward the 21, its life not
+// taken), lifelink, and poison. (Each's value is its bit in Attacks, kept
+// between runs: a new one goes at the end.)
 Attack :: enum u8 {
     DAMAGE
     COMMANDER
@@ -19,6 +21,9 @@ Attack :: enum u8 {
     LOSE_ONE
     GAIN_TWO
     LOSE_TWO
+    COMMANDER_ONLY
+    LIFE_UP             // a life shortcut: the number grid, its number added to its player's life
+    LIFE_DOWN           // ...or taken from it
 }
 
 // A player's attacks turned on: a bit for each, by Attack's value (DAMAGE's
@@ -37,20 +42,29 @@ attack_bit :: (kind: Attack -> Attacks) #pure {
     return Attacks'1 << Attacks'u8'kind
 }
 
+// A life shortcut's change to its own player's life (0: an attack, not a
+// shortcut); life+'s and life-'s, its sign, the number grid's number times
+// it.
 self_life_delta :: (kind: Attack -> i32) #pure {
     return if kind is {
-    case .GAIN_ONE: 1
-    case .LOSE_ONE: -1
+    case .GAIN_ONE, .LIFE_UP: 1
+    case .LOSE_ONE, .LIFE_DOWN: -1
     case .GAIN_TWO: 2
     case .LOSE_TWO: -2
-    case .DAMAGE, .COMMANDER, .COMMANDER_LIFELINK, .LIFELINK, .POISON: 0
+    case .DAMAGE, .COMMANDER, .COMMANDER_LIFELINK, .COMMANDER_ONLY, .LIFELINK, .POISON: 0
     }
 }
 
 // Whether an attack is its commander's combat damage (counting toward the 21
-// from that commander), and whether it gives its attacker life (lifelink).
+// from that commander), whether it takes its victim's life (all but poison
+// and commander damage alone), and whether it gives its attacker life
+// (lifelink).
 is_commander :: (kind: Attack -> bool) #pure {
-    return kind == .COMMANDER or kind == .COMMANDER_LIFELINK
+    return kind == .COMMANDER or kind == .COMMANDER_LIFELINK or kind == .COMMANDER_ONLY
+}
+
+takes_life :: (kind: Attack -> bool) #pure {
+    return kind != .POISON and kind != .COMMANDER_ONLY
 }
 
 has_lifelink :: (kind: Attack -> bool) #pure {
@@ -59,10 +73,10 @@ has_lifelink :: (kind: Attack -> bool) #pure {
 
 // A player's attacks turned on, in their order (plain damage first), and
 // how many.
-attacks_of :: (attacks: Attacks -> kinds: [9] Attack, count: i64) #pure {
+attacks_of :: (attacks: Attacks -> kinds: [12] Attack, count: i64) #pure {
     kinds = ⟨⟩
     count = 0
-    for kind: [9] Attack⟨.GAIN_ONE, .LOSE_ONE, .GAIN_TWO, .LOSE_TWO, .DAMAGE, .COMMANDER, .COMMANDER_LIFELINK, .LIFELINK, .POISON⟩ {
+    for kind: [12] Attack⟨.GAIN_ONE, .LOSE_ONE, .GAIN_TWO, .LOSE_TWO, .LIFE_UP, .LIFE_DOWN, .DAMAGE, .COMMANDER, .COMMANDER_LIFELINK, .COMMANDER_ONLY, .LIFELINK, .POISON⟩ {
         if !has_attack(attacks, kind) then continue
         kinds[count] = kind
         count += 1
@@ -285,15 +299,16 @@ is_out :: (game: Game, player: i64 -> bool) #pure {
 }
 
 // An attack of an amount from one player at another: damage takes life (a
-// commander's counting toward LETHAL_COMMANDER_DAMAGE from it too), with
-// lifelink giving the attacker as much; poison gives poison counters.
+// commander's counting toward LETHAL_COMMANDER_DAMAGE from it too, and a
+// commander's alone counting only toward that), with lifelink giving the
+// attacker as much; poison gives poison counters.
 deal_attack :: (game: *Game, kind: Attack, from: i64, to: i64, amount: i32) {
     if amount <= 0 or from == to then return
     if kind == .POISON {
         game.poison[to] += amount
         return
     }
-    game.life[to] -= amount
+    if takes_life(kind) then game.life[to] -= amount
     if is_commander(kind) then game.commander[to][from] += amount
     if has_lifelink(kind) then game.life[from] += amount
 }

@@ -28,6 +28,144 @@ fingers_are_followed_apart :: () #test {
     assert(screen.drums[1].open and screen.drums[1].spinning, "the spinning drum still spinning")
 }
 
+// A drag's damage confirmed: the amount's button a square where the finger
+// let go; one more's above it and one less's below, as wide and half as
+// tall, and two more's and two less's beyond them, half as wide and half as
+// tall as the amount's, a small gap between each, as the dragger sees them
+// (none below 1); all on the screen, even
+// let go at its corner. Touched, each gives its damage, and the gap between
+// them none. While one's open, something's under way (undo waits), and the
+// count column or the settings opening ends it.
+confirms_ask_where_let_go :: () #test {
+    for size: [2] V2⟨LANDSCAPE, PORTRAIT⟩ {
+        layout := laid_out(4, size)
+        cell := cell_of(layout)
+        wide := 2.1 * cell
+        for from: 0 < 4 {
+            to := (from + 2) % 4
+            // (half way to their life: room all round)
+            at := Math.mix(layout.centre, layout.seats[to].middle, 0.5)
+            confirm := Confirm⟨open: true, from: from, to: to, amount: 5, at: at⟩
+            buttons, count, origin, angle := confirm_buttons(layout, confirm, wide)
+            assert(count == 5 and Math.length(origin - at) < 0.01, "«size», «from»: five, where it was let go")
+            assert(buttons[0].damage == 5 and buttons[1].damage == 6 and buttons[2].damage == 4 and buttons[3].damage == 7 and buttons[4].damage == 3,
+                   "the amount, one more, one less, two more, two less")
+            assert(buttons[0].half.x == buttons[0].half.y and Math.abs(buttons[0].half.x * 2 - wide) < 0.01, "the amount's a square, wide across")
+            assert(buttons[1].half.x == buttons[0].half.x and Math.abs(buttons[0].half.y - 2 * buttons[1].half.y) < 0.01,
+                   "one more's as wide, half as tall")
+            assert(Math.abs(buttons[3].half.x * 2 - wide / 2) < 0.01 and Math.abs(buttons[3].half.y * 2 - wide / 2) < 0.01,
+                   "two more's half as wide and half as tall as the amount's")
+            // (each the gap from the next)
+            gap_above := (buttons[1].middle.y + buttons[1].half.y) - (buttons[0].middle.y - buttons[0].half.y)
+            assert(Math.abs(gap_above + CONFIRM_GAP * cell) < 0.01, "«CONFIRM_GAP» cells between them: «gap_above»")
+            toward := layout.seats[from].toward
+            // (as the dragger sees them, from the top: two more, one more, the amount, one less, two less)
+            for i: 0 < 4 {
+                upper := placed(origin, angle, buttons[[4] i64⟨3, 1, 0, 2⟩[i]].middle)
+                lower := placed(origin, angle, buttons[[4] i64⟨1, 0, 2, 4⟩[i]].middle)
+                assert(Math.dot(upper - lower, toward) < 0, "«size», «from»: in order, as the dragger sees them")
+            }
+            for button: buttons[:count] {
+                *got: i32 = -1
+                if damage := confirm_damage_at(layout, confirm, wide, placed(origin, angle, button.middle)) is not absent then got = damage
+                assert(got == button.damage, "«size», «from»: «button.damage»'s button gives «got»")
+            }
+            between := placed(origin, angle, V2⟨0, 0 - buttons[0].half.y - CONFIRM_GAP * cell / 2⟩)
+            if _ := confirm_damage_at(layout, confirm, wide, between) is not absent then assert(false, "between the buttons, none")
+            _, one_count, _, _ := confirm_buttons(layout, Confirm⟨open: true, from: from, to: to, amount: 1, at: at⟩, wide)
+            _, two_count, _, _ := confirm_buttons(layout, Confirm⟨open: true, from: from, to: to, amount: 2, at: at⟩, wide)
+            assert(one_count == 3 and two_count == 4, "none below 1")
+            // (let go at the screen's corner: all of them moved onto it)
+            cornered := Confirm⟨open: true, from: from, to: to, amount: 9, at: ⟨1, 1⟩⟩
+            moved, moved_count, moved_origin, moved_angle := confirm_buttons(layout, cornered, wide)
+            down := placed(V2⟨0, 0⟩, moved_angle, V2⟨0, 1⟩)
+            assert(Math.dot(down, Math.normalize(layout.seats[from].middle - cornered.at)) > 0.9999, "the confirm faces the attacker from the release point")
+            for button: moved[:moved_count] {
+                for corner: [4] V2⟨⟨-1, -1⟩, ⟨1, -1⟩, ⟨-1, 1⟩, ⟨1, 1⟩⟩ {
+                    p := placed(moved_origin, moved_angle, button.middle + button.half * corner)
+                    assert(p.x >= 0 and p.y >= 0 and p.x <= size.x and p.y <= size.y, "«size», «from»: on the screen: «p»")
+                }
+            }
+        }
+    }
+    *screen := Screen_State⟨moving_end: -1⟩
+    screen.confirms[1] = ⟨open: true, from: 1, to: 3, amount: 4⟩
+    assert(under_way(screen) and first_aimed(laid_out(4, LANDSCAPE), new_game(4), screen) == 3, "under way, its target lit")
+    end_gestures(screen)
+    assert(!under_way(screen), "ended with the other gestures")
+}
+
+// A life total's place is one width whatever its digits, two digits' at
+// least: 40, 39 and 9 the same, 100 wider by a digit, a minus wider by it.
+life_area_is_fixed_by_digits :: () #test {
+    fonts := Fonts⟨life_digit: 10, life_minus: 4⟩
+    assert(life_area_width(fonts, 40) == 20 and life_area_width(fonts, 39) == 20 and life_area_width(fonts, 9) == 20 and life_area_width(fonts, 0) == 20,
+           "two digits' room up to 99")
+    assert(life_area_width(fonts, 100) == 30 and life_area_width(fonts, -3) == 24 and life_area_width(fonts, -12) == 24, "more digits, and a minus")
+}
+
+// Commander damage alone counts toward the 21 and takes no life, and its
+// volley pends none; life+ and life- are life shortcuts, their sign their
+// change's.
+commander_damage_alone_takes_no_life :: () #test {
+    *game := new_game(4)
+    game.deal_attack(.COMMANDER_ONLY, 1, 0, 7)
+    assert(game.life[0] == STARTING_LIFE and game.commander[0][1] == 7, "7 commander damage, no life: «game.life[0]», «game.commander[0][1]»")
+    assert(is_commander(.COMMANDER_ONLY) and !takes_life(.COMMANDER_ONLY) and !takes_life(.POISON) and takes_life(.COMMANDER), "what each does")
+    *volleys: Volleys
+    *pending: [MAX_PLAYERS] [MAX_PLAYERS] i32
+    *struck := new_game(4)
+    strike(struck, volleys, laid_out(4, LANDSCAPE), pending, 1, 0, 5, .COMMANDER_ONLY)
+    assert(pending[0][1] == 0 and struck.life[0] == STARTING_LIFE and struck.commander[0][1] == 5, "none pending, the chip grows as it lands")
+    assert(self_life_delta(.LIFE_UP) == 1 and self_life_delta(.LIFE_DOWN) == -1, "life+ and life-: their signs")
+}
+
+// The number grid asked for where a finger let go (or touched) is centred
+// there, keys and buttons together, facing its player.
+grids_centred_where_asked :: () #test {
+    for size: [2] V2⟨LANDSCAPE, PORTRAIT⟩ {
+        layout := laid_out(4, size)
+        cell := cell_of(layout)
+        for k: 0 < 4 {
+            seat := layout.seats[k]
+            origin, angle, pitch := picker_frame(layout, Picker⟨open: true, from: k, to: k, kind: .LIFE_UP, centred: true, at: layout.centre⟩)
+            below := (GLASS_PAD + PICK_BUTTON_GAP + PICK_BUTTON_TALL) * cell
+            middle := placed(origin, angle, V2⟨0, (below - f32'PICK_ROWS * pitch) / 2⟩)
+            assert(Math.length(middle - layout.centre) < 0.01, "«size», «k»: the grid centred where it was asked for: «middle»")
+            assert(angle == seat.angle, "facing its player")
+        }
+    }
+}
+
+// A drum tapped open again after a turn it was ticked on opens with no
+// change: the rows it was turned last time aren't carried into the next.
+drums_open_again_at_no_change :: () #test {
+    frame: f32 = 1.0 / 60
+    cap: f32 = 10
+    row := DRUM_PITCH * cap
+    *game := new_game(4)
+    *drum: Life_Drum
+    *timeline: Timeline
+    lines: Lines = ⟨⟩
+    // (opened, its tens turned up 2, let go, ticked)
+    press_drum(drum, game, 1, ⟨0, 0⟩, 1)
+    _, _ := release_drum(drum, game)
+    press_drum(drum, game, 1, ⟨0, 0⟩, 10)
+    move_drum(drum, ⟨0, 2 * row⟩, cap)
+    for _: 0 < 20 { step_drum(drum, game, frame) }
+    turned_to, turned := release_drum(drum, game)
+    if turned then game.life[1] = turned_to
+    commit_drum(drum, game, timeline, lines)
+    assert(game.life[1] == 60, "turned up to «game.life[1]»")
+    for _: 0 < 60 { step_drum(drum, game, frame) }
+    // (tapped open again)
+    press_drum(drum, game, 1, ⟨0, 0⟩, 1)
+    _, _ := release_drum(drum, game)
+    for _: 0 < 60 { step_drum(drum, game, frame) }
+    assert(drum.open and game.life[1] == 60, "open at 60, not «game.life[1]»")
+    assert(change_wheel_position(drum) == 0, "opened again showing «change_wheel_position(drum)», not 0 (from «drum.from», start «drum.start»)")
+}
+
 // Another player's damage while a drum's open stays: the drum's turn
 // carries it, its tick shows only its own change, and its cross undoes
 // only its own, whether the damage came while it rested, was held or spun.
@@ -345,9 +483,9 @@ games_come_back_or_start_fresh :: () #test {
 attacks_are_in_order_and_turned_on :: () #test {
     kinds, count := attacks_of(STARTING_ATTACKS)
     assert(count == 2 and kinds[0] == .DAMAGE and kinds[1] == .COMMANDER, "to start with: damage, commander damage")
-    every, all := attacks_of(31)
-    expected := [5] Attack⟨.DAMAGE, .COMMANDER, .COMMANDER_LIFELINK, .LIFELINK, .POISON⟩
-    assert(all == 5 and every[:all] == expected[:], "every attack, in order: «every»")
+    every, all := attacks_of(31 | attack_bit(.COMMANDER_ONLY))
+    expected := [6] Attack⟨.DAMAGE, .COMMANDER, .COMMANDER_LIFELINK, .COMMANDER_ONLY, .LIFELINK, .POISON⟩
+    assert(all == 6 and every[:all] == expected[:], "every attack, in order: «every»")
     *game := new_game(4)
     toggle_attack(game, 2, .POISON)
     toggle_attack(game, 2, .COMMANDER)
@@ -395,19 +533,22 @@ life_shortcuts_beside_damage :: () #test {
         for seat, k: layout.seats[:players] {
             width := f32'life_size_of(layout) * 0.95
             chips := chip_places(layout, k, width, cell)
-            *positions: [4] V2
+            // (every one on: +1, +2, -1, -2, life+, life-, as LIFE_SHORTCUTS)
+            *positions: [6] V2
             for kind, i: LIFE_SHORTCUTS {
-                world := life_shortcut_place(layout, k, kind, 0x1FF, chips, width)
+                world := life_shortcut_place(layout, k, kind, 0xFFF, chips, width)
                 assert(world.x > 0 and world.y > 0 and world.x < layout.size.x and world.y < layout.size.y)
                 positions[i] = local_of(seat.middle, seat.angle, world)
                 assert(positions[i].x < -width / 2)
             }
             if Math.abs(positions[0].x - positions[1].x) < 0.01 {
-                assert(positions[1].y < positions[0].y and positions[0].y < positions[2].y and positions[2].y < positions[3].y)
+                // (one column: life+, +2, +1, -1, -2, life- down it)
+                for pair: [5] [2] i64⟨⟨4, 1⟩, ⟨1, 0⟩, ⟨0, 2⟩, ⟨2, 3⟩, ⟨3, 5⟩⟩ { assert(positions[pair[0]].y < positions[pair[1]].y) }
             }
             else {
-                assert(positions[1].x < positions[0].x and positions[3].x < positions[2].x)
-                assert(Math.abs(positions[1].y - positions[0].y) < 0.01 and positions[1].y < positions[3].y)
+                // (columns out from the life: the ones, the twos, life+ and life-; each gain above its loss)
+                assert(positions[4].x < positions[1].x and positions[1].x < positions[0].x and positions[5].x < positions[3].x and positions[3].x < positions[2].x)
+                assert(Math.abs(positions[1].y - positions[0].y) < 0.01 and Math.abs(positions[4].y - positions[0].y) < 0.01 and positions[1].y < positions[3].y)
             }
         }
     }
@@ -801,7 +942,7 @@ damage_icons_are_in_their_parts :: () #test {
                 }
                 for seat, k: layout.seats[:players] {
                     kinds, count := attacks_of(game.attacks[k])
-                    if every then assert(count == 9, "«players» players: «k» has every option on: «count»")
+                    if every then assert(count == 12, "«players» players: «k» has every option on: «count»")
                     for kind: kinds[:count] {
                         if self_life_delta(kind) != 0 then continue
                         at := attack_icon(layout, game, k, kind)

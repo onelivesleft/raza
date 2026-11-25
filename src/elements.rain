@@ -184,7 +184,7 @@ draw_bolt_losses :: (canvas: *Draw.Canvas, layout: Layout, fonts: Fonts, volleys
     if !prepare_loss_faces(fonts.loss, side_pixels) then return
     radius := f32'side_pixels / 2
     for v: volleys.list {
-        if v.kind == .POISON then continue
+        if !takes_life(v.kind) then continue
         link := has_lifelink(v.kind)
         seat := layout.seats[v.to]
         for j: 0 < i64'v.landed {
