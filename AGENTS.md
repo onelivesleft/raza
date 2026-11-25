@@ -52,7 +52,7 @@ build/Raza.exe -quit_after:8 -busy           a busy table, its frames' work prin
 | `src/raza.rain` | The program: its declaration, `main` and its input loop, the controls (the pill, settings, count runner's input), the life drum, the drag, the number grid and the confirm buttons, the colour toggles and options, chips, poison and tax, the fonts, the snapshots |
 | `src/game.rain` | The rules: `Game` (life, commander damage, poison, tax, colours, attacks), `Attack` and `deal_attack`, how far a drag goes for how much |
 | `src/layout.rain` | The screen cut into parts (`Splits`, `lay_out`, each `Seat`'s outline, middle, angle, attack spot) |
-| `src/frames.rain` | Each part's surface (the `part_shade` shader, its materials, gold, bands of colours), and the surfaces kept between frames |
+| `src/frames.rain` | Each part's surface (the `part_shade` shader: each colour's material, two colours' halves, three or more colours' gold lit by a strip of each round its edge), and the surfaces kept between frames |
 | `src/materials.rain` | The textures (decoded on threads at start), the material atlas's tiles |
 | `src/elements.rain`, `src/motes.rain` | A volley: how it's drawn (each colour's dots, the loss tokens), its path and timing |
 | `src/count-table.rain` | The table splitting open for the count runner and for the settings, and the canvases drawn apart for it |

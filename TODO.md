@@ -26,8 +26,9 @@ starting it.
   change meant for the tablet.
 - [ ] **One slow start after the surface shader changes.** A release
   build shows its first frame 0.6 s from the start. But the first start
-  after the parts' surface shader changes (it now has bands of colours and
-  a gold border) compiles it cold: measured 2026-11-25 on this machine's
+  after the parts' surface shader changes (every colour's material, the
+  halves of two and the lit gold of three or more, in one shader) compiles
+  it cold: measured 2026-11-25 on this machine's
   Intel GPU (the shader changed by one constant, so neither Raza's cache,
   `%LOCALAPPDATA%\Raza\vulkan_pipelines.bin`, nor the driver's own,
   `%USERPROFILE%\AppData\LocalLow\Intel\ShaderCache`, had it), the window

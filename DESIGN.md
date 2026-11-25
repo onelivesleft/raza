@@ -427,6 +427,7 @@ No reference game's art is included in the application.
 
 - White: fine mineral detail and evolving seams. Stationary mineral fields
   combine over time so seams grow, widen, split, join and fade; veins are soft warm grey rather than charcoal.
+  Crystalline facets in the grain catch the light in turn, glinting near-white as time moves on.
 - Black: restored to the original pattern and material blend, with its
   original animated illumination. A final 1.35 contrast adjustment deepens shadows without replacing its motion.
 - Green: the original forest texture plus three fixed offset copies. Local opacity masks evolve independently and favour bright leaf detail, suggesting leaves appearing and fading. The base floor remains opaque, with moving canopy illumination; there are no separate plant sprites.
@@ -451,7 +452,9 @@ and moving studio reflections.
 The actual polygon perimeter is divided into equal arc lengths in WUBRG order,
 starting at its first vertex. Each colour lights its entire strip, including
 around corners, with soft inward falloff. Light retains the material shading;
-black darkens its strip. The interior remains gold. Motion controls the reflected lights; Off freezes them.
+white's strip is a pearly sheen, its glints tapering along it, and black's
+a charcoal shade, each breadth varying in slow waves over the metal. The
+interior remains gold. Motion controls the reflected lights; Off freezes them.
 
 Grooves are confined to shared player boundaries. Each half is 0.075 cells
 wide, with a smooth cosine bowl profile, no channel around the screen edge,
