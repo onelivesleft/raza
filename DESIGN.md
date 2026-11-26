@@ -157,10 +157,11 @@ throws**, each colour as its own element, as damage or commander damage.
   toggles in their bottom left: the options button (Mana's
   ms-ability-improvise alone, at the attack icons' size, outlined, at 80%
   opacity) opens a panel of toggles, four across and three down: +1, +2,
-  life+ and commander damage along the top; -1, -2, life- and commander
-  damage with lifelink below them (each gain above its loss); then
+  life+ and commander damage with lifelink along the top; -1, -2, life-
+  and commander damage below them (each gain above its loss); then
   lifelink and poison, and commander damage alone (counted toward the 21,
-  no life taken: the commander with no badge) under the other commanders.
+  no life taken: the commander with first strike's symbol as its badge)
+  under the other commanders.
   Each is its symbol in a dark circle, white and ringed in white when it's
   on, dim when it's off. The life shortcuts stand by the life total as
   hearts in columns, the ones nearest it, then the twos, then life+ and

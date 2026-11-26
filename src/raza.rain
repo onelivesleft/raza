@@ -595,6 +595,7 @@ COMMANDER_GLYPH :: "\u{E9C6}" // Mana ms-commander
 DAMAGE_GLYPH :: "\u{EA2F}" // Mana ms-power-mtga
 LIFELINK_GLYPH :: "\u{EA4B}" // Mana ms-ability-lifelink
 POISON_GLYPH :: "\u{EA73}" // Mana ms-ability-infect
+FIRST_STRIKE_GLYPH :: "\u{E950}" // Mana ms-ability-first-strike
 
 // A player's attack icons stand in lines, the first their spot's (centred
 // on it), each further line ATTACK_ROW_PITCH cells above the last (further
@@ -776,9 +777,10 @@ move_split_with_clearance :: (splits: *Splits, k: i64, share: f32, size: V2) {
 // An attack's symbol, in the player's frame, in both the controls and the
 // pending damage label: commander damage's the commander (bronze) with the
 // power symbol (an attack) as a badge at its lower right, and with
-// lifelink's at its lower left too where it has lifelink; commander damage
-// alone's the commander with no badge (it takes no life); lifelink's the
-// heart in hands (the hands bronze) with the power symbol's badge.
+// lifelink's at its lower left too where it has lifelink; the commander
+// attack that takes no life the commander with first strike's symbol as
+// its badge at its lower right; lifelink's the heart in hands (the hands
+// bronze) with the power symbol's badge.
 draw_damage_symbol :: (canvas: *Draw.Canvas, fonts: Fonts, at: V2, angle: f32, cell: f32, kind: Attack, shows: f32, style: Draw.Text_Style) {
     if self_life_delta(kind) != 0 {
         draw_life_shortcut(canvas, fonts, at, angle, cell, kind, shows, style)
@@ -801,8 +803,9 @@ draw_damage_symbol :: (canvas: *Draw.Canvas, fonts: Fonts, at: V2, angle: f32, c
         canvas.draw_text(fonts.commander_badge, placed(at, angle, ⟨-width / 2, f32'fonts.commander_badge.cap_height / 2⟩),
                          glyph, Draw.rgba(0xFFFFFF, shows), style, angle)
     }
-    if (is_commander(kind) and kind != .COMMANDER_ONLY) or kind == .LIFELINK {
-        badge(canvas, fonts, placed(at, angle, ⟨cell * 0.17, cell * 0.16⟩), angle, DAMAGE_GLYPH, shows, badge_style)
+    if is_commander(kind) or kind == .LIFELINK {
+        lower_right := if kind == .COMMANDER_ONLY then FIRST_STRIKE_GLYPH else DAMAGE_GLYPH
+        badge(canvas, fonts, placed(at, angle, ⟨cell * 0.17, cell * 0.16⟩), angle, lower_right, shows, badge_style)
     }
     if kind == .COMMANDER_LIFELINK {
         badge(canvas, fonts, placed(at, angle, ⟨0 - cell * 0.17, cell * 0.16⟩), angle, LIFELINK_GLYPH, shows, badge_style)
@@ -980,7 +983,7 @@ fill_toggle_cache :: (layout: Layout) {
 // (OPTIONS_GLYPH) as the colours fold into theirs, and opened by it; turned
 // on and off as the colours are, a run of taps one step to undo.
 
-OPTION_KINDS :: [11] Attack⟨.GAIN_ONE, .GAIN_TWO, .LIFE_UP, .COMMANDER, .LOSE_ONE, .LOSE_TWO, .LIFE_DOWN, .COMMANDER_LIFELINK, .LIFELINK, .POISON,
+OPTION_KINDS :: [11] Attack⟨.GAIN_ONE, .GAIN_TWO, .LIFE_UP, .COMMANDER_LIFELINK, .LOSE_ONE, .LOSE_TWO, .LIFE_DOWN, .COMMANDER, .LIFELINK, .POISON,
                               .COMMANDER_ONLY⟩
 // Each option's place in the panel's grid (OPTION_COLUMNS across, row by
 // row): each gain above its loss, the commander's three down the right,
@@ -1159,9 +1162,9 @@ draw_options_button :: (canvas: *Draw.Canvas, layout: Layout, fonts: Fonts, scre
 
 // An option's symbol in its toggle, as its attack icon is: a commander's
 // (in bronze, bronze_colour) with the power symbol's badge at its lower
-// right (none for commander damage alone), and lifelink's at its lower left
-// with lifelink; lifelink's heart in hands (the hands bronze) with the
-// power symbol's badge.
+// right (first strike's for the commander attack that takes no life), and
+// lifelink's at its lower left with lifelink; lifelink's heart in hands
+// (the hands bronze) with the power symbol's badge.
 draw_option_symbol :: (canvas: *Draw.Canvas, fonts: Fonts, at: V2, angle: f32, cell: f32, kind: Attack, colour: Draw.RGBA, bronze_colour: Draw.RGBA) {
     if self_life_delta(kind) != 0 {
         draw_life_shortcut(canvas, fonts, at, angle, cell * (MANA_EM / ATTACK_EM), kind, colour.a, ⟨⟩)
@@ -1174,8 +1177,9 @@ draw_option_symbol :: (canvas: *Draw.Canvas, fonts: Fonts, at: V2, angle: f32, c
         glyph_colour := if is_commander(kind) then bronze_colour else colour
         draw_centred(canvas, fonts.mana, at, angle, attack_glyph(kind), glyph_colour)
     }
-    if (is_commander(kind) and kind != .COMMANDER_ONLY) or kind == .LIFELINK {
-        draw_centred(canvas, fonts.option_badge, placed(at, angle, ⟨cell * 0.11, cell * 0.1⟩), angle, DAMAGE_GLYPH, colour)
+    if is_commander(kind) or kind == .LIFELINK {
+        lower_right := if kind == .COMMANDER_ONLY then FIRST_STRIKE_GLYPH else DAMAGE_GLYPH
+        draw_centred(canvas, fonts.option_badge, placed(at, angle, ⟨cell * 0.11, cell * 0.1⟩), angle, lower_right, colour)
     }
     if kind == .COMMANDER_LIFELINK {
         draw_centred(canvas, fonts.option_badge, placed(at, angle, ⟨0 - cell * 0.11, cell * 0.1⟩), angle, LIFELINK_GLYPH, colour)
