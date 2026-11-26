@@ -87,7 +87,7 @@ life_recoil :: (volleys: Volleys, player: i64, cell: f32 -> offset: V2, turn: f3
 // growing (shown_game's).
 strike :: (game: *Game, volleys: *Volleys, layout: Layout, pending: *[MAX_PLAYERS] [MAX_PLAYERS] i32,
            from: i64, to: i64, amount: i32, kind := Attack.COMMANDER) {
-    if amount <= 0 or from == to then return
+    if amount <= 0 then return
     game.deal_attack(kind, from, to, amount)
     if takes_life(kind) then pending[to][from] += amount
     // (the path ends at their life total whatever the finger's over now)

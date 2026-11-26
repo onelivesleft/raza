@@ -1,4 +1,4 @@
-// Original material atlas: seven surfaces and one neutral turbulence tile.
+// Original material atlas: seven surfaces and the forest floor's heightmap.
 MATERIAL_BYTES :: #data "../textures/materials-v1.png"
 material_image: Draw.Image
 
@@ -12,8 +12,12 @@ material_image: Draw.Image
 // them images.
 Texture :: enum { MATERIALS; CONTROLS; UNDER_TABLE; FIVE_COLOURS }
 
-TEXTURE_PATHS :: [Texture] string⟨"textures/materials-v1.png", "textures/control-metal-v1.png",
-                                    "textures/under-table-steel-v1.png", "textures/five-colour-dots-96.png"⟩
+TEXTURE_PATHS :: [Texture] string⟨
+    MATERIALS: "textures/materials-v1.png",
+    CONTROLS: "textures/control-metal-v1.png",
+    UNDER_TABLE: "textures/under-table-steel-v1.png",
+    FIVE_COLOURS: "textures/five-colour-dots-96.png",
+⟩
 
 Decoded_Texture :: struct {
     which:  Texture
@@ -97,8 +101,9 @@ TILE_WATER    :: 1       // blue's
 TILE_BLACK    :: 2
 TILE_CRACKS   :: 3       // red's
 TILE_FOREST   :: 4       // green's
-TILE_ARTIFACT :: 5       // colourless's
-TILE_GOLD     :: 6       // two colours or more
+TILE_ARTIFACT    :: 5       // colourless's
+TILE_GOLD        :: 6       // two colours or more
+TILE_FOREST_BUMP :: 7       // green's heightmap
 
 material_tile :: (identity: Identity -> i32) #pure {
     *count: i32 = 0

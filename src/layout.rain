@@ -55,6 +55,7 @@ Layout :: struct {
     splits: Splits
     ends:   [MAX_PLAYERS] V2     // where each line from the centre meets the screen's edge
     life_size: i32               // the life totals' font size (fitted_life_size's)
+    widget_scale: f32 = 1        // the players' widgets' size (the settings' scale slider): widget_cell's
 }
 
 // The share a turned to lie from 0 up to 1 (or an angle, from 0 up to TAU).
@@ -370,11 +371,12 @@ text_angle :: (toward: V2 -> f32) #pure {
     return Math.atan2(-toward.x, toward.y)
 }
 
-// The players' parts of a screen of a size, split as splits says.
-lay_out :: (size: V2, splits: Splits -> layout: Layout) #pure {
+// The players' parts of a screen of a size, split as splits says, their
+// widgets at a scale (widget_cell's).
+lay_out :: (size: V2, splits: Splits, widget_scale: f32 = 1 -> layout: Layout) #pure {
     n := splits.count
     centre := size / 2
-    layout = ⟨size: size, centre: centre, count: n, splits: splits⟩
+    layout = ⟨size: size, centre: centre, count: n, splits: splits, widget_scale: widget_scale⟩
     for k: 0 < n { layout.ends[k] = edge_at(size, splits.at[k]) }
     corners := corner_shares(size)
     all_corners := [4] f32⟨0, corners[0], corners[1], corners[2]⟩
@@ -430,8 +432,10 @@ lay_out :: (size: V2, splits: Splits -> layout: Layout) #pure {
     // capitals, and a little, inside its part; its room is measured again
     // there, and the totals' size fitted again from where they are now.
     life_half := f32'fitted_life_size(layout) * LIFE_CAP_SHARE / 2
+    // (the room for a chip and an attack icon grown with the widgets)
+    grown := (ATTACK_LIFE_GAP - 0.1) * (widget_cell(layout) - cell_of(layout))
     for *seat: layout.seats[:n] {
-        above := Math.max(ATTACK_ABOVE_CELLS * cell_of(layout), life_half + ATTACK_LIFE_GAP * cell_of(layout))
+        above := Math.max(ATTACK_ABOVE_CELLS * cell_of(layout), life_half + ATTACK_LIFE_GAP * cell_of(layout)) + grown
         seat.icon = clear_of_controls(size, centre, seat.middle, seat.middle - seat.toward * above)
         held_back := above - Math.dot(seat.middle - seat.icon, seat.toward)
         room_ahead := seat.reach - life_half - 0.3 * cell_of(layout) - Math.dot(seat.middle - centre, seat.toward)

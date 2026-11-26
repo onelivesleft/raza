@@ -15,7 +15,7 @@ The image has four columns and two rows, without gutters. In row order:
 | 4 | Moss, fallen leaves and soil | Green panels |
 | 5 | Brushed iron and rust | Colourless panels |
 | 6 | Antique gold mineral grain | Multicolour panels; identity tint retained |
-| 7 | Neutral smoke filaments | Animated fire and wind density |
+| 7 | Forest floor height & leaf gloss | Pixel-registered height (`.x`) and leaf-only gloss mask (`.y`) for green panels (`TILE_FOREST_BUMP`) |
 
 `src/materials.rain` samples within each cell with an inset, avoiding colour bleed
 from adjacent cells. Four overlapping sampling windows keep values continuous at tile joins
@@ -24,9 +24,10 @@ the artwork is not assumed to have mathematically seamless edges. The atlas
 is embedded with `#data`, uploaded once at startup and released on exit.
 
 Solid materials stay fixed in the player's coordinate frame. Blue's panels
-and water fields are procedural and don't sample tile 1. Fire and wind
-combine two moving scales of the neutral tile. Shaders retain the
-silhouettes, lighting, stirring, attack timing and fading.
+are procedural and don't sample tile 1. Tile 7 carries a greyscale heightmap
+generated directly from tile 4 so every leaf, clover cluster, moss cushion and
+soil crevice aligns pixel-for-pixel across `layered_forest`'s base and overlay
+layers when lit from above.
 
 Rain's Draw module now exposes `draw_shader_image`: the same quad and typed
 uniform block as `draw_shader`, plus typed texture/sampler bindings and one

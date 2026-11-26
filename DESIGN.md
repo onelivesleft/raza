@@ -145,6 +145,7 @@ throws**, each colour as its own element, as damage or commander damage.
   the hands holding it bronze, drawn from the glyph's own two outlines,
   with the power symbol's badge: life taken, and as much gained), and
   poison (ms-ability-infect: poison counters, ten and the player is out).
+  A new player starts with commander damage and commander damage alone on.
   Badges are white; the options' toggles show the same symbols. The line is centred on the spot; one
   too wide for their part wraps, the rest in lines above it (further from
   them), never below it, each centred; where they don't fit so they're
@@ -176,7 +177,55 @@ throws**, each colour as its own element, as damage or commander damage.
   they're drawn: not in a part too thin for them, while its drum's open, or
   while the count column has the table. They
   belong to the seat, kept with the game and across a new game; Reset turns
-  every seat's back to damage and commander damage.
+  every seat's back to damage, commander damage and commander damage alone.
+- **Profiles** (profiles.rain). Above the options button (or, where that's
+  outside the part or too near its edge, the nearest place round the
+  button inside it), a profile button: the seat's profile's initials, or a person where it has none. It
+  opens a panel as the options' is, each profile's initials in a circle
+  (the seat's ringed) and a pencil. A profile touched goes to the seat
+  (moved from any other; touched at its own seat, taken off it): the seat
+  takes its options, which are its own from then on (turned on or off
+  there, the profile keeps them), and its deck's colours. The pencil opens
+  the editor on the seat's profile, a new one where it has none.
+- **The profile editor** (profile_editor.rain) covers the screen, on the
+  controls' dark slate (the pill's), piped round its edge in bronze (the
+  credits' tube), turned to the player who opened it (the nearest quarter
+  turn: landscape or portrait as it falls). Along its top: the name (its
+  initials made from its first two words as it's typed), the initials
+  (typed over, kept), and the buttons: add, remove, circles or
+  rectangles, and done; under the name, the profile's decks as small
+  circles (the starred one ringed; as many as fit, then how many more). A field touched takes the keyboard (Windows' touch
+  keyboard, which comes up upright to the screen); Enter, or a touch
+  elsewhere, lets it go. Below, the decks, scrolled by dragging: each
+  touched is enabled for the session (lit; where none is, every deck is,
+  and they're all shown plain), its star (top right) starring it. Adding,
+  a filter field and every commander whose name holds it (in any case),
+  as smaller rectangles of their thumbnails, those already decks lit: one
+  touched is added. Removing, the decks as rectangles, each touched taken out. A
+  rectangle is the commander's art with its name on a dark band over its
+  foot; a circle is its avatar circle, the name below it. Done, or
+  Escape, closes it. The art comes from commanders/atlas (its catalog
+  carried in Raza, its pages read on a thread of their own as they're
+  first drawn, 24 kept at most, the profiles' decks' always), with every
+  commander's thumbnail (128 pixels at most, on pages of their own) read
+  as Raza starts and kept, so any can be shown at once, small, while its
+  full art's read.
+- **Decks.** A seat whose profile has decks has a commander button beside
+  its five-colour button (on its right, or the nearest place round it
+  inside the part): the deck it plays (the one picked, else the
+  starred one, else its first) as its commander's avatar circle, ringed in
+  bronze. It opens a panel of the profile's decks, as circles (the one
+  played ringed), and a shuffle: a deck touched is picked, and the seat
+  takes its commander's colour identity; shuffle closes the panel, then
+  flicks the button through the decks enabled for the session (all, where
+  none is), slowing over about two seconds, onto one not played this
+  session, while two or more of them haven't been (then any).
+- **Sessions.** A game starts at a restart and ends at the next one (or
+  as Raza closes); each seat's deck is played as its game ends. A session
+  is the games each starting within two hours of the last one's end: the
+  decks played and enabled are forgotten as a new one starts. Profiles,
+  each seat's profile and deck, and the session are kept between runs
+  (Defaults' `"profiles"`, JSON).
 - **Poison** flies as poison tokens (a green counter with poison's symbol)
   in place of the damage dots, with no number flying off as each lands
   (they're no life lost), and the player's
@@ -202,7 +251,9 @@ throws**, each colour as its own element, as damage or commander damage.
 
 A white arrow with a black outline starts just above the pressed attack
 button in its player's frame. It curves up from the button, over the table,
-and down onto the chosen victim's life total. A soft down-right shadow falls
+and down onto the chosen victim's life total, or, dragged toward their own
+life total (past a little of the way from the button), onto it: their own
+life paid. A soft down-right shadow falls
 over everything beneath it, including the table, controls and life counts.
 The arrow is drawn after those layers. Its shaft is 80% of an attack button's diameter. Before a victim is selected, its head points along the drag direction, away from the pressed button. It appears immediately on dragging, pointing at the finger until an eligible victim is selected. Its shadow lifts only through the arch, with both ends touching the table. The pending amount, on foil glass, sits just beyond the arrow's tip (its nearest edge a little past it, along the way the arrow points), in the attacker's frame, facing the attacker, and kept on the screen (near an edge it may overlap the arrowhead). The same label lies over the attack icon the drag began at, so it's read where the drag started too.
 Nothing else is drawn while selecting.
@@ -256,12 +307,68 @@ system's (settings and quitting) at the right end, as a power button. Its
 edge is raised bronze piping (0.06 cells), a round bead lit from the top
 left with a highlight along it, casting a soft shadow down and to the right. The text is Crimson Pro.
 
+A new game (the restart button) keeps each seat's colours and attacks, puts
+every player back to 40 with no damage, and chooses a random starting player
+by spinning anticlockwise round the parts (`seat_light_shade` and
+`seat_bump_shade` over the kept surface, so the surfaces aren't redrawn: the
+bronze in the channels surrounding the part, never the screen's edge, lit up,
+the whole of that part alone illuminated, and a directional sun rising at its
+clockwise edge, arcing overhead, and setting over its anticlockwise edge along
+the spin vector so each material's relief actuates from one side to the other
+across the whole background — or a broad solar shine flashes across smooth
+white marble; sunken bevelled cracks in satin-honed flat red stone warmed by
+golden solar spill; watery ripples on blue and black; corroded holes eaten into
+flat artifact metal; green's flat-terraced, pixel-registered forest heightmap
+and leaf-gloss mask — waxy shine on leaves, matte moss and twigs/branches —
+casting directional leaf, twig and crevice shadows across `layered_forest`'s
+layers; and gold's undulations and mineral grain, with two-colour hybrids
+blending both halves): one part after another, starting at a measured pace
+(0.13 s a step) and slowing steadily under friction (to a third of a second)
+before entering the chosen part, 3 to 5 s in all; then, keeping the pace it
+entered at and slowing under the same friction, going back and forth across
+it, off its anticlockwise and clockwise channels in turn, twice each (which
+flash warm ivory-gold on impact), and coming to rest overhead 3 s after it
+entered, before fading very slowly back to normal (7 s).
+Undo, a reset or a new player count calls the spin off.
+
 The settings' channel has a brightness slider between the orientation's
 button and Quit, as the count runner is: a narrow bronze-lined groove in
 the steel, and a round domed bronze knob riding in it with a sun engraved
 on it (dimmest at its left, full at its right). Touched, or dragged, it dims everything drawn toward black,
 from full down to 30%; it's kept between runs, as the motion is, and isn't
 undone. A portrait screen has no room for it there.
+
+Its left side mirrors it with the widgets' scale slider, between the
+screen's left edge and the motion's button, its knob engraved with
+resizing's arrows: from the size they were first drawn at (its left end,
+the least) to 1.75 times it (its right), in steps of 0.05. It sizes each
+player's widgets: their attack icons (and how far they stand from their
+life total, and the room they need from the channels), their life
+shortcuts, their colour toggles and options panel as they open (and the
+profile and deck panels), and what's round their life total (commander
+damage's chips, poison and tax); not their life totals, nor the number
+grid and the confirm buttons, nor the folded buttons (the five-colour,
+options, profile and commander buttons), which keep their size and place. Raza starts at the largest scale until one's
+chosen. While it's held, the players' widgets (and their life
+totals and what's round them, as the closed table shows them) fade in over
+the opened table's halves, at the scale it gives, so it can be seen as
+it's chosen (0.2 s), and fade out again once it's let go. It's kept
+between runs (`"widget_scale"`), isn't undone, and has no room in
+portrait. Each step's fonts are made once as it's
+reached, and the toggles' and chips' places again.
+
+The info button, an i, stands just left of Quit (not in portrait, where
+there's no room): touched, it opens the credits, a panel in the middle of
+the screen over everything, the table dimmed under it: the channel's
+light brushed steel, piped round in a lit bronze tube. On its left, a
+large Raza in the gold of three colours or more (its undulations and
+moving reflections, none of its colours' light), bevelled, over a soft
+shadow, and "by Iain King" etched in the steel below it; on its right the
+credits, each "what: whose" (symbols, type, icons, font rendering), etched;
+and along its foot, the width of it below a fine etched rule, that Magic's
+symbols are Wizards of the Coast's and Raza unofficial. Where the two
+sides wouldn't fit beside each other, the credits go below the name. A
+touch anywhere, or Escape, closes it, and does nothing else.
 
 The orientation's button, a place right of Reset, goes round auto,
 landscape and portrait, showing which (a screen turning; a tablet, on its
@@ -321,8 +428,9 @@ on a chip of the pill's floor: the motion, a place left of undo, one button
 showing what it is (pause, or play's triangles: ▶ slow, ▶▶ medium, ▶▶▶
 fast), each tap the next, round from pause to fast and back; Reset, a
 place right of the menu button, which closes the table, then resets; the
-orientation's button a place right of Reset; the brightness slider; and
-Quit, the power icon, at the channel's far right. The menu button, touched
+orientation's button a place right of Reset; the brightness slider; the
+info button; and Quit, the power icon, at the channel's far right; and left
+of the motion's button, the widgets' scale slider. The menu button, touched
 again, closes the table, as a tap anywhere else, or Escape, does.
 
 ## Ideas kept for later
@@ -362,12 +470,20 @@ tablet's into `release/` (both ignored by git).
 
 `Raza.exe -snapshot:folder` draws each count of players (`raza_2.png` to
 `raza_6.png`, a drag's arrow in each), `raza_confirm.png` and
-`raza_confirm_portrait.png` (that drag let go, its damage asked for), `raza_frames.png` (each colour
+`raza_confirm_portrait.png` (that drag let go, its damage asked for),
+`raza_spin.png`, `raza_spin_portrait.png`, `raza_spin_frames.png` and
+`raza_spin_fade.png` (a new game's starting-player spin landed, and halfway
+through its fade), `raza_frames.png` (each colour
 alone and all five as gold), `raza_volley_0.png` and `_1` (a volley in
 flight, then landing), `raza_black_0.png` to `_2` (a volley from a white,
 black and green player, its dots in their three colours, in flight and
 landing), the grid, the counts, and the settings
-(`raza_settings_0.png` part of the way open, `_1` open). The tests check
+(`raza_4_profiles.png` a seat's deck panel and another's profile panel
+open, `raza_4_editor.png`, `_editor_circles` and `_editor_add` the editor;
+`raza_settings_0.png` part of the way open, `_1` open, `_scaling` with
+the scale slider held at 1.5 and the widgets shown over it), the credits over
+them (`raza_info_4.png`), and the widgets at their largest scale
+(`raza_scaled.png`). The tests check
 what can be checked without looking: volleys arcing from the damage icon
 to the life total, landing a point at a time, their bolts in sequence,
 the life's recoil settling, chips off the toggles, the toggles' pentagon and its folding, the pill's
@@ -418,11 +534,12 @@ cached: the first frame 0.6 s from the start; idle, each frame's work about
 1 ms; busy, the frames as fast as the display (120 Hz, its present waiting
 for the display: the work shows about 8.3 ms). The frames a second show top
 right in a debug build, not in a release build; F12 shows or hides them in
-either (F11 is fullscreen or a window).
+either (F11 is fullscreen or a window), and in a debug build L lights each
+part in order under the overhead spotlight and then turns it off.
 
 ## Material assets and animation
 
-The embedded atlas in textures/materials-v1.png supplies fine material detail, including the single forest-floor texture.
+The embedded atlas in textures/materials-v1.png supplies fine material detail, including the single forest-floor texture (tile 4) and its pixel-registered heightmap (tile 7).
 Its provenance, layout and original generation prompt are recorded in textures/.
 No reference game's art is included in the application.
 

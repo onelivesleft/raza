@@ -204,7 +204,7 @@ draw_settings_split :: (canvas: *Draw.Canvas, layout: Layout, screen: Screen_Sta
     draw_steel(canvas, layout)
     draw_count_bed(canvas, layout, 0)
     draw_counts(canvas, layout, screen, game)
-    draw_settings(canvas, layout, screen.motion, 1, screen.brightness, screen.orientation)
+    draw_settings(canvas, layout, screen.motion, 1, screen.brightness, screen.orientation, screen.widget_scale)
     button := capsule_centre(layout, .PLAYERS)
     params := Settings_Split_Params⟨⟨layout.size.x, layout.size.y, layout.centre.y, s⟩,
                                     ⟨layout.centre.x, layout.centre.y, CAPSULE_REACH * cell, CAPSULE_HALF * cell⟩,
@@ -226,6 +226,19 @@ draw :: (canvas: *Draw.Canvas, layer: *Draw.Canvas, layout: Layout, game: Game, 
     if screen.settings_shown > 0 and count_table.prepare(canvas.size) {
         // (the table without the pill, which lies over its halves)
         draw_table(count_table.canvas, layer, layout, game, fonts, screen, volleys, with_pill: false)
+        // (and, while the scale slider's held, each player's colour and
+        // options buttons on it too, with the rest of their widgets)
+        preview := scale_preview_shows(screen.scale_preview)
+        if preview > 0 {
+            *previewed := screen
+            previewed.count_ui_visible = preview
+            for k: 0 < layout.count {
+                draw_colours(count_table.canvas, layout, game, fonts, previewed, k)
+                draw_options(count_table.canvas, layout, game, fonts, previewed, k)
+                draw_options_button(count_table.canvas, layout, fonts, previewed, k)
+                draw_profile_controls(count_table.canvas, layout, game, fonts, previewed, k)
+            }
+        }
         draw_settings_split(canvas, layout, screen, game)
     }
     else if count_table.prepare(canvas.size) {
@@ -247,7 +260,7 @@ draw :: (canvas: *Draw.Canvas, layer: *Draw.Canvas, layout: Layout, game: Game, 
         button := capsule_centre(layout, .PLAYERS)
         draw_metal_bar(canvas, button, V2⟨BAR_WIDTH, BAR_WIDTH⟩ * cell, 1)
         draw_people(canvas, button, game.players, cell, Draw.rgb(0x171C22))
-        if screen.settings_shown > 0 then draw_settings(canvas, layout, screen.motion, screen.settings_shown, screen.brightness, screen.orientation)
+        if screen.settings_shown > 0 then draw_settings(canvas, layout, screen.motion, screen.settings_shown, screen.brightness, screen.orientation, screen.widget_scale)
     }
     draw_count_ring(canvas, layout, screen)
     for d: screen.drags { if d.active then draw_drag(canvas, layout, game, fonts, d, screen.foil_time) }
@@ -266,9 +279,13 @@ draw :: (canvas: *Draw.Canvas, layer: *Draw.Canvas, layout: Layout, game: Game, 
         }
         for k: 0 < layout.count { draw_options(canvas, layout, game, fonts, screen, k) }
         for k: 0 < layout.count { draw_options_button(canvas, layout, fonts, screen, k) }
+        for k: 0 < layout.count { draw_profile_controls(canvas, layout, game, fonts, screen, k) }
     }
     // (a damage being confirmed: its buttons over those too)
     for c: screen.confirms { if c.open then draw_confirm(canvas, layout, fonts, c, count_table.canvas, count_table.made) }
+    // (the credits, over all of it)
+    draw_editor(canvas, layout, fonts)
+    if screen.info_open then draw_info(canvas, layout, fonts, screen.surface_time)
     if screen.show_fps then draw_fps(canvas, layout, fonts, screen.fps)
     // (everything dimmed to the brightness, last)
     if screen.brightness < 1 then canvas.fill_rect(⟨0, 0⟩, layout.size, Draw.rgba(0x000000, 1 - Math.max(screen.brightness, MIN_BRIGHTNESS)))

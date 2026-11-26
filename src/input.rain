@@ -1,0 +1,608 @@
+// Input: what each touch and key does on the table, by what's touched (the
+// settings, a damage confirm, a player's options, a number grid, an open
+// life drum, the pill, a part's controls, or a divider line), and how each
+// held finger's gesture follows it from frame to frame.
+
+// A finger on the screen, or the mouse's left button, as the table reads
+// them: each finger its own, so several players act at once, each gesture
+// following the finger that began it.
+Pointer :: struct {
+    id:       u32
+    at:       V2
+    pressed:  bool        // this frame
+    released: bool        // this frame (it's gone the next)
+}
+
+// The mouse's id among the fingers'; and -busy's made-up fingers' first.
+MOUSE_POINTER :: u32'0xFFFF_FFFF
+BUSY_POINTER  :: u32'0xFFFF_FF00
+
+// The window's fingers this frame, and its mouse while its left button's down
+// (or let go this frame), each in the table's drawing (turned: the window's
+// the other way round, its drawing turned onto it).
+pointers_of :: (w: ^Window, turned: bool, made_up: [] Pointer = ⟨⟩ -> list: [] Pointer) {
+    *found: [..] Pointer
+    for p: made_up { found.add(p) }
+    width := f32'w.size[0]
+    for t: w.touches {
+        found.add(⟨t.id, landscape_point(V2⟨t.position[0], t.position[1]⟩, turned, width), t.state.PRESSED, t.state.RELEASED⟩)
+    }
+    left := w.mouse.buttons[.LEFT]
+    if left.HELD or left.PRESSED or left.RELEASED {
+        at := landscape_point(V2⟨f32'w.mouse.position[0], f32'w.mouse.position[1]⟩, turned, width)
+        found.add(⟨MOUSE_POINTER, at, left.PRESSED, left.RELEASED⟩)
+    }
+    list = found
+}
+
+// -busy's two made-up fingers, each dragging from a player toward another,
+// swaying, never lifted.
+busy_pointers :: (layout: Layout, screen: *Screen_State, busy: bool, elapsed: f32 -> made_up: [2] Pointer, count: i64) {
+    made_up = ⟨⟩
+    count = 0
+    if !busy or layout.count < 3 then return
+    for k: 0 < 2 {
+        aimed := layout.seats[(k + 2) % layout.count].middle
+        along := 0.55 + 0.35 * Math.sin(elapsed * (1.3 + f32'k * 0.4))
+        made_up[k] = ⟨BUSY_POINTER + u32'k, Math.mix(layout.seats[k].icon, aimed, along), false, false⟩
+        if !screen.drags[k].active then screen.drags[k] = ⟨active: true, from: k, finger: made_up[k].at, pointer: BUSY_POINTER + u32'k⟩
+    }
+    count = 2
+}
+
+// The finger with an id, or absent if it's not on the screen.
+pointer_with :: (pointers: [] Pointer, id: u32 -> Pointer) [absent] {
+    for p: pointers { if p.id == id then return p }
+    fail: absent
+}
+
+// Whether the finger with an id has let go: this frame, or it's gone.
+let_go :: (pointers: [] Pointer, id: u32 -> bool) #pure {
+    for p: pointers { if p.id == id then return p.released }
+    return true
+}
+
+// Gesture state kept from frame to frame alongside Screen_State: which
+// finger owns each table-wide drag, what a line's drag or two-finger turn
+// started from, and what main should finish or store.
+Input :: struct {
+    lines_before:       Lines    // the lines as a line's drag began, to undo it to
+    line_pointer:       u32      // the finger moving a line (Pointer's id)
+    turn_pointer:       u32      // a second finger on a line, turning them all
+    turn_from:          Splits   // ...the lines as they were when it touched
+    turn_angle:         f32      // ...and the angle about the centre the fingers' middle had then
+    counts_pointer:     u32      // the finger on the count column
+    brightness_pointer: u32      // the finger on the brightness slider
+    brightness_held:    bool
+    scale_pointer:      u32      // the finger on the widgets' scale slider
+    scale_held:         bool
+    reset_pending:      bool     // Reset touched: done once the table's closed
+    quitting:           bool     // Quit touched in the settings
+    store_all_lines:    bool     // undo or redo moved the lines: store every count's
+    store_count_lines:  bool     // a line's drag ended: store this count's
+}
+
+// Escape's first step on what's open: any confirm, else any number grid,
+// else the credits, else the settings, else the count column (let go of, the count as it
+// was); false when none of them was open.
+escape_overlay :: (screen: *Screen_State -> bool) {
+    if any_confirming(screen) {
+        for *confirm: screen.confirms { confirm.open = false }
+        return true
+    }
+    if any_grid_open(screen) {
+        for *grid: screen.pickers { grid.open = false }
+        return true
+    }
+    if screen.info_open {
+        screen.info_open = false
+        return true
+    }
+    if screen.settings_open {
+        screen.settings_open = false
+        return true
+    }
+    if screen.counts.open {
+        screen.counts.held = false
+        screen.counts.open = false
+        screen.counts.settling = true
+        return true
+    }
+    return false
+}
+
+// Steps the debug panel spotlight through each seat in order (0..players-1), then off (-1).
+cycle_debug_light :: (screen: *Screen_State, players: i64) {
+    count := Math.clamp(players, 2, MAX_PLAYERS)
+    screen.start_spin = ⟨⟩
+    screen.debug_light_time = 0.04 * DEBUG_LIGHT_PERIOD
+    if screen.debug_lit < 0 or screen.debug_lit >= count {
+        screen.debug_lit = 0
+    }
+    else if screen.debug_lit + 1 < count {
+        screen.debug_lit += 1
+    }
+    else {
+        screen.debug_lit = -1
+    }
+}
+
+// Keyboard shortcuts: F11 fullscreen or a window, F12 the frames a second,
+// L (in debug builds) each part's spotlight in order then off, Escape what's
+// open (or leaving fullscreen), and Control+Z / Control+Y (or Control+Shift+Z)
+// undo and redo.
+step_keys :: (input: *Input, w: ^Window, screen: *Screen_State, timeline: *Timeline, game: *Game, splits: *Lines,
+              volleys: *Volleys, pending: *[MAX_PLAYERS] [MAX_PLAYERS] i32) {
+    if w.keys[.F11].PRESSED then w.set_fullscreen(!w.is_fullscreen)
+    if w.keys[.F12].PRESSED then screen.show_fps = !screen.show_fps
+    #if #program.mode == .DEBUG {
+        if !w.modifiers.CONTROL and !w.modifiers.ALT and w.keys[.L].PRESSED {
+            cycle_debug_light(screen, game.players)
+        }
+    }
+    if w.keys[.ESCAPE].PRESSED {
+        if editor.open { close_editor(w) }
+        else if !escape_overlay(screen) and w.is_fullscreen then w.set_fullscreen(false)
+    }
+    if w.modifiers.CONTROL and (w.keys[.Z].PRESSED or w.keys[.Y].PRESSED) {
+        again := w.keys[.Y].PRESSED or w.modifiers.SHIFT
+        if step_history(screen, timeline, game, splits, again) {
+            call_off_volleys(volleys, pending)
+            input.store_all_lines = true
+        }
+    }
+}
+
+////////////////////////////////
+// What each new touch hits
+
+// A touch while the settings are open: the speed, the brightness slider or
+// the widgets' scale slider (each followed till let go), the orientation,
+// Reset, Quit, or anywhere else to close the table.
+touch_settings :: (input: *Input, screen: *Screen_State, layout: Layout, pointer: Pointer) {
+    if settings_part_at(layout, pointer.at) is {
+    case animation:
+        screen.motion = animation
+    case brightness:
+        screen.brightness = brightness
+        input.brightness_held = true
+        input.brightness_pointer = pointer.id
+    case scale:
+        screen.widget_scale = scale
+        input.scale_held = true
+        input.scale_pointer = pointer.id
+    case orientation:
+        screen.orientation = next_orientation(screen.orientation)
+    case reset:
+        screen.settings_open = false
+        input.reset_pending = true
+    case info:
+        screen.info_open = true
+    case quit:
+        input.quitting = true
+    case close:
+        screen.settings_open = false
+    }
+}
+
+// A touch while damage is being confirmed: a confirm button strikes with
+// its damage, and a touch anywhere calls every open confirm off.
+touch_confirm :: (screen: *Screen_State, timeline: *Timeline, game: *Game, splits: Lines,
+                  volleys: *Volleys, pending: *[MAX_PLAYERS] [MAX_PLAYERS] i32,
+                  layout: Layout, fonts: Fonts, at: V2 -> bool) {
+    cell := cell_of(layout)
+    *confirmed := false
+    for *confirm: screen.confirms {
+        if !confirm.open then continue
+        if damage := confirm_damage_at(layout, confirm, confirm_width(fonts, confirm, cell), at) is not absent {
+            timeline.remember(game, splits)
+            strike(game, volleys, layout, pending, confirm.from, confirm.to, damage, confirm.kind)
+        }
+        confirm.open = false
+        confirmed = true
+    }
+    return confirmed
+}
+
+// A touch on a player's options button, an open option toggle (ending a
+// drag or number grid of an attack turned off), or the open panel's middle.
+touch_options :: (screen: *Screen_State, timeline: *Timeline, game: *Game, splits: Lines, layout: Layout, at: V2 -> bool) {
+    if option_button := options_button_at(layout, screen, at) is not absent {
+        if screen.options.open[option_button] { fold_now(screen.options, option_button) } else { open_options(screen.options, option_button) }
+        return true
+    }
+    if chooser, option := option_at(layout, screen, at) is not absent {
+        timeline.remember_colours(game, splits, MAX_PLAYERS + chooser)
+        toggle_attack(game, chooser, option)
+        if !has_attack(game.attacks[chooser], option) {
+            if screen.drags[chooser].active and screen.drags[chooser].kind == option then screen.drags[chooser].active = false
+            if screen.pickers[chooser].open and screen.pickers[chooser].kind == option then screen.pickers[chooser].open = false
+        }
+        return true
+    }
+    if options_hub := options_middle_at(layout, screen, at) is not absent {
+        fold_now(screen.options, options_hub)
+        return true
+    }
+    return false
+}
+
+// A touch on an open number grid: a tens or units key chooses it, the tick
+// applies or deals the number chosen, and the cross cancels.
+touch_grid :: (screen: *Screen_State, timeline: *Timeline, game: *Game, splits: Lines,
+               volleys: *Volleys, pending: *[MAX_PLAYERS] [MAX_PLAYERS] i32, layout: Layout, at: V2 -> bool) {
+    for k: 0 < MAX_PLAYERS {
+        if !screen.pickers[k].open then continue
+        key := picker_part_at(layout, screen.pickers[k], at)
+        if key is {
+        case tens, units:
+            screen.pickers[k].pick(key)
+            return true
+        case accept:
+            picker := screen.pickers[k]
+            value := picker.tens + picker.units
+            screen.pickers[k].open = false
+            if value > 0 {
+                if picker.kind == .LIFE_UP or picker.kind == .LIFE_DOWN {
+                    apply_life_shortcut(timeline, game, splits, screen, picker.from, value * self_life_delta(picker.kind))
+                }
+                else {
+                    timeline.remember(game, splits)
+                    strike(game, volleys, layout, pending, picker.from, picker.to, value, picker.kind)
+                }
+            }
+            return true
+        case cancel:
+            screen.pickers[k].open = false
+            return true
+        case outside: _
+        }
+    }
+    return false
+}
+
+// A touch on an open life drum: its + or - square (committing the turn and
+// opening the number grid), its tick or cross, or one of its wheels.
+touch_open_drum :: (screen: *Screen_State, timeline: *Timeline, game: *Game, splits: Lines,
+                    layout: Layout, fonts: Fonts, pointer: Pointer -> bool) {
+    at := pointer.at
+    for k: 0 < layout.count {
+        if !screen.drums[k].open then continue
+        if sign := drum_sign_at(layout, fonts, screen.drums[k], k, at) is not absent {
+            commit_drum(screen.drums[k], game, timeline, splits)
+            grid_kind := if sign > 0 then Attack.LIFE_UP else Attack.LIFE_DOWN
+            screen.pickers[k] = ⟨open: true, from: k, to: k, kind: grid_kind, at: at⟩
+            return true
+        }
+        cross, tick, half := drum_buttons(layout, fonts, screen.drums[k], k)
+        if tick_or_cross_at(layout, layout.seats[k].angle, cross, tick, half, at) is {
+        case accept:
+            commit_drum(screen.drums[k], game, timeline, splits)
+            return true
+        case cancel:
+            cancel_drum(screen.drums[k], game, timeline, splits)
+            return true
+        case tens, units, outside: _
+        }
+        if place := drum_wheel_at(layout, fonts, screen.drums[k], at) is not absent {
+            spun := layout.seats[k]
+            press_drum(screen.drums[k], game, k, local_of(spun.middle, spun.angle, at), place)
+            screen.drums[k].pointer = pointer.id
+            return true
+        }
+    }
+    return false
+}
+
+// A touch on the pill in the middle: undo, redo, the players' count runner,
+// a new game, or the settings (locked: the count runner or settings just
+// took the table, ending any line drag).
+touch_capsule :: (input: *Input, screen: *Screen_State, timeline: *Timeline, game: *Game, splits: *Lines,
+                  volleys: *Volleys, pending: *[MAX_PLAYERS] [MAX_PLAYERS] i32,
+                  layout: Layout, pointer: Pointer, random: *Random.Generator -> handled: bool, locked: bool) {
+    handled = false
+    locked = false
+    if part := capsule_part_at(layout, pointer.at) is not absent {
+        handled = true
+        if part is {
+        case .UNDO, .REDO:
+            if step_history(screen, timeline, game, splits, part == .REDO) {
+                call_off_volleys(volleys, pending)
+                input.store_all_lines = true
+            }
+        case .PLAYERS:
+            // (refused while anything's under way, as undo is: a drag, a
+            // number grid, a drum, a line moving)
+            if under_way(screen) then return
+            end_gestures(screen)
+            locked = true
+            count := f32'game.players
+            screen.counts = ⟨open: true, held: true, grabbed: pointer.at.y, from: count, shown: count,
+                             laid: screen.counts.laid, toward: screen.counts.toward, progress: screen.counts.progress⟩
+            input.counts_pointer = pointer.id
+        case .RESTART:
+            // (the game ended, and the next begun: its decks played, the session's)
+            now := unix_seconds()
+            end_profile_game(game.players, now)
+            start_profile_game(now)
+            timeline.remember(game, splits)
+            game = new_game(game.players, game.identity, game.attacks)
+            call_off_volleys(volleys, pending)
+            screen.debug_lit = -1
+            screen.start_spin = begin_start_spin(random, game.players)
+        case .SYSTEM:
+            end_gestures(screen)
+            locked = true
+            screen.settings_open = true
+        }
+    }
+}
+
+// A touch in a player's part: their commander tax, colour toggles, life
+// shortcuts, attack icons or life total (false where none of them is at
+// the touch, so a divider line there can take it).
+touch_part :: (screen: *Screen_State, timeline: *Timeline, game: *Game, splits: Lines,
+               volleys: Volleys, pending: [MAX_PLAYERS] [MAX_PLAYERS] i32,
+               layout: Layout, fonts: Fonts, pointer: Pointer, now: f64 -> bool) {
+    at := pointer.at
+    shown := shown_game(game, pending, volleys)
+    if tax_player := tax_button_at(layout, fonts, shown, screen, at) is not absent {
+        before := game
+        if raise_commander_tax(game, screen.tax_ready_at[tax_player], tax_player, now) then timeline.remember(before, splits)
+        return true
+    }
+    if seat, colour := toggle_at(layout, screen, at) is not absent {
+        timeline.remember_colours(game, splits, seat)
+        bit := u8'1 << u8'colour
+        was := game.identity[seat]
+        game.identity[seat] = if was & bit != 0 then was & ~bit else was | bit
+        touch_toggles(screen.toggles, seat)
+        return true
+    }
+    if folded := five_colours_at(layout, screen, at) is not absent {
+        if screen.toggles.open[folded] { fold_now(screen.toggles, folded) } else { unfold_toggles(screen.toggles, folded) }
+        return true
+    }
+    if opened := pentagon_middle_at(layout, screen, at) is not absent {
+        fold_now(screen.toggles, opened)
+        return true
+    }
+    if shortcut_player, shortcut := life_shortcut_at(layout, fonts, shown, screen, at) is not absent {
+        if shortcut == .LIFE_UP or shortcut == .LIFE_DOWN {
+            screen.pickers[shortcut_player] = ⟨open: true, from: shortcut_player, to: shortcut_player, kind: shortcut, at: at⟩
+        }
+        else {
+            apply_life_shortcut(timeline, game, splits, screen, shortcut_player, self_life_delta(shortcut))
+        }
+        return true
+    }
+    if spot, kind := icon_at(layout, game, at) is not absent {
+        screen.drags[spot] = ⟨active: true, from: spot, kind: kind, finger: at, pointer: pointer.id⟩
+        return true
+    }
+    if who := life_at(layout, fonts, game, at) is not absent {
+        touched := layout.seats[who]
+        press_drum(screen.drums[who], game, who, local_of(touched.middle, touched.angle, at), 1)
+        screen.drums[who].pointer = pointer.id
+        return true
+    }
+    return false
+}
+
+// A touch on a divider line (outside any open drum): begins moving that
+// line, or, with a second finger on a line while one's already moving,
+// turns every line together about the centre.
+touch_line :: (input: *Input, screen: *Screen_State, splits: Lines, players: i64,
+               layout: Layout, fonts: Fonts, pointer: Pointer) {
+    at := pointer.at
+    if under_open_drum(layout, fonts, screen.drums, at) then return
+    if line := line_at(layout, at, 0.5 * cell_of(layout)) is not absent {
+        if screen.moving_end >= 0 and pointer.id != input.line_pointer {
+            if !screen.turning {
+                screen.turning = true
+                input.turn_pointer = pointer.id
+                input.turn_from = splits[players]
+                input.turn_angle = angle_about(layout.centre, (screen.line_finger + at) / 2)
+            }
+        }
+        else {
+            input.lines_before = splits
+            screen.moving_end = line
+            screen.line_finger = at
+            input.line_pointer = pointer.id
+        }
+    }
+}
+
+// One finger's press dispatched in order from what's open on top down to a
+// part's controls and the lines between parts (locked: the count runner or
+// settings just took the table).
+press_pointer :: (input: *Input, screen: *Screen_State, timeline: *Timeline, game: *Game, splits: *Lines,
+                  volleys: *Volleys, pending: *[MAX_PLAYERS] [MAX_PLAYERS] i32,
+                  layout: Layout, fonts: Fonts, pointer: Pointer, now: f64, random: *Random.Generator -> locked: bool) {
+    if !pointer.pressed or screen.counts.open or input.quitting then return false
+    at := pointer.at
+    // (the credits open: a touch anywhere closes them, and does nothing else)
+    if screen.info_open {
+        screen.info_open = false
+        return false
+    }
+    if screen.settings_open {
+        touch_settings(input, screen, layout, pointer)
+        return false
+    }
+    if touch_confirm(screen, timeline, game, splits, volleys, pending, layout, fonts, at) then return false
+    if touch_profiles(screen, timeline, game, splits, layout, at, random) then return false
+    if touch_options(screen, timeline, game, splits, layout, at) then return false
+    if touch_grid(screen, timeline, game, splits, volleys, pending, layout, at) then return false
+    if touch_open_drum(screen, timeline, game, splits, layout, fonts, pointer) then return false
+    handled, took_table := touch_capsule(input, screen, timeline, game, splits, volleys, pending, layout, pointer, random)
+    if handled then return took_table
+    // (a touch elsewhere in the part of a player whose drum is open does
+    // nothing: their controls are hidden while it's open, and only its
+    // cross or tick ends it; but a line there is still dragged, where the
+    // drum doesn't cover it)
+    if mine := seat_at(layout, at) is not absent {
+        if screen.drums[mine].open {
+            if _ := line_at(layout, at, 0.5 * cell_of(layout)) is absent then return false
+            touch_line(input, screen, splits, game.players, layout, fonts, pointer)
+            return false
+        }
+    }
+    if touch_part(screen, timeline, game, splits, volleys, pending, layout, fonts, pointer, now) then return false
+    touch_line(input, screen, splits, game.players, layout, fonts, pointer)
+    return false
+}
+
+////////////////////////////////
+// Held and released gestures
+
+// A dragged line follows its finger along the edge between its neighbours;
+// with a second finger on a line, every line turns together about the
+// centre (stopping where a turn would crowd an attack button).
+follow_lines :: (input: *Input, screen: *Screen_State, splits: *Lines, players: i64,
+                 layout: *Layout, size: V2, pointers: [] Pointer) {
+    if screen.moving_end < 0 then return
+    if line_held := pointer_with(pointers, input.line_pointer) is not absent then screen.line_finger = line_held.at
+    if screen.turning {
+        if second := pointer_with(pointers, input.turn_pointer) is not absent {
+            now := angle_about(layout.centre, (screen.line_finger + second.at) / 2)
+            turned := turned_splits(input.turn_from, size, turn_between(input.turn_angle, now))
+            if splits_fit(turned, players) and attack_buttons_clear(lay_out(size, turned, screen.widget_scale)) then splits[players] = turned
+        }
+    }
+    else if aimed := share_through(layout, screen.line_finger) is not absent {
+        splits[players].move_split_with_clearance(screen.moving_end, aimed, size, screen.widget_scale)
+    }
+    layout = lay_out(size, splits[players], screen.widget_scale)
+}
+
+// A line drag (or two-finger turn) ended by a finger lifting, or by the
+// table opening: remembered for undo if the lines moved, and marked to store.
+release_lines :: (input: *Input, screen: *Screen_State, timeline: *Timeline, game: Game, splits: Lines,
+                  pointers: [] Pointer, locked: bool) {
+    if screen.moving_end < 0 then return
+    if !locked and !let_go(pointers, input.line_pointer) and !(screen.turning and let_go(pointers, input.turn_pointer)) then return
+    screen.moving_end = -1
+    screen.turning = false
+    if splits[game.players] != input.lines_before[game.players] then timeline.remember(game, input.lines_before)
+    input.store_count_lines = true
+}
+
+// Each held drum's wheel turns with its finger; let go, a tap opens (or
+// keeps open) the drum, and a turn settles on its row for undo.
+follow_drums :: (screen: *Screen_State, timeline: *Timeline, game: *Game, splits: Lines,
+                 layout: Layout, fonts: Fonts, pointers: [] Pointer) {
+    for *drum, k: screen.drums {
+        if !drum.pressed or k >= layout.count then continue
+        if drum_held := pointer_with(pointers, drum.pointer) is not absent {
+            turning := layout.seats[k]
+            drum.move_drum(local_of(turning.middle, turning.angle, drum_held.at), f32'fonts.life.cap_height)
+        }
+        if let_go(pointers, drum.pointer) {
+            was_open := drum.open
+            life, changes := drum.release_drum(game)
+            if changes {
+                timeline.remember(game, splits)
+                game.life[k] = life
+                // (a tap that opened it at 0 from below: the step the cross
+                // takes back, while nothing's done after it)
+                if !was_open and drum.open then drum.opening_step = timeline.past.count
+            }
+        }
+    }
+}
+
+// Each active attack drag follows its finger; let go over another player,
+// it asks there for its damage to be confirmed (or, past their life total,
+// opens the number grid).
+follow_drags :: (screen: *Screen_State, game: Game, layout: Layout, pointers: [] Pointer) {
+    for *d: screen.drags {
+        if !d.active then continue
+        if drag_held := pointer_with(pointers, d.pointer) is not absent then d.finger = drag_held.at
+        if !let_go(pointers, d.pointer) then continue
+        if to, amount := aim(layout, game, d.from, d.finger, d.kind) is not missed {
+            if amount is {
+            case damage:
+                screen.confirms[d.from] = ⟨open: true, from: d.from, to: to, kind: d.kind, amount: damage, at: d.finger⟩
+            case asked:
+                screen.pickers[d.from] = ⟨open: true, from: d.from, to: to, kind: d.kind, at: d.finger⟩
+            }
+        }
+        d.active = false
+    }
+}
+
+// The count column follows its finger while held; let go, the count at the
+// button becomes the game's and the bar eases onto it.
+follow_counts :: (input: *Input, screen: *Screen_State, timeline: *Timeline, game: *Game, splits: Lines,
+                  volleys: *Volleys, pending: *[MAX_PLAYERS] [MAX_PLAYERS] i32,
+                  layout: Layout, size: V2, pointers: [] Pointer) {
+    if screen.counts.open and screen.counts.held and let_go(pointers, input.counts_pointer) {
+        screen.counts.held = false
+        count := i64'Math.round(screen.counts.shown)
+        if count != game.players {
+            timeline.remember(game, splits)
+            game = game_for(game, count, splits[:], size)
+            call_off_volleys(volleys, pending)
+            screen.start_spin = ⟨⟩
+            if screen.debug_lit >= count then screen.debug_lit = -1
+        }
+        screen.counts.open = false
+        screen.counts.settling = true
+    }
+    if screen.counts.held {
+        if column := pointer_with(pointers, input.counts_pointer) is not absent {
+            moved := (column.at.y - screen.counts.grabbed) / (COUNT_PITCH * cell_of(layout))
+            screen.counts.shown = Math.clamp(screen.counts.from - moved, 2, f32'MAX_PLAYERS)
+        }
+    }
+    else if screen.counts.settling {
+        target := f32'game.players
+        screen.counts.shown += (target - screen.counts.shown) * 0.3
+        if Math.abs(target - screen.counts.shown) < 0.01 {
+            screen.counts.shown = target
+            screen.counts.settling = false
+        }
+    }
+}
+
+// The brightness slider follows its finger until let go or the settings close.
+follow_brightness :: (input: *Input, screen: *Screen_State, layout: Layout, pointers: [] Pointer) {
+    if !input.brightness_held then return
+    if held := pointer_with(pointers, input.brightness_pointer) is not absent {
+        screen.brightness = brightness_at(layout, (held.at.x - layout.centre.x) / (CAPSULE_PITCH * cell_of(layout)))
+    }
+    if !screen.settings_open or let_go(pointers, input.brightness_pointer) then input.brightness_held = false
+}
+
+// The widgets' scale slider follows its finger until let go or the settings
+// close.
+follow_scale :: (input: *Input, screen: *Screen_State, layout: Layout, pointers: [] Pointer) {
+    if !input.scale_held then return
+    if held := pointer_with(pointers, input.scale_pointer) is not absent {
+        screen.widget_scale = scale_at(layout, (held.at.x - layout.centre.x) / (CAPSULE_PITCH * cell_of(layout)))
+    }
+    if !screen.settings_open or let_go(pointers, input.scale_pointer) then input.scale_held = false
+}
+
+// All pointer input for a frame: each new press, then each held or released
+// gesture. Several players act at once, each gesture following the finger
+// that began it; the count column and the settings are the table's alone.
+step_input :: (input: *Input, screen: *Screen_State, timeline: *Timeline, game: *Game, splits: *Lines,
+               volleys: *Volleys, pending: *[MAX_PLAYERS] [MAX_PLAYERS] i32,
+               layout: *Layout, fonts: Fonts, pointers: [] Pointer, now: f64, random: *Random.Generator) {
+    size := layout.size
+    *locked := false
+    for p: pointers {
+        if press_pointer(input, screen, timeline, game, splits, volleys, pending, layout, fonts, p, now, random) then locked = true
+    }
+    if input.quitting then return
+    follow_lines(input, screen, splits, game.players, layout, size, pointers)
+    follow_drums(screen, timeline, game, splits, layout, fonts, pointers)
+    follow_drags(screen, game, layout, pointers)
+    release_lines(input, screen, timeline, game, splits, pointers, locked)
+    follow_counts(input, screen, timeline, game, splits, volleys, pending, layout, size, pointers)
+    follow_brightness(input, screen, layout, pointers)
+    follow_scale(input, screen, layout, pointers)
+}

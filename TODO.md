@@ -43,15 +43,15 @@ starting it.
   of a debug build's frame (the two parts beside the line are placed again
   each frame); a release build's isn't measured. Profile a release build
   while dragging, and cut it if it shows.
-- [ ] **`main` is too long to read.** Its input loop (what each touch
-  does, several hundred lines in `raza.rain`) would read better as a file
-  of its own, by what's touched (the settings, a grid, a drum, a line, a
-  part's controls).
 - [ ] **Linux and Android.** Raza is Windows' alone for now (Vulkan, the
   tablet's display and touch). Android is rain's TODO 94.
 
 ## Done
 
+- [x] Input in `src/input.rain`: what each key and touch does (the
+  settings, a confirm, options, a number grid, an open drum, the pill, a
+  part's controls, a divider line) and how each held gesture follows its
+  finger, apart from `main`.
 - [x] Damage picker: the number grid opens centred where it's asked for
   (a drag let go on ?, life+ and life-, a drum's + or -), its tick adding,
   taking or dealing the number chosen.

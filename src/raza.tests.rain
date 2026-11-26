@@ -478,17 +478,20 @@ games_come_back_or_start_fresh :: () #test {
 }
 
 // A player's attacks stand in Attack's order, plain damage first and always
-// on; commander damage is on to start with, and the options turn the rest
-// on and off.
+// on; commander damage and commander damage alone are on to start with, and
+// the options turn the rest on and off.
 attacks_are_in_order_and_turned_on :: () #test {
     kinds, count := attacks_of(STARTING_ATTACKS)
-    assert(count == 2 and kinds[0] == .DAMAGE and kinds[1] == .COMMANDER, "to start with: damage, commander damage")
+    assert(count == 3 and kinds[0] == .DAMAGE and kinds[1] == .COMMANDER and kinds[2] == .COMMANDER_ONLY,
+           "to start with: damage, commander damage, commander damage alone")
+    assert(STARTING_ATTACKS == attack_bit(.DAMAGE) | attack_bit(.COMMANDER) | attack_bit(.COMMANDER_ONLY), "its bits")
     every, all := attacks_of(31 | attack_bit(.COMMANDER_ONLY))
     expected := [6] Attack⟨.DAMAGE, .COMMANDER, .COMMANDER_LIFELINK, .COMMANDER_ONLY, .LIFELINK, .POISON⟩
     assert(all == 6 and every[:all] == expected[:], "every attack, in order: «every»")
     *game := new_game(4)
     toggle_attack(game, 2, .POISON)
     toggle_attack(game, 2, .COMMANDER)
+    toggle_attack(game, 2, .COMMANDER_ONLY)
     toggle_attack(game, 2, .DAMAGE)
     turned, n := attacks_of(game.attacks[2])
     assert(n == 2 and turned[0] == .DAMAGE and turned[1] == .POISON, "poison on, commander off, damage always: «turned[:n]»")
@@ -651,7 +654,7 @@ options_in_squeezed_seats :: () #test {
         _, middle, hub := toggle_places(layout, seat, options: true)
         cell := cell_of(layout)
         half := option_panel_half(cell)
-        assert(option_button_clear(local_of(hub, seat.angle, middle), half, cell))
+        assert(option_button_clear(local_of(hub, seat.angle, middle), half, (FIVE_COLOURS_SIDE / 2 + TOGGLE_BUTTON_GAP) * cell))
         for sx: [2] f32⟨-1, 1⟩ { for sy: [2] f32⟨-1, 1⟩ {
             corner := placed(middle, seat.angle, ⟨sx * half.x, sy * half.y⟩)
             assert(corner.x >= 0 and corner.y >= 0 and corner.x <= size.x and corner.y <= size.y)
@@ -1270,23 +1273,30 @@ settings_buttons_are_where_drawn :: () #test {
     at :: (layout: Layout, place: V2, pitch: f32 -> Settings_Part) { return settings_part_at(layout, layout.centre + place * pitch) }
     if at(layout, quit_place(layout), pitch) is {
     case quit: _
-    case animation, brightness, orientation, reset, close: assert(false, "the far right quits")
+    case animation, brightness, scale, orientation, reset, info, close: assert(false, "the far right quits")
     }
     if at(layout, ⟨4, 0⟩, pitch) is {
     case orientation: _
-    case animation, brightness, reset, quit, close: assert(false, "right of Reset turns the orientation on")
+    case animation, brightness, scale, reset, info, quit, close: assert(false, "right of Reset turns the orientation on")
     }
     if at(layout, ⟨3, 0⟩, pitch) is {
     case reset: _
-    case animation, brightness, orientation, quit, close: assert(false, "right of the system's button resets")
+    case animation, brightness, scale, orientation, info, quit, close: assert(false, "right of the system's button resets")
     }
     if at(layout, ⟨-3, 0⟩, pitch) is {
     case animation: assert(animation == .FAST)
-    case brightness, orientation, reset, quit, close: assert(false, "left of undo moves the motion on")
+    case brightness, scale, orientation, reset, info, quit, close: assert(false, "left of undo moves the motion on")
     }
+    info, landscape_info := info_place(layout)
+    if at(layout, info, pitch) is {
+    case info: _
+    case animation, brightness, scale, orientation, reset, quit, close: assert(false, "left of Quit shows the credits")
+    }
+    _, portrait_info := info_place(laid_out(4, PORTRAIT))
+    assert(landscape_info and !portrait_info, "the info button in landscape, not in portrait")
     if settings_part_at(layout, capsule_centre(layout, .SYSTEM)) is {
     case close: _
-    case animation, brightness, orientation, reset, quit: assert(false, "the system's button closes the table")
+    case animation, brightness, scale, orientation, reset, info, quit: assert(false, "the system's button closes the table")
     }
     // (the settings' buttons are past the pill's ends, in the channel)
     reach := CAPSULE_REACH * cell_of(layout)
@@ -1297,7 +1307,7 @@ settings_buttons_are_where_drawn :: () #test {
     for blank: blanks {
         if at(layout, blank, pitch) is {
         case close: _
-        case animation, brightness, orientation, reset, quit: assert(false, "«blank» closes the settings")
+        case animation, brightness, scale, orientation, reset, info, quit: assert(false, "«blank» closes the settings")
         }
     }
 }
@@ -1326,15 +1336,62 @@ brightness_slides :: () #test {
     layout := laid_out(4, LANDSCAPE)
     pitch := CAPSULE_PITCH * cell_of(layout)
     from, to, fits := brightness_track(layout)
-    assert(fits and from > ORIENTATION_PLACE.x and to < quit_place(layout).x and layout.centre.x + (to + BRIGHTNESS_SUN) * pitch < layout.size.x,
+    info, _ := info_place(layout)
+    assert(fits and from > ORIENTATION_PLACE.x and to < info.x and layout.centre.x + (to + BRIGHTNESS_SUN) * pitch < layout.size.x,
            "between the orientation's and Quit, on the screen: «from» to «to»")
     assert(brightness_at(layout, from) == MIN_BRIGHTNESS and brightness_at(layout, to) == 1, "dimmest at its left, full at its right")
     if settings_part_at(layout, layout.centre + V2⟨(from + to) / 2, 0⟩ * pitch) is {
     case brightness: assert(Math.abs(brightness - (MIN_BRIGHTNESS + 1) / 2) < 0.01, "half way: «brightness»")
-    case animation, orientation, reset, quit, close: assert(false, "its middle is the slider")
+    case animation, scale, orientation, reset, info, quit, close: assert(false, "its middle is the slider")
     }
     _, _, room := brightness_track(laid_out(4, PORTRAIT))
     assert(!room, "no room in portrait")
+}
+
+// The widgets' scale slider is left of the motion's buttons, on the screen,
+// its left end the scale they were first drawn at (the least) and its right
+// end the most, in steps; touched, it gives the scale there. A portrait
+// screen has no room for it.
+scale_slides :: () #test {
+    layout := laid_out(4, LANDSCAPE)
+    pitch := CAPSULE_PITCH * cell_of(layout)
+    from, to, fits := scale_track(layout)
+    assert(fits and to < animation_place(.OFF).x and layout.centre.x + (from - BRIGHTNESS_SUN) * pitch > 0,
+           "left of the motion's buttons, on the screen: «from» to «to»")
+    assert(scale_at(layout, from) == MIN_WIDGET_SCALE and scale_at(layout, to) == MAX_WIDGET_SCALE and MIN_WIDGET_SCALE == 1,
+           "as first drawn at its left, the most at its right")
+    if settings_part_at(layout, layout.centre + V2⟨(from + to) / 2, 0⟩ * pitch) is {
+    case scale:
+        steps := (scale - MIN_WIDGET_SCALE) / WIDGET_SCALE_STEP
+        assert(Math.abs(scale - (MIN_WIDGET_SCALE + MAX_WIDGET_SCALE) / 2) <= WIDGET_SCALE_STEP and Math.abs(steps - Math.round(steps)) < 0.001,
+               "half way, to a step: «scale»")
+    case animation, brightness, orientation, reset, info, quit, close: assert(false, "its middle is the slider")
+    }
+    _, _, room := scale_track(laid_out(4, PORTRAIT))
+    assert(!room, "no room in portrait")
+}
+
+// The widgets' scale grows the players' widgets, not their life totals: the
+// attack icons further apart, the colour toggles' ring wider; the life
+// totals' size and the commander damage chips' places as they were.
+widgets_scale :: () #test {
+    with scratch.rewind()
+    game := sample_game(4)
+    plain := laid_out(4, LANDSCAPE)
+    grown := lay_out(plain.size, plain.splits, MAX_WIDGET_SCALE)
+    assert(widget_cell(grown) == cell_of(grown) * MAX_WIDGET_SCALE and widget_cell(plain) == cell_of(plain), "the widgets' cell")
+    assert(grown.life_size == plain.life_size, "the life totals as they were: «grown.life_size», «plain.life_size»")
+    apart :: (layout: Layout, game: Game -> f32) {
+        return Math.length(attack_icon(layout, game, 0, .COMMANDER) - attack_icon(layout, game, 0, .DAMAGE))
+    }
+    assert(apart(grown, game) > apart(plain, game) * 1.5, "the attack icons further apart: «apart(grown, game)», «apart(plain, game)»")
+    ring :: (layout: Layout -> f32) {
+        places := toggles_of(layout, 0)
+        return Math.length(places[0] - places[2])
+    }
+    assert(ring(grown) > ring(plain) * 1.5, "the colour toggles' ring wider")
+    // (the cache made again for the plain layout, as main's would be)
+    assert(ring(plain) < ring(grown), "the toggles' cache follows the scale")
 }
 
 // The motion's button goes round: paused, slow, medium, fast, paused.
@@ -1776,8 +1833,9 @@ drags_grow_then_ask :: () #test {
     assert(seen == expected, "each amount's slots: «seen»")
 }
 
-// A drag aimed half way into another part does some damage there; one
-// into its own part, or off the board, misses.
+// A drag aimed half way into another part does some damage there; one in
+// its own part does too, toward its own life total, but not near its icon;
+// off the board, it misses.
 aims_at_other_parts :: () #test {
     layout := laid_out(4, LANDSCAPE)
     game := new_game(4)
@@ -1788,7 +1846,15 @@ aims_at_other_parts :: () #test {
     else if missed {
         assert(false, "it hits the first player's part")
     }
-    if _, _ := aim(layout, game, 1, layout.seats[1].middle) is not missed then assert(false, "its own part misses")
+    own := layout.seats[1]
+    if self, paid := aim(layout, game, 1, own.middle) {
+        assert(self == 1 and damage_of(paid) > 0, "its own life: «self», «paid»")
+    }
+    else if missed {
+        assert(false, "its own life total can be aimed at")
+    }
+    if _, _ := aim(layout, game, 1, attack_icon(layout, game, 1, .DAMAGE)) is not missed then assert(false, "at its own icon, none")
+    if _, _ := aim(layout, game, 1, V2⟨-50, -50⟩) is not missed then assert(false, "off the board, none")
 }
 
 // The colour of the seat whose player faces nearest a way (degrees from
@@ -1955,8 +2021,10 @@ deals_commander_damage :: () #test {
     *poor := new_game(2)
     poor.deal(1, 0, STARTING_LIFE)
     assert(is_out(poor, 0), "no life left")
-    poor.deal(0, 0, 5)
-    assert(poor.life[0] == 0, "no damage to oneself")
+    // (a player's own: their life paid)
+    *own := new_game(2)
+    own.deal_attack(.DAMAGE, 0, 0, 5)
+    assert(own.life[0] == STARTING_LIFE - 5, "damage to oneself: «own.life[0]»")
 }
 
 // A spell's damage takes life alone: however much, it's never commander
@@ -2117,7 +2185,7 @@ animation_settings_select_each_speed :: () #test {
             at := layout.centre + animation_place(choice) * (CAPSULE_PITCH * cell_of(layout))
             if settings_part_at(layout, at) is {
                 case animation: assert(animation == choice)
-                case brightness, orientation, reset, quit, close: assert(false)
+                case brightness, scale, orientation, reset, info, quit, close: assert(false)
             }
         }
     }
@@ -2224,4 +2292,210 @@ lifelink_face_follows_reversal :: () #test {
     assert(started > 0 and started < 1)
     assert(lifelink_disc_facing(pivot, ⟨-28, 0⟩, attacker) < 0)
     assert(lifelink_disc_facing(pivot, attacker - pivot, attacker) == -1)
+}
+
+// Input dispatches touches by what's open and what's hit: an attack drag let
+// go opens a confirm, a touch off it cancels and a button strikes; an open
+// drum blocks its part's controls while its + square commits and opens the
+// life+ grid; and Escape closes overlays from topmost down.
+touches_dispatch_by_what_is_open :: () #test {
+    with scratch.rewind()
+    `scratch {
+        *splits: Lines
+        splits[4] = equal_splits(4, LANDSCAPE)
+        *layout := lay_out(LANDSCAPE, splits[4])
+        *fonts: Fonts
+        fonts.life_digit = 24
+        fonts.life_minus = 12
+        fonts.life.cap_height = 60
+        fonts.output.cap_height = 40
+        fonts.attack.cap_height = 36
+        fonts.change.cap_height = 26
+        *game := new_game(4)
+        *screen: Screen_State
+        *timeline: Timeline
+        *volleys: Volleys
+        *pending: [MAX_PLAYERS] [MAX_PLAYERS] i32
+        *input: Input
+        *random := Random.generator(1)
+
+        // Drag from player 1's commander icon halfway into player 0's part, then release.
+        start := attack_icon(layout, game, 1, .COMMANDER)
+        entry := entry_point(layout.seats[1].icon, layout.seats[0].middle, layout.seats[0].outline[:layout.seats[0].count])
+        land := Math.mix(entry, layout.seats[0].middle, 0.5)
+        step_input(input, screen, timeline, game, splits, volleys, pending, layout, fonts, [1] Pointer⟨⟨1, start, true, false⟩⟩, 1, random)
+        assert(screen.drags[1].active, "drag started")
+        step_input(input, screen, timeline, game, splits, volleys, pending, layout, fonts, [1] Pointer⟨⟨1, land, false, true⟩⟩, 1, random)
+        assert(!screen.drags[1].active and screen.confirms[1].open, "let go: confirm open")
+
+        // A touch off the confirm buttons cancels without dealing damage.
+        step_input(input, screen, timeline, game, splits, volleys, pending, layout, fonts, [1] Pointer⟨⟨2, layout.seats[2].middle, true, true⟩⟩, 1, random)
+        assert(!screen.confirms[1].open and game.life[0] == STARTING_LIFE, "cancelled off the buttons")
+
+        // Drag again and confirm on the main square button.
+        step_input(input, screen, timeline, game, splits, volleys, pending, layout, fonts, [1] Pointer⟨⟨3, start, true, false⟩⟩, 1, random)
+        step_input(input, screen, timeline, game, splits, volleys, pending, layout, fonts, [1] Pointer⟨⟨3, land, false, true⟩⟩, 1, random)
+        expected_damage := screen.confirms[1].amount
+        wide := confirm_width(fonts, screen.confirms[1], cell_of(layout))
+        buttons, _, origin, angle := confirm_buttons(layout, screen.confirms[1], wide)
+        hit := placed(origin, angle, buttons[0].middle)
+        step_input(input, screen, timeline, game, splits, volleys, pending, layout, fonts, [1] Pointer⟨⟨4, hit, true, true⟩⟩, 1, random)
+        assert(!screen.confirms[1].open and game.life[0] == STARTING_LIFE - expected_damage, "confirm button dealt its damage")
+        call_off_volleys(volleys, pending)
+
+        // Tap player 2's life to open their drum: their attack icon is ignored while it's open,
+        // and the drum's + square closes the drum and opens a LIFE_UP grid that adds life on tick.
+        life_spot := layout.seats[2].middle
+        step_input(input, screen, timeline, game, splits, volleys, pending, layout, fonts, [1] Pointer⟨⟨5, life_spot, true, true⟩⟩, 2, random)
+        assert(screen.drums[2].open, "tap opened the drum")
+        blocked_icon := attack_icon(layout, game, 2, .COMMANDER)
+        step_input(input, screen, timeline, game, splits, volleys, pending, layout, fonts, [1] Pointer⟨⟨6, blocked_icon, true, false⟩⟩, 2, random)
+        assert(!screen.drags[2].active, "controls in an open drum's part wait")
+        plus, _, _, _ := drum_signs(layout, fonts, screen.drums[2], 2)
+        step_input(input, screen, timeline, game, splits, volleys, pending, layout, fonts, [1] Pointer⟨⟨7, plus, true, true⟩⟩, 2, random)
+        assert(!screen.drums[2].open and screen.pickers[2].open and screen.pickers[2].kind == .LIFE_UP, "+ opened the life+ grid")
+        grid_origin, grid_angle, _ := picker_frame(layout, screen.pickers[2])
+        tick_middle, _ := picker_button(layout, true)
+        step_input(input, screen, timeline, game, splits, volleys, pending, layout, fonts,
+                   [1] Pointer⟨⟨8, placed(grid_origin, grid_angle, tick_middle), true, true⟩⟩, 2, random)
+        assert(!screen.pickers[2].open and game.life[2] == STARTING_LIFE + 10, "the grid's tick added its default 10")
+
+        // Escape peels off confirms, then grids, then settings, then counts.
+        screen.confirms[0].open = true
+        screen.pickers[1].open = true
+        screen.settings_open = true
+        screen.counts = ⟨open: true, held: true⟩
+        assert(escape_overlay(screen) and !screen.confirms[0].open and screen.pickers[1].open)
+        assert(escape_overlay(screen) and !screen.pickers[1].open and screen.settings_open)
+        assert(escape_overlay(screen) and !screen.settings_open and screen.counts.open)
+        assert(escape_overlay(screen) and !screen.counts.open and screen.counts.settling)
+        assert(!escape_overlay(screen))
+    }
+}
+
+// Restart spins anticlockwise round the table, fast at first and slowing down
+// onto a randomly chosen starting player, then fades that part slowly back to
+// normal; undoing the restart calls the spin off.
+restart_spins_anticlockwise_and_fades_slowly :: () #test {
+    with scratch.rewind()
+    `scratch {
+        *random := Random.generator(42)
+        for players: 2 <= MAX_PLAYERS {
+            *winners: [MAX_PLAYERS] bool
+            *starts: [MAX_PLAYERS] bool
+            for _: 0 < 80 {
+                trial := begin_start_spin(random, players)
+                assert(trial.active and trial.winner >= 0 and trial.winner < players and trial.steps >= 5)
+                first_seat, first_strength := spin_light(trial, players)
+                assert(first_seat >= 0 and first_seat < players and first_strength == 1)
+                winners[trial.winner] = true
+                starts[first_seat] = true
+                *total: f32 = 0
+                for i: 0 < trial.steps { total += spin_step_duration(i, trial.steps) }
+                assert(total > 3.0 and total < 5.0, "«players» players: the spin to its part takes 3..5 s («total»)")
+            }
+            for k: 0 < players {
+                assert(winners[k] and starts[k], "«players» players: every seat can start and win")
+            }
+
+            *spin := begin_start_spin(random, players)
+            assert(spin_step_duration(0, spin.steps) > 0.11 and spin_step_duration(0, spin.steps) < 0.16, "lower initial spin speed")
+            for i: 0 < spin.steps - 1 {
+                assert(spin_step_duration(i + 1, spin.steps) > spin_step_duration(i, spin.steps), "slows gradually at each step")
+            }
+            *previous, _ := spin_light(spin, players)
+            *transitions: i64 = 0
+            *spin_seconds: f32 = 0
+            while spin_spinning(spin) {
+                step_start_spin(spin, 0.005)
+                spin_seconds += 0.005
+                seat, strength := spin_light(spin, players)
+                assert(strength > 0)
+                if seat != previous {
+                    // Seats run clockwise by index, so anticlockwise steps down by 1.
+                    assert(seat == (previous + players - 1) % players, "«players» players: «previous» to «seat» isn't anticlockwise")
+                    if players >= 3 {
+                        a := angle_about(LANDSCAPE / 2, laid_out(players, LANDSCAPE).seats[previous].middle)
+                        b := angle_about(LANDSCAPE / 2, laid_out(players, LANDSCAPE).seats[seat].middle)
+                        assert(turn_between(a, b) < 0, "«players» players: seat angle moved clockwise")
+                    }
+                    previous = seat
+                    transitions += 1
+                }
+            }
+            assert(transitions == spin.steps and previous == spin.winner, "landed on the chosen starting player")
+            assert(spin_seconds > 3.0 and spin_seconds < 5.0, "spins to its part in 3 to 5 s: «spin_seconds»")
+
+            // In the final part, the sun goes back and forth for 3 s, off the
+            // anticlockwise channel (1) then the clockwise one (0), each time,
+            // settles at 0.5, then fades slowly; it enters at the last step's pace.
+            assert(SPIN_SETTLE == 3 and Math.abs(1 / spin_step_duration(spin.steps - 1, spin.steps) - SPIN_ENTRY_SPEED) < 0.001,
+                   "3 s of bounces, entered at the last step's pace")
+            for k: 1 <= SPIN_BOUNCES {
+                bounce, acw, cw := spin_final_bounce(spin_bounce_time(k))
+                if k % 2 == 1 then assert(bounce > 0.99 and acw > 0.8, "bounce «k» off the anticlockwise channel: «bounce»")
+                else assert(bounce < 0.01 and cw > 0.8, "bounce «k» off the clockwise channel: «bounce»")
+            }
+            early, _, _ := spin_final_bounce(0.05)
+            assert(Math.abs(early / 0.05 - SPIN_ENTRY_SPEED) < 0.1, "keeps its pace as it enters: «early / 0.05»")
+            settled, _, _ := spin_final_bounce(SPIN_SETTLE)
+            assert(Math.abs(settled - 0.5) < 0.01, "settles overhead in the middle")
+
+            landed_seat, landed_strength := spin_light(spin, players)
+            assert(landed_seat == spin.winner and landed_strength > 0.99)
+            step_start_spin(spin, SPIN_SETTLE + 2.5)
+            mid_seat, mid_strength := spin_light(spin, players)
+            assert(spin.active and mid_seat == spin.winner and mid_strength > 0.6 and mid_strength < landed_strength, "fades slowly: «mid_strength»")
+            step_start_spin(spin, SPIN_FADE)
+            done_seat, done_strength := spin_light(spin, players)
+            assert(!spin.active and done_seat == -1 and done_strength == 0, "back to normal")
+        }
+
+        // Pressing Restart on the pill resets lives and begins the spin; Undo ends it.
+        *splits: Lines
+        splits[4] = equal_splits(4, LANDSCAPE)
+        *layout := lay_out(LANDSCAPE, splits[4])
+        *fonts: Fonts
+        *game := new_game(4)
+        game.life[0] = 17
+        *screen: Screen_State
+        *timeline: Timeline
+        *volleys: Volleys
+        *pending: [MAX_PLAYERS] [MAX_PLAYERS] i32
+        *input: Input
+        restart_at := capsule_centre(layout, .RESTART)
+        step_input(input, screen, timeline, game, splits, volleys, pending, layout, fonts, [1] Pointer⟨⟨1, restart_at, true, true⟩⟩, 1, random)
+        assert(game.life[0] == STARTING_LIFE and spin_spinning(screen.start_spin), "Restart began the spin")
+        assert(step_history(screen, timeline, game, splits, false) and game.life[0] == 17 and !screen.start_spin.active, "Undo cancels the spin")
+
+        // Debug L-key helper lights each panel in order (0..players-1) and then turns off.
+        for players: 2 <= MAX_PLAYERS {
+            *lit_screen := Screen_State⟨start_spin: ⟨active: true, winner: 1, step: 0, steps: 10⟩⟩
+            assert(lit_screen.debug_lit == -1)
+            for seat: 0 < players {
+                cycle_debug_light(lit_screen, players)
+                assert(lit_screen.debug_lit == seat and !lit_screen.start_spin.active, "«players» players: step «seat»")
+            }
+            cycle_debug_light(lit_screen, players)
+            assert(lit_screen.debug_lit == -1, "«players» players: turns off after the last panel")
+
+            // Across every seat in both orientations, the sun rises over the clockwise
+            // edge, arcs overhead at noon, and sets over the anticlockwise edge along the spin vector.
+            for orient_size: [2] V2⟨LANDSCAPE, PORTRAIT⟩ {
+                check_layout := laid_out(players, orient_size)
+                for k: 0 < players {
+                    dawn, origin, spin_dir, half_span := part_sun_arc(check_layout, k, 0.0)
+                    noon, _, _, _ := part_sun_arc(check_layout, k, 0.5)
+                    dusk, _, _, _ := part_sun_arc(check_layout, k, 1.0)
+                    assert(Math.dot(dawn.xy, spin_dir) < -0.9 and dawn.z > 0, "«players» players seat «k»: sun rises at clockwise edge")
+                    assert(Math.length(noon.xy) < 0.001 and noon.z > 0.999, "«players» players seat «k»: sun is overhead at noon")
+                    assert(Math.dot(dusk.xy, spin_dir) > 0.9 and dusk.z > 0, "«players» players seat «k»: sun sets over anticlockwise edge")
+                    rise_side := origin - spin_dir * (half_span * 0.4)
+                    set_side := origin + spin_dir * (half_span * 0.4)
+                    assert(turn_between(angle_about(check_layout.centre, rise_side), angle_about(check_layout.centre, set_side)) < 0,
+                           "«players» players seat «k»: sunrise to sunset moves anticlockwise")
+                }
+            }
+        }
+    }
 }

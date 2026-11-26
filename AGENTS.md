@@ -49,7 +49,8 @@ build/Raza.exe -quit_after:8 -busy           a busy table, its frames' work prin
 
 | File | What's in it |
 |---|---|
-| `src/raza.rain` | The program: its declaration, `main` and its input loop, the controls (the pill, settings, count runner's input), the life drum, the drag, the number grid and the confirm buttons, the colour toggles and options, chips, poison and tax, the fonts, the snapshots |
+| `src/raza.rain` | The program: its declaration, `main`, the controls (the pill, settings, count runner), the life drum, the drag, the number grid and the confirm buttons, the colour toggles and options, chips, poison and tax, the fonts, the snapshots |
+| `src/input.rain` | Input: pointers, keyboard shortcuts, what each touch does (the settings, a confirm, options, a number grid, an open drum, the pill, a part's controls, a divider line), and how each held gesture follows its finger |
 | `src/game.rain` | The rules: `Game` (life, commander damage, poison, tax, colours, attacks), `Attack` and `deal_attack`, how far a drag goes for how much |
 | `src/layout.rain` | The screen cut into parts (`Splits`, `lay_out`, each `Seat`'s outline, middle, angle, attack spot) |
 | `src/frames.rain` | Each part's surface (the `part_shade` shader: each colour's material, two colours' halves, three or more colours' gold lit by a strip of each round its edge), and the surfaces kept between frames |
@@ -57,15 +58,21 @@ build/Raza.exe -quit_after:8 -busy           a busy table, its frames' work prin
 | `src/elements.rain`, `src/motes.rain` | A volley: how it's drawn (each colour's dots, the loss tokens), its path and timing |
 | `src/count-table.rain` | The table splitting open for the count runner and for the settings, and the canvases drawn apart for it |
 | `src/target-arrow.rain` | The drag's arrow (a shader) |
+| `src/commanders.rain` | The commanders' catalog (`commanders/atlas/index.bin`, carried in the program) and their art's pages, read on a thread as they're wanted; portraits (art or avatar circle) drawn |
+| `src/profiles.rain` | Player profiles: their data, sessions and the shuffle, storing them, each seat's profile and commander buttons and panels |
+| `src/profile_editor.rain` | The profile editor: name, initials, decks (add, remove, star, enable), drawn turned to its player |
+| `commanders/` | The catalog and art: `build_atlas.rain` packs Scryfall's download into `atlas/` (see its README) |
 | `src/raza.tests.rain` | The tests |
 
 ## What must stay true
 
 - **Saved state.** The game, each count's lines (landscape and portrait
-  apart), the motion, brightness and orientation are kept between runs by
+  apart), the motion, brightness, widgets' scale and orientation are kept between runs by
   rain's `Defaults` (the registry, HKCU\Software\Raza), as raw bytes:
   `"game"` (the whole `Game`), `"splits.N"` and `"splits.N.portrait"`,
-  `"motion"`, `"brightness"`, `"orientation"`. A change to `Game`'s fields
+  `"motion"`, `"brightness"`, `"widget_scale"`, `"orientation"`, and
+  `"profiles"` (JSON: the profiles, decks by their commanders' names, each
+  seat's profile and deck, the session). A change to `Game`'s fields
   changes what's read back: add a migration from the old layout, as
   `from_bytes` reads a game whose attacks were a byte.
 - **Attack values.** A player's attacks are a bit for each `Attack` value

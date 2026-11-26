@@ -1,0 +1,601 @@
+// Raza's commander portraits, packed from the local Scryfall catalog
+// (commanders.json and its art/) into atlas pages: each card's artwork
+// scaled to fit max_edge, packed onto pages of at most 2048 pixels a side
+// in tiles padded to JPEG's 16-pixel blocks (each tile's edge pixels
+// repeated into its padding, so no block mixes two portraits and nothing
+// bleeds in as it's filtered), each page a JPEG named by its SHA-256, and
+// index.json saying where each card's portraits are. Pages no longer used
+// are deleted. Run from Raza's folder or the catalog's:
+//
+//     rain -run -release commanders/build_atlas.rain [-output:folder] [-max_edge:320] [-palette_order]
+
+#import Console
+#import Arguments
+#import File
+#import Json
+#import Table
+#import String
+#import Array
+#import Math
+#import Wide
+#import Image_Files
+#import Cryptography
+
+PAGE  :: 2048
+BLOCK :: 16       // JPEG 4:2:0's coded unit: neighbouring art kept in units of their own
+QUALITY :: 86
+THUMB_EDGE :: 128   // a thumbnail's most width or height: every commander shown at once, as Raza starts
+
+Options :: struct {
+    folder:        string ⟦help: "the catalog's folder (commanders.json and art/): the current folder if it has commanders.json, else commanders/"⟧
+    output:        string ⟦help: "where the pages and index.json go (the catalog's atlas/ unless given)"⟧
+    max_edge:      i64 = 320 ⟦help: "the most a portrait's width or height is, in pixels"⟧
+    palette_order: bool ⟦help: "tiles of one size in the order of their average colour"⟧
+}
+
+// What's read of the catalog: each card's name, mana cost (or its faces'),
+// and artwork files.
+Avatar :: struct { x: i64; y: i64; radius: i64; width: i64; height: i64 }
+Avatar_Entry :: struct { file: string; avatar: Avatar }
+Artwork :: struct { file: string }
+Card :: struct {
+    name:       string
+    color_identity: [..] string       // its colour identity's letters (W, U, B, R, G)
+    artwork:    [..] Artwork
+}
+Catalog :: struct { cards: [..] Card }
+
+// An artwork file: its size scaled, and (with palette_order) its average
+// colour's hue (in twelfths; 12 for a grey), value (in fifteenths) and
+// saturation, which order tiles of one size.
+Art :: struct {
+    file:       string
+    size:       Wide.i32x2
+    source_size: Wide.i32x2
+    thumb:      Wide.i32x2       // its thumbnail's size (THUMB_EDGE at most)
+    thumb_at:   i64              // where its thumbnail's pixels are kept while the pages are made
+    hue:        i64
+    value:      i64
+    saturation: f64
+}
+
+// A tile on a page, and a shelf of tiles across one: where each is.
+Tile :: struct {
+    page: i64
+    art:  i64
+    x:    i64
+    y:    i64
+    w:    i64
+    h:    i64
+}
+Shelf :: struct {
+    page: i64
+    y:    i64
+    h:    i64
+    x:    i64         // how far across it's filled
+}
+
+// Where a portrait is: its page's file, and its rectangle there.
+Ref :: struct {
+    page: string
+    x:    i64
+    y:    i64
+    w:    i64
+    h:    i64
+}
+
+// A side of a portrait, with a pixel of padding each side, rounded up to
+// whole blocks.
+tile_size :: (length: i64 -> i64) #pure {
+    return (length + 2 + BLOCK - 1) / BLOCK * BLOCK
+}
+
+begins :: (text: string, prefix: string -> bool) #pure {
+    return text.count >= prefix.count and text[:prefix.count] == prefix
+}
+
+// An artwork file's size (from its header alone: Image_Files.image_size),
+// scaled to fit max_edge (never up), and its average colour as
+// palette_order sorts it (decoded only then). It fails with `unreadable`
+// where the file can't be read, `bad_image` where it isn't an image.
+describe :: (path: string, file: string, max_edge: i64, palette: bool -> art: Art) [unreadable, bad_image] {
+    with scratch.rewind()
+    art = ⟨file: file⟩
+    *size: Wide.i32x2
+    *pixels: [] u32
+    `scratch {
+        *bytes: [] u8
+        if read := File.read_file(path) { bytes = [] u8'read } else if absent or os_error { fail: unreadable }
+        if found := Image_Files.image_size(bytes) { size = found } else if bad_image { fail: bad_image }
+        if palette {
+            if _, read_pixels := Image_Files.decode_image(bytes) { pixels = read_pixels } else if bad_image { fail: bad_image }
+        }
+    }
+    art.source_size = size
+    small := Math.min(1.0, f64'THUMB_EDGE / f64'Math.max(size[0], size[1]))
+    art.thumb = ⟨i32'Math.max(1, i64'Math.round(f64'size[0] * small)), i32'Math.max(1, i64'Math.round(f64'size[1] * small))⟩
+    scale := Math.min(1.0, f64'max_edge / f64'Math.max(size[0], size[1]))
+    art.size = ⟨i32'Math.max(1, i64'Math.round(f64'size[0] * scale)), i32'Math.max(1, i64'Math.round(f64'size[1] * scale))⟩
+    if palette {
+        *sum: [3] f64
+        for p: pixels {
+            sum[0] += f64'((p >> 16) & 0xFF)
+            sum[1] += f64'((p >> 8) & 0xFF)
+            sum[2] += f64'(p & 0xFF)
+        }
+        n := f64'Math.max(pixels.count, 1)
+        r := sum[0] / n / 255
+        g := sum[1] / n / 255
+        b := sum[2] / n / 255
+        high := Math.max(r, Math.max(g, b))
+        low := Math.min(r, Math.min(g, b))
+        saturation := if high > 0 then (high - low) / high else 0
+        *hue: f64 = 0
+        if high > low {
+            span := high - low
+            hue = if high == r then (g - b) / span else if high == g then 2 + (b - r) / span else 4 + (r - g) / span
+            hue = Math.fract(hue / 6)
+        }
+        art.hue = if saturation > 0.12 then i64'Math.round(hue * 12) % 12 else 12
+        art.value = i64'Math.round(high * 15)
+        art.saturation = saturation
+    }
+}
+
+// Tiles go tallest first, then widest, then (with palette_order) by colour,
+// then by file.
+Order :: struct {
+    h:          i64
+    w:          i64
+    hue:        i64
+    value:      i64
+    saturation: f64
+    file:       string
+    art:        i64
+}
+
+before :: (a: Order, b: Order -> bool) {
+    if a.h != b.h then return a.h > b.h
+    if a.w != b.w then return a.w > b.w
+    if a.hue != b.hue then return a.hue < b.hue
+    if a.value != b.value then return a.value < b.value
+    if a.saturation != b.saturation then return a.saturation < b.saturation
+    return a.file < b.file
+}
+
+// The arts' tiles on pages: tallest shelves first. Each goes on the shelf
+// it fits that leaves the least height, then the least width, to spare;
+// failing that, a new shelf on the fullest page it fits, or a new page.
+pack :: (arts: [] Art -> tiles: [] Tile, pages: i64) {
+    *order: [..] Order in scratch
+    for art, i: arts {
+        `scratch order.add(⟨tile_size(i64'art.size[1]), tile_size(i64'art.size[0]), art.hue, art.value, art.saturation, art.file, i⟩)
+    }
+    order.sort_by(before)
+    *placed: [..] Tile
+    *shelves: [..] Shelf in scratch
+    *heights: [..] i64 in scratch           // each page's shelves' height so far
+    for o: order {
+        *best: i64 = -1
+        for s, i: shelves {
+            if s.h < o.h or s.x + o.w > PAGE then continue
+            if best < 0 {
+                best = i
+                continue
+            }
+            b := shelves[best]
+            if s.h - o.h < b.h - o.h or (s.h - o.h == b.h - o.h and PAGE - s.x < PAGE - b.x) then best = i
+        }
+        if best < 0 {
+            *index: i64 = -1
+            for used, i: heights {
+                if used + o.h <= PAGE and (index < 0 or used > heights[index]) then index = i
+            }
+            if index < 0 {
+                index = heights.count
+                `scratch heights.add(0)
+            }
+            `scratch shelves.add(⟨page: index, y: heights[index], h: o.h, x: 0⟩)
+            heights[index] += o.h
+            best = shelves.count - 1
+        }
+        s := shelves[best]
+        placed.add(⟨page: s.page, art: o.art, x: s.x, y: s.y, w: o.w, h: o.h⟩)
+        shelves[best].x += o.w
+    }
+    tiles = placed
+    pages = heights.count
+}
+
+// An artwork scaled into its tile on a page: at a pixel in from the tile's
+// top left, and its edge pixels repeated out to the tile's every edge,
+// corners too; and its thumbnail made, into thumb. It fails as `describe`
+// does.
+paste_tile :: (page: [] *u32, page_width: i64, path: string, art: Art, tile: Tile, thumb: [] *u32) [unreadable, bad_image] {
+    with scratch.rewind()
+    `scratch {
+        *bytes: [] u8
+        if read := File.read_file(path) { bytes = [] u8'read } else if absent or os_error { fail: unreadable }
+        if size, pixels := Image_Files.decode_image(bytes) {
+            scaled := Image_Files.resample(pixels, size, art.size)
+            aw := i64'art.size[0]
+            ah := i64'art.size[1]
+            for ty: 0 < tile.h {
+                ay := Math.clamp(ty - 1, 0, ah - 1)
+                for tx: 0 < tile.w {
+                    ax := Math.clamp(tx - 1, 0, aw - 1)
+                    page[(tile.y + ty) * page_width + tile.x + tx] = 0xFF00_0000 | scaled[ay * aw + ax]
+                }
+            }
+            small := Image_Files.resample(pixels, size, art.thumb)
+            for p, i: small[:Math.min(small.count, thumb.count)] { thumb[i] = 0xFF00_0000 | p }
+        }
+        else if bad_image {
+            fail: bad_image
+        }
+    }
+}
+
+// A colour identity's letters, in WUBRG order: bit i of an identity is
+// IDENTITY_LETTERS[i] (as Raza's Mana numbers the colours).
+IDENTITY_LETTERS :: [5] string⟨"W", "U", "B", "R", "G"⟩
+
+identity_bits :: (letters: [] string -> bits: u8) #pure {
+    bits = 0
+    for letter: letters {
+        for known, colour: IDENTITY_LETTERS { if letter == known then bits |= u8'1 << u8'colour }
+    }
+}
+
+put_u16 :: (out: *[..] u8, value: i64) {
+    out.add(u8''value)
+    out.add(u8''(value >> 8))
+}
+
+put_u32 :: (out: *[..] u8, value: i64) {
+    for k: 0 < 4 { out.add(u8''(value >> (8 * k))) }
+}
+
+// The catalog as Raza carries it (#data, read as it starts), little-endian:
+//
+//     "RZCI", then u32s: version (2), cards, images, pages, thumbnails'
+//                 pages, names' bytes
+//     each page, then each thumbnails' page: its file's name, 32 bytes (0
+//                 after it)
+//     each card:  u32 its name's start in the names, u32 its first image,
+//                 u16 its name's length, u8 its identity (bit i
+//                 IDENTITY_LETTERS[i]), u8 how many images (12 bytes)
+//     each image: u16s its page, x, y, width, height (in the page), its
+//                 avatar circle's x, y and radius, the art's own width
+//                 and height (that the circle's in), and its thumbnail's
+//                 page (of the thumbnails'), x, y, width and height (30 bytes)
+//     the names, UTF-8, one after another
+compact_index :: (cards: [] Card, unique: [] string, refs: [] Ref, pages: [] string, thumb_refs: [] Ref, thumb_pages: [] string,
+                  avatars: Table(string, Avatar) -> bytes: [] u8) {
+    *out: [..] u8
+    *names: [..] u8
+    *images: i64 = 0
+    for card: cards { images += card.artwork.count }
+    `scratch {
+        for card: cards { names.append([] u8'card.name) }
+    }
+    out.append([] u8'"RZCI")
+    out.put_u32(2)
+    out.put_u32(cards.count)
+    out.put_u32(images)
+    out.put_u32(pages.count)
+    out.put_u32(thumb_pages.count)
+    out.put_u32(names.count)
+    every_page := `scratch Array.concat(pages, thumb_pages)
+    for page: every_page {
+        for k: 0 < 32 {
+            byte: u8 = if k < page.count then page[k] else 0
+            out.add(byte)
+        }
+    }
+    *name_at: i64 = 0
+    *image_at: i64 = 0
+    for card: cards {
+        out.put_u32(name_at)
+        out.put_u32(image_at)
+        out.put_u16(card.name.count)
+        out.add(identity_bits(card.color_identity))
+        out.add(u8'card.artwork.count)
+        name_at += card.name.count
+        image_at += card.artwork.count
+    }
+    for card: cards {
+        for a: card.artwork {
+            *index: i64 = 0
+            if found := unique.find_in_sorted(a.file) { index = found } else if absent { unreachable "every artwork's file is in unique" }
+            r := refs[index]
+            *page: i64 = 0
+            for name, p: pages { if name == r.page then page = p }
+            *av: Avatar
+            if found_avatar := avatars.get(a.file) { av = found_avatar } else if absent { unreachable "checked each portrait" }
+            s := thumb_refs[index]
+            *thumb_page: i64 = 0
+            for name, p: thumb_pages { if name == s.page then thumb_page = p }
+            for value: [15] i64⟨page, r.x, r.y, r.w, r.h, av.x, av.y, av.radius, av.width, av.height, thumb_page, s.x, s.y, s.w, s.h⟩ {
+                out.put_u16(value)
+            }
+        }
+    }
+    out.append(names[:])
+    bytes = out
+}
+
+HEX :: "0123456789abcdef"
+
+// A page's file name: atlas- (or thumb-, a thumbnails' page), the first 20
+// hex digits of its SHA-256, .jpg.
+page_name :: (jpeg: [] u8, prefix := "atlas-" -> string) {
+    hash := Cryptography.sha256(jpeg)
+    *b: String.Builder
+    b.add(prefix)
+    for byte: hash[:10] {
+        b.add_byte(HEX[i64'(byte >> 4)])
+        b.add_byte(HEX[i64'(byte & 0x0F)])
+    }
+    b.add(".jpg")
+    return b.build_and_reset()
+}
+
+// Whether a file's name is a page's: atlas- or thumb-, 20 lowercase hex
+// digits, .jpg.
+is_page_name :: (name: string -> bool) #pure {
+    if name.count != 30 or !(begins(name, "atlas-") or begins(name, "thumb-")) or name[26:] != ".jpg" then return false
+    for c: name[6:26] {
+        // (0 to 9, a to f)
+        if !((c >= 0x30 and c <= 0x39) or (c >= 0x61 and c <= 0x66)) then return false
+    }
+    return true
+}
+
+main :: (args: [] string) [failed: string] {
+    *options: Options
+    if parsed := args.parse(Options, about: "Pack the local Scryfall catalog into Raza's commander portraits.") {
+        options = parsed
+    }
+    else if help {
+        write(help)
+        return
+    }
+    else if bad_arguments {
+        fail: failed = bad_arguments
+    }
+    max_edge := options.max_edge
+    palette := options.palette_order
+    if max_edge < 1 or max_edge > PAGE - 2 then fail: failed = "-max_edge must be between 1 and «PAGE - 2»"
+    given := if options.folder != "" then options.folder else if File.file_exists("commanders.json") then "." else "commanders"
+    *folder: string
+    if full := File.full_path(given) { folder = full } else if os_error { fail: failed = "can't find «given»" }
+    *art_root: string
+    if full_art := File.full_path(File.join_path(folder, "art")) { art_root = full_art } else if os_error { fail: failed = "can't find «folder»'s art/" }
+    asked := if options.output != "" then options.output else File.join_path(folder, "atlas")
+    *output: string
+    if full_output := File.full_path(asked) { output = full_output } else if os_error { fail: failed = "can't find «asked»" }
+    art_prefix := "«art_root.to_lower()»/"
+    low := output.to_lower()
+    if low == folder.to_lower() or low == art_root.to_lower() or begins(low, art_prefix) {
+        fail: failed = "choose a separate atlas output directory"
+    }
+
+    *catalog_text: string
+    catalog_path := File.join_path(folder, "commanders.json")
+    if read := File.read_file(catalog_path) { catalog_text = read } else if absent or os_error { fail: failed = "can't read «catalog_path»" }
+    *catalog: Catalog
+    if read_catalog := catalog_text.parse_json(Catalog) { catalog = read_catalog } else if bad_json { fail: failed = "commanders.json isn't JSON: «bad_json.why» at «bad_json.at»" } else if mismatch {
+        fail: failed = "commanders.json: «mismatch»"
+    }
+    *avatars: Table(string, Avatar)
+    if avatar_text := File.read_file(File.join_path(folder, "avatars.json")) is absent or os_error {
+        fail: failed = "can't read avatars.json"
+    }
+    if avatar_entries := avatar_text.parse_json([..] Avatar_Entry) {
+        for entry: avatar_entries { avatars.set(entry.file, entry.avatar) }
+    } else if bad_json { fail: failed = "avatars.json: «bad_json.why» at «bad_json.at»" }
+    else if mismatch { fail: failed = "avatars.json: «mismatch»" }
+
+    cards := catalog.cards
+    if cards.count == 0 then fail: failed = "Expected artwork for every commander"
+    for card: cards { if card.artwork.count == 0 then fail: failed = "Expected artwork for every commander" }
+
+    // Each artwork file once, by name, and each checked to be in art/.
+    *files: [..] string
+    for card: cards { for a: card.artwork { files.add(a.file) } }
+    files.sort()
+    *unique: [..] string
+    for f: files { if unique.count == 0 or unique[# - 1] != f then unique.add(f) }
+    *arts: [..] Art
+    for file: unique {
+        *path: string
+        *inside_art := false
+        `scratch {
+            if full_file := File.full_path(File.join_path(folder, file)) {
+                path = full_file
+                inside_art = begins(full_file.to_lower(), art_prefix)
+            }
+            else if os_error {
+                fail: failed = "Artwork outside art/: «file»"
+            }
+        }
+        if !inside_art then fail: failed = "Artwork outside art/: «file»"
+        if av := avatars.get(file) is absent then fail: failed = "add an avatar circle for «file» to avatars.json"
+        if art := describe(path, file, max_edge, palette) {
+            if av.width != i64'art.source_size[0] or av.height != i64'art.source_size[1] or av.radius < 1 or
+               av.x < av.radius or av.x > av.width - av.radius or av.y < av.radius or av.y > av.height - av.radius {
+                fail: failed = "invalid avatar circle for «file»"
+            }
+            arts.add(art)
+        } else if unreadable {
+            fail: failed = "can't read «file»"
+        }
+        else if bad_image {
+            fail: failed = "«file» isn't an image this can read"
+        }
+    }
+
+    if File.create_folder(output) is os_error then fail: failed = "can't make «output»"
+    // (each art's thumbnail, made as its page is, kept here till theirs are)
+    *thumb_count: i64 = 0
+    for *art: arts {
+        art.thumb_at = thumb_count
+        thumb_count += i64'art.thumb[0] * i64'art.thumb[1]
+    }
+    *thumb_store := arena()
+    *thumb_pixels: [thumb_count] u32 in thumb_store
+    tiles, page_count := pack(arts)
+    *refs: [arts.count] Ref in #arena
+    *byte_count: i64 = 0
+    *pixel_count: i64 = 0
+    *used: [..] string
+    for page: 0 < page_count {
+        // (the page's pixels and its JPEG, in an arena gone as it's written)
+        *memory := arena()
+        *width: i64 = 0
+        *height: i64 = 0
+        for t: tiles {
+            if t.page != page then continue
+            width = Math.max(width, t.x + t.w)
+            height = Math.max(height, t.y + t.h)
+        }
+        pixel_count += width * height
+        *pixels: [width * height] u32 in memory
+        for *p: pixels { p = 0xFF00_0000 }
+        for t: tiles {
+            if t.page != page then continue
+            art_path := `scratch File.join_path(folder, arts[t.art].file)
+            art := arts[t.art]
+            thumb := thumb_pixels[art.thumb_at:art.thumb_at + i64'art.thumb[0] * i64'art.thumb[1]]
+            if paste_tile(pixels, width, art_path, art, t, thumb) is {
+            case unreadable: fail: failed = "can't read «arts[t.art].file»"
+            case bad_image: fail: failed = "«arts[t.art].file» isn't an image this can read"
+            }
+        }
+        jpeg := `memory Image_Files.encode_jpeg(⟨i32'width, i32'height⟩, pixels, QUALITY)
+        byte_count += jpeg.count
+        name := page_name(jpeg)
+        used.add(name)
+        // (written beside it, then moved into its place)
+        temporary := `scratch File.join_path(output, "page.jpg.tmp")
+        final := `scratch File.join_path(output, name)
+        if File.write_file(temporary, string'jpeg) is absent or os_error then fail: failed = "can't write «temporary»"
+        if File.rename_file(temporary, final) is absent or os_error then fail: failed = "can't write «name» in «output»"
+        for t: tiles {
+            if t.page != page then continue
+            art := arts[t.art]
+            refs[t.art] = ⟨name, t.x + 1, t.y + 1, i64'art.size[0], i64'art.size[1]⟩
+        }
+    }
+
+    // The thumbnails, packed as the art is onto pages of their own
+    // (thumb-...): every commander, small, that Raza keeps from its start.
+    *small_arts: [arts.count] Art in #arena
+    for art, i: arts {
+        small_arts[i] = art
+        small_arts[i].size = art.thumb
+    }
+    thumb_tiles, thumb_page_count := pack(small_arts)
+    *thumb_refs: [arts.count] Ref in #arena
+    *thumbs_used: [..] string
+    for page: 0 < thumb_page_count {
+        *memory := arena()
+        *width: i64 = 0
+        *height: i64 = 0
+        for t: thumb_tiles {
+            if t.page != page then continue
+            width = Math.max(width, t.x + t.w)
+            height = Math.max(height, t.y + t.h)
+        }
+        *pixels: [width * height] u32 in memory
+        for *p: pixels { p = 0xFF00_0000 }
+        for t: thumb_tiles {
+            if t.page != page then continue
+            art := arts[t.art]
+            aw := i64'art.thumb[0]
+            ah := i64'art.thumb[1]
+            for ty: 0 < t.h {
+                ay := Math.clamp(ty - 1, 0, ah - 1)
+                for tx: 0 < t.w {
+                    ax := Math.clamp(tx - 1, 0, aw - 1)
+                    pixels[(t.y + ty) * width + t.x + tx] = thumb_pixels[art.thumb_at + ay * aw + ax]
+                }
+            }
+        }
+        jpeg := `memory Image_Files.encode_jpeg(⟨i32'width, i32'height⟩, pixels, QUALITY)
+        byte_count += jpeg.count
+        name := page_name(jpeg, "thumb-")
+        thumbs_used.add(name)
+        temporary := `scratch File.join_path(output, "page.jpg.tmp")
+        final := `scratch File.join_path(output, name)
+        if File.write_file(temporary, string'jpeg) is absent or os_error then fail: failed = "can't write «temporary»"
+        if File.rename_file(temporary, final) is absent or os_error then fail: failed = "can't write «name» in «output»"
+        for t: thumb_tiles {
+            if t.page != page then continue
+            art := arts[t.art]
+            thumb_refs[t.art] = ⟨name, t.x + 1, t.y + 1, i64'art.thumb[0], i64'art.thumb[1]⟩
+        }
+    }
+
+    // index.json: each card's name, colour identity and portraits, a line each.
+    *b: String.Builder
+    b.add("[\n")
+    for card, c: cards {
+        bits := identity_bits(card.color_identity)
+        b.add("{\"name\":")
+        Json.write_json_text(b, card.name)
+        b.add(",\"identity\":[")
+        *first := true
+        for letter, colour: IDENTITY_LETTERS {
+            if bits & (u8'1 << u8'colour) == 0 then continue
+            if !first then b.add(",")
+            b.add("\"«letter»\"")
+            first = false
+        }
+        b.add("],\"image\":[")
+        for a, i: card.artwork {
+            *index: i64 = 0
+            if found := unique.find_in_sorted(a.file) { index = found } else if absent { unreachable "every artwork's file is in unique" }
+            r := refs[index]
+            if i > 0 then b.add(",")
+            b.add("[")
+            Json.write_json_text(b, r.page)
+            b.add(",«r.x»,«r.y»,«r.w»,«r.h»]")
+        }
+        b.add("],\"avatar\":[")
+        for a, i: card.artwork {
+            if i > 0 then b.add(",")
+            if av := avatars.get(a.file) { Json.write_json(b, av) } else if absent { unreachable "checked each portrait above" }
+        }
+        ending := if c + 1 < cards.count then "]},\n" else "]}\n"
+        b.add(ending)
+    }
+    b.add("]\n")
+    manifest := File.join_path(output, "index.json.tmp")
+    index_path := File.join_path(output, "index.json")
+    if File.write_file(manifest, b) is absent or os_error then fail: failed = "can't write «manifest»"
+    if File.rename_file(manifest, index_path) is absent or os_error then fail: failed = "can't write index.json in «output»"
+
+    // index.bin: the same, as Raza carries it (compact_index's).
+    binary := compact_index(cards, unique[:], refs, used[:], thumb_refs, thumbs_used[:], avatars)
+    binary_temporary := File.join_path(output, "index.bin.tmp")
+    binary_path := File.join_path(output, "index.bin")
+    if File.write_file(binary_temporary, string'binary) is absent or os_error then fail: failed = "can't write «binary_temporary»"
+    if File.rename_file(binary_temporary, binary_path) is absent or os_error then fail: failed = "can't write index.bin in «output»"
+
+    // (pages no longer used, deleted)
+    if entries := File.files_in(output) {
+        for e: entries {
+            if e.is_folder or !is_page_name(e.name) or used.contains(e.name) or thumbs_used.contains(e.name) then continue
+            if File.delete_file(e.path) is absent or os_error then fail: failed = "can't delete «e.path»"
+        }
+    }
+    else if absent or os_error {
+        fail: failed = "can't list «output»"
+    }
+    *art_pixels: i64 = 0
+    for art: arts { art_pixels += i64'art.size[0] * i64'art.size[1] }
+    occupancy := 100 * f64'art_pixels / f64'Math.max(pixel_count, 1)
+    echo("«cards.count» cards, «arts.count» images, «page_count» pages, «occupancy, ⟨precision: 1⟩»% art coverage, «byte_count, ⟨group: ","⟩» JPEG bytes")
+}

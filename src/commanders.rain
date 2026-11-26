@@ -1,0 +1,386 @@
+////////////////////////////////
+// Commanders: every card that can be one (Scryfall's), each with its colour
+// identity and its art, from commanders/ (build_atlas.rain makes it). The
+// catalog is carried in the program (index.bin, read as it starts); the
+// art is on pages, JPEGs read from commanders/atlas/ as they're first
+// wanted, decoded on a thread of their own, and kept while they're used
+// (ATLAS_PAGES_KEPT at most: the least lately drawn let go past it; those
+// of the profiles' decks, asked for each frame, are never let go).
+
+CATALOG_BYTES :: #data "../commanders/atlas/index.bin"
+
+// A commander: its name, its colour identity (as a part's colours are), and
+// its portraits (one a face: its art's place on a page, and its avatar
+// circle, in the art's own pixels).
+Commander :: struct {
+    name:        string
+    identity:    Identity
+    first_image: i64
+    images:      i64
+}
+
+Portrait :: struct {
+    page:   i64
+    at:     Wide.i32x2       // its art's top left on the page, and size there
+    size:   Wide.i32x2
+    circle: V2               // its avatar circle's middle and radius, in the art's own pixels
+    radius: f32
+    source: Wide.i32x2       // the art's own size
+    // (and its thumbnail: its page, among them, and its place there)
+    thumb_page: i64
+    thumb_at:   Wide.i32x2
+    thumb_size: Wide.i32x2
+}
+
+Catalog :: struct {
+    commanders: [] Commander
+    portraits:  [] Portrait
+    pages:      [] string    // each page's file's name: the art's, then the thumbnails'
+    thumbs_from: i64         // the first thumbnails' page
+}
+
+catalog: Catalog
+
+le16 :: (bytes: [] u8, at: i64 -> i64) #pure {
+    return i64'bytes[at] | (i64'bytes[at + 1] << 8)
+}
+
+le32 :: (bytes: [] u8, at: i64 -> i64) #pure {
+    return le16(bytes, at) | (le16(bytes, at + 2) << 16)
+}
+
+// The catalog from its bytes (compact_index's form), in the current arena,
+// its names views of them; or bad_catalog if they aren't one.
+read_catalog :: (bytes: [] u8 -> read: Catalog) [bad_catalog] {
+    read = ⟨⟩
+    if bytes.count < 28 or string'bytes[:4] != "RZCI" or le32(bytes, 4) != 2 then fail: bad_catalog
+    cards := le32(bytes, 8)
+    images := le32(bytes, 12)
+    art_pages := le32(bytes, 16)
+    thumb_pages := le32(bytes, 20)
+    pages := art_pages + thumb_pages
+    name_bytes := le32(bytes, 24)
+    pages_at := 28
+    cards_at := pages_at + pages * 32
+    images_at := cards_at + cards * 12
+    names_at := images_at + images * 30
+    if names_at + name_bytes != bytes.count then fail: bad_catalog
+    *page_names: [pages] string in #arena
+    for *name, p: page_names {
+        at := pages_at + p * 32
+        *length: i64 = 0
+        while length < 32 and bytes[at + length] != 0 { length += 1 }
+        name = string'bytes[at:at + length]
+    }
+    *commanders: [cards] Commander in #arena
+    for *c, i: commanders {
+        at := cards_at + i * 12
+        name_at := le32(bytes, at)
+        length := le16(bytes, at + 8)
+        if name_at + length > name_bytes then fail: bad_catalog
+        c = ⟨name: string'bytes[names_at + name_at:names_at + name_at + length], identity: Identity'bytes[at + 10],
+             first_image: le32(bytes, at + 4), images: i64'bytes[at + 11]⟩
+        if c.first_image + c.images > images then fail: bad_catalog
+    }
+    *portraits: [images] Portrait in #arena
+    for *p, i: portraits {
+        at := images_at + i * 30
+        *v: [15] i64
+        for *value, k: v { value = le16(bytes, at + 2 * k) }
+        if v[0] >= art_pages or v[10] >= thumb_pages then fail: bad_catalog
+        p = ⟨page: v[0], at: ⟨i32'v[1], i32'v[2]⟩, size: ⟨i32'v[3], i32'v[4]⟩, circle: ⟨f32'v[5], f32'v[6]⟩, radius: f32'v[7],
+             source: ⟨i32'v[8], i32'v[9]⟩, thumb_page: art_pages + v[10], thumb_at: ⟨i32'v[11], i32'v[12]⟩,
+             thumb_size: ⟨i32'v[13], i32'v[14]⟩⟩
+    }
+    read = ⟨commanders, portraits, page_names, art_pages⟩
+}
+
+// A commander by its name; absent if there's none of it.
+commander_named :: (name: string -> index: i64) [absent] {
+    for c, i: catalog.commanders { if c.name == name then return i }
+    fail: absent
+}
+
+// The commanders whose names hold the text (in any case), in the catalog's
+// order (by name), in the current arena; all of them for no text.
+commanders_matching :: (text: string -> found: [] i64) {
+    *out: [..] i64
+    needle := `scratch String.to_lower(String.trim(text))
+    for c, i: catalog.commanders {
+        if needle == "" {
+            out.add(i)
+            continue
+        }
+        `scratch {
+            if _ := String.first_index(String.to_lower(c.name), needle) is not absent then out.add(i)
+        }
+    }
+    found = out
+}
+
+////////////////////////////////
+// The pages, read as they're wanted
+
+ATLAS_PAGES_KEPT :: 24
+
+Page_State :: enum u8 { NONE; LOADING; READY; MISSING }
+
+Atlas_Page :: struct {
+    state: Page_State
+    image: Draw.Image
+    size:  Wide.i32x2
+    used:  i64            // the frame it was last drawn in
+}
+
+atlas_pages: [..] Atlas_Page
+atlas_frame: i64 = 0
+
+// What the loader's asked for (a page, and its file's path, in an arena
+// handed over with it), and what it gives back.
+Page_Request :: struct {
+    page: i64
+    path: string
+}
+
+Decoded_Page :: struct {
+    page:   i64
+    size:   Wide.i32x2
+    pixels: [] u32
+    bad:    bool          // its file couldn't be read, or wasn't a JPEG
+}
+
+page_requests: Channel(Page_Request, closes: true) = ⟨max_count: 256⟩
+// (each closed as Raza ends: the loader stops waiting for a request, or to
+// hand a page over that nothing will take)
+decoded_pages: Channel(Decoded_Page, closes: true) = ⟨max_count: 4⟩
+
+// Where the pages are read from (atlas_folder's, as Raza starts).
+atlas_path: string
+
+// The loader: each page asked for read and decoded, in an arena of its own
+// sent back with it, till the requests close.
+load_pages :: () {
+    loop {
+        if asked, request := page_requests.wait() {
+            *job := arena()
+            *made := Decoded_Page⟨page: request.page, bad: true⟩
+            `job {
+                if bytes := File.read_file(request.path) {
+                    if size, pixels := Image_Files.decode_image([] u8'bytes) { made = ⟨request.page, size, pixels, false⟩ } else if bad_image { }
+                }
+                else if absent or os_error { }
+            }
+            if decoded_pages.send_waiting(job, made) is closed then break
+        }
+        else if closed {
+            break
+        }
+    }
+}
+
+// Where the atlas is: commanders/atlas beside the program's folder (build/
+// or release/), or under the current folder.
+atlas_folder :: (program: string -> string) {
+    beside := File.join_path(File.folder_of(program), "..", "commanders", "atlas")
+    if File.folder_exists(beside) then return beside
+    return File.join_path("commanders", "atlas")
+}
+
+// The pages the loader has finished made images (a frame's), and those
+// past ATLAS_PAGES_KEPT let go, the least lately drawn first.
+take_pages :: () {
+    atlas_frame += 1
+    loop {
+        if job, decoded := decoded_pages.receive() { take_page(decoded) } else if empty or closed { break }
+    }
+    *ready: i64 = 0
+    for page: atlas_pages { if page.state == .READY then ready += 1 }
+    while ready > ATLAS_PAGES_KEPT {
+        *oldest: i64 = -1
+        for page, i: atlas_pages {
+            if page.state != .READY or page.used >= atlas_frame - 1 then continue
+            if oldest < 0 or page.used < atlas_pages[oldest].used then oldest = i
+        }
+        if oldest < 0 then break
+        atlas_pages[oldest].image.destroy()
+        atlas_pages[oldest].state = .NONE
+        ready -= 1
+    }
+}
+
+// A page the loader's decoded made an image (or marked missing).
+take_page :: (decoded: Decoded_Page) {
+    if decoded.page < 0 or decoded.page >= atlas_pages.count then return
+    *page := ^atlas_pages[decoded.page]
+    if decoded.bad {
+        page.state = .MISSING
+        return
+    }
+    if made := Draw.image_from_pixels(decoded.size, decoded.pixels) {
+        page.image = made
+        page.size = decoded.size
+        page.state = .READY
+    }
+    else if bad_image {
+        page.state = .MISSING
+    }
+}
+
+// Every page asked for made an image, waiting for each (the snapshots').
+settle_pages :: () {
+    loop {
+        *loading := false
+        for page: atlas_pages { if page.state == .LOADING then loading = true }
+        if !loading then return
+        if job, decoded := decoded_pages.wait() { take_page(decoded) } else if closed { return }
+    }
+}
+
+// A page ready to draw from, asked for if it isn't yet: false till it is.
+page_ready :: (page: i64 -> bool) {
+    if page < 0 or page >= atlas_pages.count then return false
+    *p := ^atlas_pages[page]
+    p.used = atlas_frame
+    if p.state == .NONE {
+        *job := arena(reserve_size: 64 * 1024)
+        path := `job File.join_path(atlas_path, catalog.pages[page])
+        if page_requests.send(job, ⟨page, path⟩) is { case full, closed: return false }
+        p.state = .LOADING
+    }
+    return p.state == .READY
+}
+
+// Every thumbnails' page asked for and kept (as Raza starts, and each frame
+// after): every commander can be drawn at once, small.
+keep_thumb_pages :: () {
+    for page: catalog.thumbs_from < catalog.pages.count { _ := page_ready(page) }
+}
+
+// Every page let go (as the program ends).
+release_pages :: () {
+    for *page: atlas_pages {
+        if page.state == .READY then page.image.destroy()
+        page.state = .NONE
+    }
+}
+
+////////////////////////////////
+// Portraits drawn
+
+Portrait_Params :: struct {
+    box:    V4      // its middle, and its half size (pixels)
+    turn:   V4      // its angle's cosine and sine; its corners' radius (pixels; below 0, a circle), how much it shows
+    source: V4      // what of the page it shows: its middle and half size, as shares of the page
+}
+
+// A portrait: its art's rectangle (or its avatar circle) from its page,
+// over a box turned by an angle, its corners rounded (or a circle).
+portrait_shade :: (from: Draw.Quad_Between, portrait: Shader.Uniforms(Portrait_Params), page: Shader.Texture_2D, filtering: Shader.Sampler -> colour: V4) {
+    d := from.pixel - portrait.box.xy
+    c := portrait.turn.x
+    s := portrait.turn.y
+    local := V2⟨d.x * c + d.y * s, d.y * c - d.x * s⟩
+    half := portrait.box.zw
+    *distance: f32 = 0
+    if portrait.turn.z < 0 {
+        distance = Math.length(local) - half.x
+    }
+    else {
+        distance = round_box_distance(local, half, portrait.turn.z)
+    }
+    coverage := Math.clamp(0.5 - distance, 0, 1) * portrait.turn.w
+    if coverage <= 0 then return ⟨0, 0, 0, 0⟩
+    uv := portrait.source.xy + local / half * portrait.source.zw
+    rgb := Shader.sample_level(page, filtering, uv, 0).xyz
+    colour = V4⟨rgb.x * coverage, rgb.y * coverage, rgb.z * coverage, coverage⟩
+}
+
+Portrait_Shader :: shader { vertex: Draw.quad_place; fragment: portrait_shade }
+PORTRAIT_SHADER :: Portrait_Shader(Draw.SHADER_TARGET)
+
+// A commander's portrait (its face's, the first unless given) drawn: its
+// art as a rectangle of a size (its corners rounded by corner), or its
+// avatar circle of a radius (size.x / 2), about a middle, turned. From its
+// page where that's read (asked for if it isn't), else from its thumbnail
+// (always read: keep_thumb_pages'), or only from its thumbnail (thumb_only:
+// many at once, small); a dark stand-in where neither is. Whether it was
+// drawn.
+draw_portrait :: (canvas: *Draw.Canvas, commander: i64, middle: V2, size: V2, angle: f32, circle: bool, corner: f32 = 0,
+                  shows: f32 = 1, face: i64 = 0, thumb_only := false -> drawn: bool) {
+    drawn = false
+    if commander < 0 or commander >= catalog.commanders.count then return
+    c := catalog.commanders[commander]
+    if c.images == 0 then return
+    p := catalog.portraits[c.first_image + Math.clamp(face, 0, c.images - 1)]
+    half := size / 2
+    *from_page := p.page
+    *art_at := V2⟨f32'p.at[0], f32'p.at[1]⟩
+    *art_size := V2⟨f32'p.size[0], f32'p.size[1]⟩
+    if thumb_only or !page_ready(p.page) {
+        if !page_ready(p.thumb_page) {
+            if circle then canvas.fill_circle(middle, half.x, Draw.rgba(0x000000, 0.4 * shows))
+            else canvas.fill_rounded_rect(middle - half, size, corner, Draw.rgba(0x000000, 0.4 * shows))
+            return
+        }
+        from_page = p.thumb_page
+        art_at = V2⟨f32'p.thumb_at[0], f32'p.thumb_at[1]⟩
+        art_size = V2⟨f32'p.thumb_size[0], f32'p.thumb_size[1]⟩
+    }
+    page := atlas_pages[from_page]
+    page_size := V2⟨f32'page.size[0], f32'page.size[1]⟩
+    *source: V4
+    if circle {
+        scale := art_size / V2⟨f32'p.source[0], f32'p.source[1]⟩
+        centre := (art_at + p.circle * scale) / page_size
+        reach := scale * p.radius / page_size
+        source = ⟨centre.x, centre.y, reach.x, reach.y⟩
+    }
+    else {
+        centre := (art_at + art_size / 2) / page_size
+        reach := art_size / 2 / page_size
+        source = ⟨centre.x, centre.y, reach.x, reach.y⟩
+    }
+    reach := Math.length(half) + 2
+    radius: f32 = if circle then -1 else corner
+    params := Portrait_Params⟨⟨middle.x, middle.y, half.x, half.y⟩, ⟨Math.cos(angle), Math.sin(angle), radius, shows⟩, source⟩
+    canvas.draw_shader_image(middle - V2⟨reach, reach⟩, V2⟨reach, reach⟩ * 2, PORTRAIT_SHADER.code, PORTRAIT_SHADER.bindings.portrait, params, page.image,
+                             PORTRAIT_SHADER.bindings.page, PORTRAIT_SHADER.bindings.filtering)
+    drawn = true
+}
+
+// The art's own shape (width over height), for a rectangle of it.
+portrait_aspect :: (commander: i64 -> f32) {
+    if commander < 0 or commander >= catalog.commanders.count then return 626.0 / 457
+    c := catalog.commanders[commander]
+    if c.images == 0 then return 626.0 / 457
+    p := catalog.portraits[c.first_image]
+    return f32'p.size[0] / f32'Math.max(p.size[1], 1)
+}
+
+// The catalog is read whole, every portrait's page is one of its pages,
+// and every circle lies in its art.
+catalog_is_read :: () #test {
+    if read := read_catalog(CATALOG_BYTES) {
+        assert(read.commanders.count > 3000 and read.portraits.count >= read.commanders.count and read.pages.count > 10,
+               "«read.commanders.count» commanders, «read.portraits.count» portraits, «read.pages.count» pages")
+        for p, i: read.portraits {
+            assert(p.page < read.pages.count, "portrait «i»'s page")
+            assert(p.radius >= 1 and p.circle.x >= p.radius and p.circle.x <= f32'p.source[0] - p.radius and
+                   p.circle.y >= p.radius and p.circle.y <= f32'p.source[1] - p.radius, "portrait «i»'s circle in its art")
+        }
+        for name: read.pages { assert(name.count == 30, "«name»") }
+        *found := false
+        for c: read.commanders {
+            if c.name == "Aang and Katara" {
+                found = true
+                green := has_colour(c.identity, .GREEN)
+                assert(green and has_colour(c.identity, .WHITE) and has_colour(c.identity, .BLUE) and !has_colour(c.identity, .RED),
+                       "Aang and Katara is green, white and blue")
+            }
+        }
+        assert(found, "Aang and Katara's there")
+    }
+    else if bad_catalog {
+        assert(false, "index.bin isn't read")
+    }
+}

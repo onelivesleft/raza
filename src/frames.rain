@@ -26,8 +26,13 @@ Looks :: struct {
 // marble, cracked red rock, mottled green, marbled gold.
 LOOKS :: Looks⟨
     ⟨Draw.rgb(0x9A8A76), .GRAIN, 1.0, 0.35⟩,
-    ⟨⟨Draw.rgb(0xE6DFCA), .CLOUDS, 2.0, 0.22⟩, ⟨Draw.rgb(0x2A5E9A), .DROPS, 1.3, 0.45⟩, ⟨Draw.rgb(0x2A2521), .MARBLE, 1.8, 0.42⟩,
-     ⟨Draw.rgb(0xB3442B), .CRACKS, 1.6, 0.42⟩, ⟨Draw.rgb(0x3A6C39), .MOTTLE, 1.3, 0.42⟩⟩,
+    ⟨
+        WHITE: ⟨Draw.rgb(0xE6DFCA), .CLOUDS, 2.0, 0.22⟩,
+        BLUE: ⟨Draw.rgb(0x2A5E9A), .DROPS, 1.3, 0.45⟩,
+        BLACK: ⟨Draw.rgb(0x2A2521), .MARBLE, 1.8, 0.42⟩,
+        RED: ⟨Draw.rgb(0xB3442B), .CRACKS, 1.6, 0.42⟩,
+        GREEN: ⟨Draw.rgb(0x3A6C39), .MOTTLE, 1.3, 0.42⟩,
+    ⟩,
     ⟨Draw.rgb(0xC29A3E), .MARBLE, 1.8, 0.32⟩
 ⟩
 
@@ -45,10 +50,10 @@ Motion :: enum u8 {
     FAST
 }
 
-MOTION_NAMES :: [Motion] string⟨"Off", "Slow", "Medium", "Fast"⟩
+MOTION_NAMES :: [Motion] string⟨OFF: "Off", SLOW: "Slow", MEDIUM: "Medium", FAST: "Fast"⟩
 
 // Each speed, in a surface's features a second.
-MOTION_RATES :: [Motion] f32⟨0, 0.04, 0.24, 1.05⟩
+MOTION_RATES :: [Motion] f32⟨OFF: 0, SLOW: 0.04, MEDIUM: 0.24, FAST: 1.05⟩
 
 // How big the surfaces' features are against the looks' own scales (a
 // card's frame is fine-grained for its size, and a part is far bigger).
@@ -276,14 +281,7 @@ part_shade :: (from: Draw.Quad_Between, part: Shader.Uniforms(Part_Params), atla
     }
     else if tile == TILE_GOLD {
         // (gold: shallow fixed undulations reflecting moving studio lights)
-        at := V2⟨local_x, local_y⟩ / Math.max(part.look.y * part.gold.texture_scale, 1) + V2⟨part.look.w * 0.17, part.look.w * 0.31⟩
-        texel := material_at(atlas, filtering, tile, at)
-        luma := Math.dot(texel, LUMA)
-        q := V2⟨local_x, local_y⟩ / Math.max(part.state.w * part.gold.surface_scale, 1)
-        height_x := Math.dot(material_at(atlas, filtering, tile, at + V2⟨part.gold.texture_step, 0⟩), LUMA)
-        height_y := Math.dot(material_at(atlas, filtering, tile, at + V2⟨0, part.gold.texture_step⟩), LUMA)
-        slope := V2⟨Math.sin(q.x * part.gold.freq_x + q.y * part.gold.cross_x) * part.gold.wave_x + q.x * part.gold.slope_x,
-                    Math.sin(q.y * part.gold.freq_y + q.x * part.gold.cross_y) * part.gold.wave_y + q.y * part.gold.slope_y⟩ + V2⟨height_x - luma, height_y - luma⟩ * part.gold.texture_slope
+        slope := gold_surface_slope(atlas, filtering, local_x, local_y, part.look.y, part.look.w, part.state.w, part.gold, 1)
         normal := Math.normalize(V3⟨slope.x, slope.y, 1⟩)
         reflected := normal.xy * (2 * normal.z)
         env := reflected - V2⟨part.gold.speed_x, part.gold.speed_y⟩ * part.more.x
@@ -357,7 +355,8 @@ part_shade :: (from: Draw.Quad_Between, part: Shader.Uniforms(Part_Params), atla
                     ridge := band - (0.32 + 0.19 * wave)
                     pearl = (1 - Math.smoothstep(0, 1.22, band)) * 0.61 +
                             Math.exp(-32 * ridge * ridge) * glint * 0.36
-                } else {
+                }
+                else {
                     charcoal = (1 - Math.smoothstep(0.04, 1.02, band)) * 0.83
                 }
             }
@@ -482,6 +481,540 @@ draw_part :: (canvas: *Draw.Canvas, layout: Layout, k: i64, colours: [] Draw.RGB
     tile := material_tile(identity)
     params.material = V4⟨f32'tile, 0, perimeter, last_lit⟩
     canvas.draw_shader_image(low, high - low, PART_SURFACE.code, PART_SURFACE.bindings.part, params, material_image, PART_SURFACE.bindings.atlas, PART_SURFACE.bindings.filtering)
+}
+
+// Gold's shallow surface undulations and mineral-grain slope in the player's frame.
+gold_surface_slope :: (atlas: Shader.Texture_2D, filtering: Shader.Sampler, local_x: f32, local_y: f32, scale: f32, seed: f32, cell: f32, gold: Gold_Look, grain_boost: f32 -> V2) {
+    at := V2⟨local_x, local_y⟩ / Math.max(scale * gold.texture_scale, 1) + V2⟨seed * 0.17, seed * 0.31⟩
+    luma := Math.dot(material_at(atlas, filtering, TILE_GOLD, at), LUMA)
+    q := V2⟨local_x, local_y⟩ / Math.max(cell * gold.surface_scale, 1)
+    height_x := Math.dot(material_at(atlas, filtering, TILE_GOLD, at + V2⟨gold.texture_step, 0⟩), LUMA)
+    height_y := Math.dot(material_at(atlas, filtering, TILE_GOLD, at + V2⟨0, gold.texture_step⟩), LUMA)
+    return V2⟨Math.sin(q.x * gold.freq_x + q.y * gold.cross_x) * gold.wave_x + q.x * gold.slope_x,
+              Math.sin(q.y * gold.freq_y + q.x * gold.cross_y) * gold.wave_y + q.y * gold.slope_y⟩ + V2⟨height_x - luma, height_y - luma⟩ * (gold.texture_slope * grain_boost)
+}
+
+// Red's branching rock boundary and recessed fracture depth (0 on flat stone plates).
+crack_rock_boundary :: (q: V2, seed: f32 -> rock: V2, boundary: f32) #pure {
+    bend := V2⟨Patterns.layered(q * 1.7 + V2⟨seed, 0⟩, 3), Patterns.layered(q * 1.7 + V2⟨3.3, seed⟩, 3)⟩ - V2⟨0.5, 0.5⟩
+    rock = q + bend * 0.7
+    cells := Patterns.cells(rock)
+    boundary = cells.y - cells.x
+}
+
+crack_height :: (q: V2, time: f32, seed: f32 -> f32) #pure {
+    rock, boundary := crack_rock_boundary(q, seed)
+    if boundary >= 0.095 then return 0
+    front := Patterns.layered(rock * 0.65 + V2⟨seed, 4.4⟩, 3)
+    cycle := 0.5 + 0.5 * Math.sin(time * (2.2 / 3.0) + front * 9 + seed)
+    growth := Math.smoothstep(front - 0.12, front + 0.12, cycle)
+    if growth <= 0.001 then return 0
+    width := 0.004 + growth * 0.046
+    lip := width + 0.032
+    if boundary >= lip then return 0
+    shoulder := (1 - Math.smoothstep(width, lip, boundary)) * Math.smoothstep(width * 0.35, width * 1.15, boundary)
+    wall := 1 - Math.smoothstep(width * 0.22, lip * 0.88, boundary)
+    throat := 1 - Math.smoothstep(0, width, boundary)
+    return (shoulder * 0.14 - (wall * 0.44 + throat * 0.66)) * growth
+}
+
+// Blue's ripple height: moving swell, directional ripples and crossing wavelets
+// (ignoring subsurface depth and reflected clouds).
+blue_water_height :: (local: V2, scale: f32, time: f32 -> f32) #pure {
+    q := local / Math.max(scale * 2.8, 1)
+    warp := Patterns.layered(q * 0.7 + V2⟨0 - time * 0.18, time * 0.11⟩, 3)
+    ripple := Patterns.layered(V2⟨q.x * 2.85 + q.y * 0.15, q.y * 3.16 + warp * 1.7⟩ + V2⟨time * 0.13, time * 0.24⟩, 3)
+    crossing := Patterns.noise(V2⟨q.x * 5.5 - q.y * 0.2, q.y * 6⟩ + V2⟨0 - time * 0.23, time * 0.16⟩)
+    return warp * 0.18 + ripple * 0.58 + crossing * 0.24
+}
+
+// Black's watery surface height: smooth flowing swells and fine ripples, with no creases or rock grain.
+black_water_height :: (turned: V2, local: V2, scale: f32, seed: f32, time: f32, broad: f32 -> f32) #pure {
+    q := turned / Math.max(scale, 1) + V2⟨seed * 31.7, seed * 17.9⟩
+    b := Math.clamp(broad, 0, 1)
+    warp := V2⟨Patterns.layered(q * 0.5 + V2⟨time, 0⟩, 4), Patterns.layered(q * 0.5 + V2⟨5.2, 1.3 + time⟩, 4)⟩
+    body := Patterns.layered(q + warp * 2.5, 4)
+    across := Math.mix(1.1, 0.35, b)
+    phase := (q.x * across + q.y * across * 0.57 + body * 2.2) * f32'Math.TAU
+    showing := Math.mix(0.6, Math.smoothstep(0.35, 0.6, Patterns.layered(q * 0.7 + V2⟨9.1, 2.7 + time * 0.5⟩, 3)), b)
+    swell := (0.5 + 0.5 * Math.cos(phase)) * showing
+    wq := local / Math.max(scale * 2.8, 1)
+    fine_warp := Patterns.layered(wq * 0.7 + V2⟨0 - time * 0.16, time * 0.10⟩, 3)
+    fine_ripple := Patterns.layered(V2⟨wq.x * 2.7 + wq.y * 0.18, wq.y * 3.0 + fine_warp * 1.6⟩ + V2⟨time * 0.12, time * 0.21⟩, 3)
+    crossing := Patterns.noise(V2⟨wq.x * 5.2 - wq.y * 0.2, wq.y * 5.7⟩ + V2⟨0 - time * 0.20, time * 0.15⟩)
+    return body * 0.22 + swell * 0.26 + fine_ripple * 0.36 + crossing * 0.16
+}
+
+// Artifact metal's corrosion depth: flat across metal and light rust, with holes eaten only at deep pits.
+artifact_rust_hole :: (q: V2, time: f32, seed: f32 -> depth: f32, rust: f32) #pure {
+    grain := Patterns.layered(q * 7 + V2⟨seed, 0⟩, 3)
+    growth := Patterns.layered(q * 0.6 + V2⟨time * 0.16, seed - time * 0.11⟩, 4)
+    weather := Patterns.layered(q * 2.8 + V2⟨seed, 0⟩, 5) * 0.55 + grain * 0.25 + growth * 0.35
+    rust = Math.smoothstep(0.46, 0.70, weather)
+    eaten := Math.smoothstep(0.56, 0.72, weather)
+    if eaten <= 0.001 {
+        depth = 0
+        return
+    }
+    pits := Math.smoothstep(0.60, 0.79, grain) * eaten
+    depth = pits * 0.90
+}
+
+// Forest floor height, leaf-only gloss mask, local slope, isotropic leaf-edge
+// undercut, and smooth sunward shadow heights from Tile 7, in a single pass.
+forest_layer_sample :: (atlas: Shader.Texture_2D, filtering: Shader.Sampler, uv: V2, eps: f32, ray: V2, seed: f32, layer: i64, offset: V2
+                        -> h: f32, shine: f32, gx: f32, gy: f32, undercut: f32, h_near: f32, h_far: f32) {
+    at := forest_layer_uv(uv, seed, layer) + offset
+    at_xp := forest_layer_uv(uv + V2⟨eps, 0⟩, seed, layer) + offset
+    at_xm := forest_layer_uv(uv - V2⟨eps, 0⟩, seed, layer) + offset
+    at_yp := forest_layer_uv(uv + V2⟨0, eps⟩, seed, layer) + offset
+    at_ym := forest_layer_uv(uv - V2⟨0, eps⟩, seed, layer) + offset
+    at_near := forest_layer_uv(uv + ray * 6.0, seed, layer) + offset
+    at_far := forest_layer_uv(uv + ray * 17.5, seed, layer) + offset
+    tap := material_at(atlas, filtering, TILE_FOREST_BUMP, at)
+    h = tap.x
+    shine = tap.y
+    hxp := material_at(atlas, filtering, TILE_FOREST_BUMP, at_xp).x
+    hxm := material_at(atlas, filtering, TILE_FOREST_BUMP, at_xm).x
+    hyp := material_at(atlas, filtering, TILE_FOREST_BUMP, at_yp).x
+    hym := material_at(atlas, filtering, TILE_FOREST_BUMP, at_ym).x
+    h_near = material_at(atlas, filtering, TILE_FOREST_BUMP, at_near).x
+    h_far = material_at(atlas, filtering, TILE_FOREST_BUMP, at_far).x
+    gx = hxp - hxm
+    gy = hyp - hym
+    high_nb := Math.max(Math.max(hxp, hxm), Math.max(hyp, hym))
+    undercut = Math.clamp(high_nb - h - 0.02, 0, 0.55)
+}
+
+layered_forest_relief :: (atlas: Shader.Texture_2D, filtering: Shader.Sampler, uv: V2, eps: f32, ray: V2, time: f32, seed: f32
+                          -> grad: V2, height: f32, undercut: f32, cast_drop: f32, leaf_shine: f32) {
+    base := forest_layer_cycle(time, seed, 0)
+    h0, sh0, gx0, gy0, u0, hn0, hf0 := forest_layer_sample(atlas, filtering, uv, eps, ray, base.x, 0, V2⟨0, 0⟩)
+    *h := h0
+    *sh := sh0
+    *gx := gx0
+    *gy := gy0
+    *occ := u0
+    *hn := hn0
+    *hf := hf0
+    for i: 0 < 3 {
+        cycle := forest_layer_cycle(time, seed, i + 1)
+        salt := f32'i + cycle.x * 0.37
+        offset := V2⟨0.213 + f32'i * 0.317, 0.371 + f32'i * 0.193⟩
+        at := forest_layer_uv(uv, cycle.x, i + 1) + offset
+        copy := material_at(atlas, filtering, TILE_FOREST, at)
+        ch, csh, cgx, cgy, cu, chn, chf := forest_layer_sample(atlas, filtering, uv, eps, ray, cycle.x, i + 1, offset)
+        patch := Patterns.layered(at * 13 + V2⟨salt, 2.7⟩, 3)
+        phase := Patterns.layered(at * 5 + V2⟨3.1, salt⟩, 3) * 9
+        life := 0.5 + 0.5 * Math.sin(time * (0.19 + f32'i * 0.037) + phase + salt * 2)
+        reveal := Math.smoothstep(0.40, 0.68, patch + (life - 0.5) * 0.42)
+        detail := Math.dot(copy, LUMA)
+        leaf := Math.smoothstep(0.08, 0.24, detail)
+        if i == 0 {
+            h = Math.mix(ch, h, base.y)
+            sh = Math.mix(csh, sh, base.y)
+            gx = Math.mix(cgx, gx, base.y)
+            gy = Math.mix(cgy, gy, base.y)
+            occ = Math.mix(cu, occ, base.y)
+            hn = Math.mix(chn, hn, base.y)
+            hf = Math.mix(chf, hf, base.y)
+        }
+        lift := 0.04 * f32'(i + 1)
+        alpha := reveal * leaf * 0.72 * cycle.y
+        cover := Math.clamp(alpha * 1.35, 0, 1)
+        alpha_near := reveal * Math.smoothstep(0.28, 0.44, chn) * 0.72 * cycle.y
+        alpha_far := reveal * Math.smoothstep(0.28, 0.44, chf) * 0.72 * cycle.y
+        h = Math.mix(h, ch + lift, alpha)
+        sh = Math.mix(sh, csh, cover)
+        gx = Math.mix(gx, cgx, alpha)
+        gy = Math.mix(gy, cgy, alpha)
+        occ = Math.mix(occ, cu, alpha)
+        hn = Math.mix(hn, chn + lift, alpha_near)
+        hf = Math.mix(hf, chf + lift, alpha_far)
+    }
+    grad = V2⟨gx, gy⟩
+    height = h
+    undercut = occ
+    drop_near := Math.clamp(hn - h - 0.025, 0, 0.65)
+    drop_far := Math.clamp(hf - h - 0.055, 0, 0.65)
+    cast_drop = drop_near * 1.25 + drop_far * 0.90
+    leaf_shine = sh
+}
+
+// One material's local height gradient, crevice/cast shadow, specular gloss and highlight tint/power.
+material_relief :: (tile: i32, turned: V2, local: V2, local_sun: V2, scale: f32, seed: f32, time: f32, broad: f32, cell: f32, gold: Gold_Look,
+                    atlas: Shader.Texture_2D, filtering: Shader.Sampler -> relief: V4, polish: V4) {
+    if tile == TILE_MARBLE {
+        // Smooth, unbumped polished marble with a broad solar specular reflection.
+        relief = V4⟨0, 0, 0, 0.40⟩
+        polish = V4⟨1.0, 0.99, 0.96, 28⟩
+        return
+    }
+    if tile == TILE_CRACKS {
+        q0 := local / Math.max(scale, 1)
+        grain := Patterns.layered(q0 * 7 + V2⟨seed, 1.9⟩, 3)
+        stone_gloss := 0.24 + 0.12 * Math.smoothstep(0.40, 0.78, grain)
+        _, b0 := crack_rock_boundary(q0, seed)
+        if b0 >= 0.11 {
+            relief = V4⟨0, 0, 0, stone_gloss⟩
+            polish = V4⟨1.0, 0.88, 0.64, 20⟩
+            return
+        }
+        eps := 1.1 / Math.max(scale, 1)
+        h0 := crack_height(q0, time, seed)
+        hx := crack_height(q0 + V2⟨eps, 0⟩, time, seed) - crack_height(q0 - V2⟨eps, 0⟩, time, seed)
+        hy := crack_height(q0 + V2⟨0, eps⟩, time, seed) - crack_height(q0 - V2⟨0, eps⟩, time, seed)
+        depth := Math.clamp(0 - h0, 0, 1)
+        rim_glint := Math.clamp(Math.length(V2⟨hx, hy⟩) * 2.4, 0, 0.20)
+        gloss := (stone_gloss + rim_glint) * (1 - Math.smoothstep(0.18, 0.65, depth))
+        relief = V4⟨hx * 3.2, hy * 3.2, depth * 0.22, gloss⟩
+        polish = V4⟨1.0, 0.88, 0.64, 20⟩
+        return
+    }
+    if tile == TILE_WATER {
+        eps: f32 = 1.6
+        hx := blue_water_height(local + V2⟨eps, 0⟩, scale, time) - blue_water_height(local - V2⟨eps, 0⟩, scale, time)
+        hy := blue_water_height(local + V2⟨0, eps⟩, scale, time) - blue_water_height(local - V2⟨0, eps⟩, scale, time)
+        relief = V4⟨hx * 1.45, hy * 1.45, 0, 0.42⟩
+        polish = V4⟨1.0, 0.98, 0.90, 96⟩
+        return
+    }
+    if tile == TILE_BLACK {
+        eps: f32 = 1.6
+        hx := black_water_height(turned + V2⟨eps, 0⟩, local + V2⟨eps, 0⟩, scale, seed, time, broad) -
+              black_water_height(turned - V2⟨eps, 0⟩, local - V2⟨eps, 0⟩, scale, seed, time, broad)
+        hy := black_water_height(turned + V2⟨0, eps⟩, local + V2⟨0, eps⟩, scale, seed, time, broad) -
+              black_water_height(turned - V2⟨0, eps⟩, local - V2⟨0, eps⟩, scale, seed, time, broad)
+        relief = V4⟨hx * 1.35, hy * 1.35, 0, 0.34⟩
+        polish = V4⟨1.0, 0.95, 0.84, 92⟩
+        return
+    }
+    if tile == TILE_ARTIFACT {
+        inv := 1 / Math.max(scale * 5, 1)
+        q0 := local * inv
+        d0, r0 := artifact_rust_hole(q0, time, seed)
+        eps := 1.25 * inv
+        dx_p, _ := artifact_rust_hole(q0 + V2⟨eps, 0⟩, time, seed)
+        dx_m, _ := artifact_rust_hole(q0 - V2⟨eps, 0⟩, time, seed)
+        dy_p, _ := artifact_rust_hole(q0 + V2⟨0, eps⟩, time, seed)
+        dy_m, _ := artifact_rust_hole(q0 - V2⟨0, eps⟩, time, seed)
+        // Hole height is -depth, so dh/dx = -(dx_p - dx_m).
+        hx := dx_m - dx_p
+        hy := dy_m - dy_p
+        relief = V4⟨hx * 2.1, hy * 2.1, d0 * 0.22, 0.22 * (1 - r0 * 0.85)⟩
+        polish = V4⟨1.0, 0.86, 0.64, 38⟩
+        return
+    }
+    if tile == TILE_FOREST {
+        inv := 1 / Math.max(scale * 18, 1)
+        uv0 := local * inv + V2⟨seed * 0.17, seed * 0.31⟩
+        eps := 2.0 * inv
+        // Step directly along `local_sun` (without dividing by its length) so cast
+        // shadows contract smoothly to zero through noon instead of flipping 180°,
+        // while isotropic undercut and crevice occlusion hold steady overhead.
+        raking := Math.clamp(Math.length(local_sun), 0, 1)
+        ray := local_sun * inv
+        grad, h0, undercut, cast_drop, leaf_shine := layered_forest_relief(atlas, filtering, uv0, eps, ray, time, seed)
+        cast_shadow := cast_drop * (raking * raking)
+        ambient_shadow := Math.clamp((0.37 - h0) * 1.0, 0, 0.32) + undercut * 0.88
+        recess := ambient_shadow + cast_shadow
+        unshadowed := 1 - Math.clamp((undercut * 0.9 + cast_shadow) * 1.35, 0, 1)
+        // Only leaves (Tile 7's green channel) carry waxy specular shine; moss,
+        // soil, twigs and branches stay matte (gloss = 0).
+        gloss := 0.44 * leaf_shine * unshadowed
+        slope_scale := 0.36 + 0.38 * leaf_shine
+        relief = V4⟨grad.x * slope_scale, grad.y * slope_scale, recess, gloss⟩
+        polish = V4⟨0.99, 1.0, 0.86, 30⟩
+        return
+    }
+    slope := gold_surface_slope(atlas, filtering, local.x, local.y, scale, seed, cell, gold, 2.8)
+    relief = V4⟨slope.x * 1.25, slope.y * 1.25, 0, 0.28⟩
+    polish = V4⟨1.0, 0.91, 0.60, 56⟩
+}
+
+// A part lit over its kept surface (for Restart's starting-player spin and
+// its slow fade): the bronze in the channels surrounding the part (never the
+// screen's edge) lit up, and a directional sun rising over the part's clockwise
+// edge, arcing overhead, and setting over its anticlockwise edge (`seat_light_shade`
+// illuminates the whole part; `seat_bump_shade` actuates its relief and gloss).
+Seat_Light_Params :: struct {
+    points: [MAX_OUTLINE] V4    // each outline vertex in xy
+    sun:    V4                  // unit direction toward the sun xyz, outline point count
+    axis:   V4                  // part middle along spin xy, spin_dir xy (sunrise -> sunset)
+    style:  V4                  // half span along spin, bevel width (pixels), strength (0..1), marble share
+    screen: V4                  // screen size xy, anticlockwise channel flash, clockwise channel flash
+}
+
+seat_light_shade :: (from: Draw.Quad_Between, light: Shader.Uniforms(Seat_Light_Params), surfaces: Shader.Texture_2D, filtering: Shader.Sampler -> colour: V4) {
+    p := from.pixel
+    n := i32'(light.sun.w + 0.5)
+    bevel := Math.max(light.style.y, 1)
+    strength := light.style.z
+    *crossings: i32 = 0
+    *closest: f32 = 1000000
+    *groove_distance: f32 = 1000000
+    *channel_flash: f32 = 0
+    for i: 0 < n {
+        j := if i + 1 < n then i + 1 else 0
+        a := light.points[i].xy
+        b := light.points[j].xy
+        if (a.y > p.y) != (b.y > p.y) {
+            x := a.x + (p.y - a.y) / (b.y - a.y) * (b.x - a.x)
+            if p.x < x then crossings += 1
+        }
+        ab := b - a
+        t := Math.clamp(Math.dot(p - a, ab) / Math.max(Math.dot(ab, ab), 0.000001), 0, 1)
+        d := Math.length(p - a - ab * t)
+        closest = Math.min(closest, d)
+        // Only the first and closing edges separate players; the rest border the screen.
+        if (i == 0 or j == 0) and d < groove_distance {
+            groove_distance = d
+            channel_flash = if i == 0 then light.screen.z else light.screen.w
+        }
+    }
+    signed := if crossings % 2 == 1 then 0 - closest else closest
+    coverage := Math.clamp(0.5 - signed, 0, 1)
+    across := Math.clamp(groove_distance / bevel, 0, 1)
+    inset := if groove_distance < bevel then 1 - Math.smoothstep(0.12, 0.30, across) else 0
+    w := inset + (1 - inset) * coverage
+    if w <= 0.0001 or strength <= 0 then return ⟨0, 0, 0, 0⟩
+
+    inv_screen := V2⟨1 / Math.max(light.screen.x, 1), 1 / Math.max(light.screen.y, 1)⟩
+    base := Shader.sample_level(surfaces, filtering, p * inv_screen, 0).xyz
+    *panel_rgb := base
+    if coverage > 0 {
+        // Daylight across the whole part: golden and horizon-leaning at sunrise
+        // and sunset, even and bright overhead at noon. Saturated crimson stone
+        // (high chroma, low luma) also receives warm solar fill so it glows
+        // sunlit vermilion-amber instead of clipping its red channel flatly.
+        elevation := Math.clamp(light.sun.z, 0, 1)
+        across_part := Math.clamp(Math.dot(p - light.axis.xy, light.sun.xy) / Math.max(light.style.x, 1), -1, 1)
+        horizon_lean := 1 + 0.36 * across_part
+        daylight := (0.48 + 0.56 * Math.sqrt(elevation)) * horizon_lean
+
+        luma := Math.dot(base, LUMA)
+        dampen := luma * luma
+        peak := Math.max(base.x, Math.max(base.y, base.z))
+        chroma := Math.max(peak - luma, 0)
+        marble_hold := light.style.w * dampen
+        shaded := base * (1 - 0.12 * marble_hold)
+        sun_colour := Math.mix(V3⟨1.0, 0.78, 0.46⟩, V3⟨1.0, 0.94, 0.80⟩, elevation)
+        warm_fill := (0.04 * (1 - dampen) + 0.40 * chroma) * daylight + elevation * (0.04 - 0.03 * luma)
+        energy := base * sun_colour * ((0.58 - 0.38 * dampen) * daylight) + sun_colour * Math.max(warm_fill, 0)
+        ceiling := Math.mix(V3⟨0.99, 0.96, 0.91⟩, V3⟨0.91, 0.90, 0.87⟩, dampen)
+        headroom := Math.max(ceiling - shaded, V3⟨0.02, 0.02, 0.02⟩)
+        knee := V3⟨1, 1, 1⟩ - Math.exp((V3⟨0, 0, 0⟩ - energy) / Math.max(headroom, V3⟨0.18, 0.18, 0.18⟩))
+        panel_rgb = Math.clamp(shaded + headroom * knee, 0, 1)
+    }
+
+    // Both halves of the shared channels around the player light their bronze
+    // floor insert, flashing brighter warm ivory-gold as the spin bounces off one.
+    channel_rgb := Math.mix(V3⟨1.0, 0.76, 0.38⟩, V3⟨1.0, 0.95, 0.78⟩, Math.clamp(channel_flash, 0, 1))
+    mixed := (panel_rgb * ((1 - inset) * coverage) + channel_rgb * inset) / w
+    alpha := Math.clamp(w * strength, 0, 1)
+    colour = V4⟨mixed.x, mixed.y, mixed.z, 1⟩ * alpha
+}
+
+Seat_Light :: shader { vertex: Draw.quad_place; fragment: seat_light_shade }
+SEAT_LIGHT :: Seat_Light(Draw.SHADER_TARGET)
+
+Seat_Bump_Params :: struct {
+    points:  [MAX_OUTLINE] V4   // each outline vertex in xy
+    sun:     V4                 // unit direction toward the sun xyz, outline point count
+    axis:    V4                 // part middle along spin xy, spin_dir xy (sunrise -> sunset)
+    style:   V4                 // half span along spin, bevel width (pixels), strength (0..1), unused
+    frame:   V4                 // seat middle xy, seat angle, cell size
+    span:    V4                 // local left, local right, pattern scale, pattern seed
+    more:    V4                 // surface time, broad, colour count, atlas tile
+    hybrids: V4                 // left tile, right tile, unused
+    gold:    Gold_Look
+}
+
+seat_bump_shade :: (from: Draw.Quad_Between, bump: Shader.Uniforms(Seat_Bump_Params), atlas: Shader.Texture_2D, filtering: Shader.Sampler -> colour: V4) {
+    p := from.pixel
+    n := i32'(bump.sun.w + 0.5)
+    bevel := Math.max(bump.style.y, 1)
+    strength := bump.style.z
+    if strength <= 0 then return ⟨0, 0, 0, 0⟩
+
+    *crossings: i32 = 0
+    *closest: f32 = 1000000
+    *groove_distance: f32 = 1000000
+    for i: 0 < n {
+        j := if i + 1 < n then i + 1 else 0
+        a := bump.points[i].xy
+        b := bump.points[j].xy
+        if (a.y > p.y) != (b.y > p.y) {
+            x := a.x + (p.y - a.y) / (b.y - a.y) * (b.x - a.x)
+            if p.x < x then crossings += 1
+        }
+        ab := b - a
+        t := Math.clamp(Math.dot(p - a, ab) / Math.max(Math.dot(ab, ab), 0.000001), 0, 1)
+        d := Math.length(p - a - ab * t)
+        closest = Math.min(closest, d)
+        if (i == 0 or j == 0) and d < groove_distance {
+            groove_distance = d
+        }
+    }
+    signed := if crossings % 2 == 1 then 0 - closest else closest
+    coverage := Math.clamp(0.5 - signed, 0, 1)
+    across := Math.clamp(groove_distance / bevel, 0, 1)
+    inset := if groove_distance < bevel then 1 - Math.smoothstep(0.12, 0.30, across) else 0
+    interior := if groove_distance < bevel then Math.smoothstep(0.55, 1.0, across) else 1
+    mask := coverage * (1 - inset) * interior * strength
+    if mask <= 0.0001 then return ⟨0, 0, 0, 0⟩
+
+    angle := bump.frame.z
+    c := Math.cos(angle)
+    s := Math.sin(angle)
+    turned := V2⟨p.x * c + p.y * s, p.y * c - p.x * s⟩
+    rel := p - bump.frame.xy
+    local := V2⟨rel.x * c + rel.y * s, rel.y * c - rel.x * s⟩
+    local_sun := V2⟨bump.sun.x * c + bump.sun.y * s, bump.sun.y * c - bump.sun.x * s⟩
+    stops := i32'(bump.more.z + 0.5)
+    tile := i32'(bump.more.w + 0.5)
+
+    // Single call in a loop (1 side, or 2 for hybrids) so `material_relief` is
+    // inlined once in the stage and compiles quickly in the GPU driver.
+    *relief := V4⟨0, 0, 0, 0⟩
+    *polish := V4⟨0, 0, 0, 0⟩
+    blend_half := Math.max((bump.span.y - bump.span.x) * 0.15, 1)
+    blend := Math.smoothstep(0 - blend_half, blend_half, local.x)
+    sides: i32 = if stops == 2 then 2 else 1
+    for side: 0 < sides {
+        side_weight := if side == 0 then 1 - blend else blend
+        weight: f32 = if stops == 2 then side_weight else 1
+        if weight > 0.001 {
+            side_f := if side == 0 then bump.hybrids.x else bump.hybrids.y
+            side_tile := if stops == 2 then i32'(side_f + 0.5) else tile
+            r, pol := material_relief(side_tile, turned, local, local_sun, bump.span.z, bump.span.w, bump.more.x, bump.more.y, bump.frame.w, bump.gold, atlas, filtering)
+            relief = relief + r * weight
+            polish = polish + pol * weight
+        }
+    }
+
+    // Rotate local height gradient into screen space and form outward surface normal.
+    grad := V2⟨relief.x * c - relief.y * s, relief.x * s + relief.y * c⟩
+    normal := Math.normalize(V3⟨0 - grad.x, 0 - grad.y, 1⟩)
+
+    // Parallel directional sun arcing from sunrise (-spin_dir) to sunset (+spin_dir),
+    // paired with perspective eye over the part so the solar reflection travels from
+    // the sunrise edge across the middle to the sunset edge.
+    light_dir := bump.sun.xyz
+    spin_dir := bump.axis.zw
+    radial_dir := V2⟨0 - spin_dir.y, spin_dir.x⟩
+    rel_origin := p - bump.axis.xy
+    s_spin := Math.dot(rel_origin, spin_dir)
+    s_rad := Math.dot(rel_origin, radial_dir)
+    eye_xy := spin_dir * (0 - s_spin) + radial_dir * (0 - s_rad * 0.22)
+    view_dir := Math.normalize(V3⟨eye_xy.x, eye_xy.y, Math.max(bump.style.x * 0.62, 1)⟩)
+    half_dir := Math.normalize(light_dir + view_dir)
+
+    nl := Math.max(Math.dot(normal, light_dir), 0)
+    nl_flat := Math.max(light_dir.z, 0)
+    nh := Math.max(Math.dot(normal, half_dir), 0)
+
+    grazing := 1 / Math.max(nl_flat, 0.38)
+    sun_tint := Math.mix(V3⟨1.0, 0.76, 0.46⟩, V3⟨1.0, 0.96, 0.86⟩, nl_flat)
+    shine_gate := Math.smoothstep(0.01, 0.14, relief.w)
+    shade_slope := Math.max(nl_flat - nl, 0) * grazing * 0.72
+    lit_slope := Math.max(nl - nl_flat, 0) * (0.50 + 0.22 * nl_flat) * shine_gate
+    shade := Math.clamp(shade_slope + relief.z * (0.82 - 0.16 * nl_flat), 0, 0.82)
+
+    tight := Math.pow(nh, polish.w)
+    sheen := Math.pow(nh, Math.max(polish.w * 0.35, 14.0))
+    horizon_fade := Math.smoothstep(0.12, 0.35, nl_flat)
+    spec := (tight * 0.86 + sheen * 0.14) * relief.w * (0.35 + 0.65 * horizon_fade)
+    added := (polish.xyz * sun_tint) * (spec + lit_slope) + PART_COOL * (0.015 * shade)
+
+    colour = V4⟨added.x * mask, added.y * mask, added.z * mask, shade * mask⟩
+}
+
+Seat_Bump :: shader { vertex: Draw.quad_place; fragment: seat_bump_shade }
+SEAT_BUMP :: Seat_Bump(Draw.SHADER_TARGET)
+
+// The sun's sky arc over seat k at `sweep` (0 rising over its clockwise edge,
+// 0.5 straight overhead at noon, 1 setting over its anticlockwise edge), along
+// the anticlockwise spin vector across that part.
+part_sun_arc :: (layout: Layout, k: i64, sweep: f32 -> sun_dir: V3, origin: V2, spin_dir: V2, half_span: f32) #pure {
+    seat := layout.seats[k]
+    cell := cell_of(layout)
+    points := seat.outline[:seat.count]
+    spin_dir = V2⟨seat.toward.y, 0 - seat.toward.x⟩
+    *min_s: f32 = 1e30
+    *max_s: f32 = -1e30
+    for q: points {
+        s := Math.dot(q - seat.middle, spin_dir)
+        min_s = Math.min(min_s, s)
+        max_s = Math.max(max_s, s)
+    }
+    origin = seat.middle + spin_dir * ((min_s + max_s) * 0.5)
+    half_span = Math.max((max_s - min_s) * 0.5, cell * 2)
+    u := Math.clamp(sweep, 0, 1)
+    alpha := (u - 0.5) * (f32'Math.PI * 0.87)
+    sun_dir = V3⟨spin_dir.x * Math.sin(alpha), spin_dir.y * Math.sin(alpha), Math.cos(alpha)⟩
+}
+
+draw_part_light :: (canvas: *Draw.Canvas, surfaces: *Draw.Canvas, layout: Layout, k: i64, identity: Identity, time: f32, sweep: f32, strength: f32,
+                    acw_flash: f32 = 0, cw_flash: f32 = 0) {
+    if k < 0 or k >= layout.count or strength <= 0 then return
+    seat := layout.seats[k]
+    cell := cell_of(layout)
+    bevel := BEVEL_CELLS * cell
+    points := seat.outline[:seat.count]
+    sun_dir, part_origin, spin_dir, half_span := part_sun_arc(layout, k, sweep)
+    *light_params: Seat_Light_Params
+    *bump_params: Seat_Bump_Params
+    bump_params.gold = GOLD
+    *low := points[0]
+    *high := points[0]
+    *left: f32 = 1e30
+    *right: f32 = -1e30
+    for q, i: points {
+        light_params.points[i] = V4⟨q.x, q.y, 0, 0⟩
+        bump_params.points[i] = V4⟨q.x, q.y, 0, 0⟩
+        low = Math.min(low, q)
+        high = Math.max(high, q)
+        l := local_of(seat.middle, seat.angle, q)
+        left = Math.min(left, l.x)
+        right = Math.max(right, l.x)
+    }
+    *colour_count: i64 = 0
+    *hybrid_pair: [2] f32
+    for mana: [5] Mana⟨.WHITE, .BLUE, .BLACK, .RED, .GREEN⟩ {
+        if has_colour(identity, mana) {
+            if colour_count < 2 then hybrid_pair[colour_count] = f32'u8'mana
+            colour_count += 1
+        }
+    }
+    stops := if colour_count >= 2 then Math.min(colour_count, 5) else 1
+    tile := material_tile(identity)
+    marble_share: f32 = if tile == TILE_MARBLE then 1 else if stops == 2 and has_colour(identity, .WHITE) then 0.5 else 0
+    clamped := Math.clamp(strength, 0, 1)
+    sun := V4⟨sun_dir.x, sun_dir.y, sun_dir.z, f32'seat.count⟩
+    axis := V4⟨part_origin.x, part_origin.y, spin_dir.x, spin_dir.y⟩
+
+    light_params.sun = sun
+    light_params.axis = axis
+    light_params.style = V4⟨half_span, bevel, clamped, marble_share⟩
+    light_params.screen = V4⟨layout.size.x, layout.size.y, acw_flash, cw_flash⟩
+
+    scale := SURFACE_FEATURES * SURFACE_SCALE * cell
+    bump_params.sun = sun
+    bump_params.axis = axis
+    bump_params.style = V4⟨half_span, bevel, clamped, 0⟩
+    bump_params.frame = V4⟨seat.middle.x, seat.middle.y, seat.angle, cell⟩
+    bump_params.span = V4⟨left, right, scale, f32'(k + 1)⟩
+    bump_params.more = V4⟨time, SURFACE_BROAD, f32'stops, f32'tile⟩
+    bump_params.hybrids = V4⟨hybrid_pair[0], hybrid_pair[1], 0, 0⟩
+
+    pad := V2⟨bevel + 2, bevel + 2⟩
+    box_at := low - pad
+    box_size := high - low + pad * 2
+    canvas.draw_shader_canvas(box_at, box_size, SEAT_LIGHT.code, SEAT_LIGHT.bindings.light, light_params,
+                              surfaces, SEAT_LIGHT.bindings.surfaces, SEAT_LIGHT.bindings.filtering)
+    canvas.draw_shader_image(box_at, box_size, SEAT_BUMP.code, SEAT_BUMP.bindings.bump, bump_params,
+                             material_image, SEAT_BUMP.bindings.atlas, SEAT_BUMP.bindings.filtering)
 }
 
 ////////////////////////////////

@@ -13829,41 +13829,63 @@ Mdi :: enum #partial {
 MDI_LICENCE :: #data "mdi/LICENSE.txt"
 MDI_NOTICE :: Notice⟨name: "Material Design Icons", text: string'MDI_LICENCE[:]⟩
 MDI_ACCOUNT :: #data "mdi/account.svg" #notice MDI_NOTICE
+MDI_ACCOUNT_EDIT :: #data "mdi/account-edit.svg" #notice MDI_NOTICE
 MDI_BACKUP_RESTORE :: #data "mdi/backup-restore.svg" #notice MDI_NOTICE
 MDI_CHECK :: #data "mdi/check.svg" #notice MDI_NOTICE
+MDI_CHECKBOX_BLANK_CIRCLE_OUTLINE :: #data "mdi/checkbox-blank-circle-outline.svg" #notice MDI_NOTICE
 MDI_CLOSE :: #data "mdi/close.svg" #notice MDI_NOTICE
 MDI_DOTS_HORIZONTAL :: #data "mdi/dots-horizontal.svg" #notice MDI_NOTICE
+MDI_INFORMATION_VARIANT :: #data "mdi/information-variant.svg" #notice MDI_NOTICE
+MDI_MAGNIFY :: #data "mdi/magnify.svg" #notice MDI_NOTICE
 MDI_MINUS :: #data "mdi/minus.svg" #notice MDI_NOTICE
+MDI_MINUS_CIRCLE_OUTLINE :: #data "mdi/minus-circle-outline.svg" #notice MDI_NOTICE
 MDI_PAUSE :: #data "mdi/pause.svg" #notice MDI_NOTICE
 MDI_PLUS :: #data "mdi/plus.svg" #notice MDI_NOTICE
+MDI_PLUS_CIRCLE_OUTLINE :: #data "mdi/plus-circle-outline.svg" #notice MDI_NOTICE
 MDI_POWER :: #data "mdi/power.svg" #notice MDI_NOTICE
+MDI_RECTANGLE_OUTLINE :: #data "mdi/rectangle-outline.svg" #notice MDI_NOTICE
 MDI_REDO :: #data "mdi/redo.svg" #notice MDI_NOTICE
+MDI_RESIZE :: #data "mdi/resize.svg" #notice MDI_NOTICE
 MDI_RESTORE :: #data "mdi/restore.svg" #notice MDI_NOTICE
 MDI_SCREEN_ROTATION :: #data "mdi/screen-rotation.svg" #notice MDI_NOTICE
+MDI_SHUFFLE_VARIANT :: #data "mdi/shuffle-variant.svg" #notice MDI_NOTICE
+MDI_STAR :: #data "mdi/star.svg" #notice MDI_NOTICE
+MDI_STAR_OUTLINE :: #data "mdi/star-outline.svg" #notice MDI_NOTICE
 MDI_TABLET :: #data "mdi/tablet.svg" #notice MDI_NOTICE
 MDI_UNDO :: #data "mdi/undo.svg" #notice MDI_NOTICE
 
 // Each icon's SVG, in the order icon(...) numbers them.
-SVGS :: [] string⟨string'MDI_ACCOUNT[:], string'MDI_BACKUP_RESTORE[:], string'MDI_CHECK[:], string'MDI_CLOSE[:], string'MDI_DOTS_HORIZONTAL[:], string'MDI_MINUS[:], string'MDI_PAUSE[:], string'MDI_PLUS[:], string'MDI_POWER[:], string'MDI_REDO[:], string'MDI_RESTORE[:], string'MDI_SCREEN_ROTATION[:], string'MDI_TABLET[:], string'MDI_UNDO[:]⟩
+SVGS :: [] string⟨string'MDI_ACCOUNT[:], string'MDI_ACCOUNT_EDIT[:], string'MDI_BACKUP_RESTORE[:], string'MDI_CHECK[:], string'MDI_CHECKBOX_BLANK_CIRCLE_OUTLINE[:], string'MDI_CLOSE[:], string'MDI_DOTS_HORIZONTAL[:], string'MDI_INFORMATION_VARIANT[:], string'MDI_MAGNIFY[:], string'MDI_MINUS[:], string'MDI_MINUS_CIRCLE_OUTLINE[:], string'MDI_PAUSE[:], string'MDI_PLUS[:], string'MDI_PLUS_CIRCLE_OUTLINE[:], string'MDI_POWER[:], string'MDI_RECTANGLE_OUTLINE[:], string'MDI_REDO[:], string'MDI_RESIZE[:], string'MDI_RESTORE[:], string'MDI_SCREEN_ROTATION[:], string'MDI_SHUFFLE_VARIANT[:], string'MDI_STAR[:], string'MDI_STAR_OUTLINE[:], string'MDI_TABLET[:], string'MDI_UNDO[:]⟩
 
 // The icon of Mdi's of that name, to draw (HOME :: icon(Mdi.HOME)).
 icon :: ($name: Mdi -> Icons.Icon) {
-    #assert(name == .ACCOUNT or name == .BACKUP_RESTORE or name == .CHECK or name == .CLOSE or name == .DOTS_HORIZONTAL or name == .MINUS or name == .PAUSE or name == .PLUS or name == .POWER or name == .REDO or name == .RESTORE or name == .SCREEN_ROTATION or name == .TABLET or name == .UNDO, "this icon of Mdi's isn't in icons/ yet: run rain -run tools/icons/icons.rain update C:/repos/raza/src/raza.rain, which copies each icon the program names")
+    #assert(name == .ACCOUNT or name == .ACCOUNT_EDIT or name == .BACKUP_RESTORE or name == .CHECK or name == .CHECKBOX_BLANK_CIRCLE_OUTLINE or name == .CLOSE or name == .DOTS_HORIZONTAL or name == .INFORMATION_VARIANT or name == .MAGNIFY or name == .MINUS or name == .MINUS_CIRCLE_OUTLINE or name == .PAUSE or name == .PLUS or name == .PLUS_CIRCLE_OUTLINE or name == .POWER or name == .RECTANGLE_OUTLINE or name == .REDO or name == .RESIZE or name == .RESTORE or name == .SCREEN_ROTATION or name == .SHUFFLE_VARIANT or name == .STAR or name == .STAR_OUTLINE or name == .TABLET or name == .UNDO, "this icon of Mdi's isn't in icons/ yet: run rain -run tools/icons/icons.rain update C:/repos/raza/src/raza.rain, which copies each icon the program names")
     return if name is {
         case .ACCOUNT: ⟨0⟩
-        case .BACKUP_RESTORE: ⟨1⟩
-        case .CHECK: ⟨2⟩
-        case .CLOSE: ⟨3⟩
-        case .DOTS_HORIZONTAL: ⟨4⟩
-        case .MINUS: ⟨5⟩
-        case .PAUSE: ⟨6⟩
-        case .PLUS: ⟨7⟩
-        case .POWER: ⟨8⟩
-        case .REDO: ⟨9⟩
-        case .RESTORE: ⟨10⟩
-        case .SCREEN_ROTATION: ⟨11⟩
-        case .TABLET: ⟨12⟩
-        case .UNDO: ⟨13⟩
+        case .ACCOUNT_EDIT: ⟨1⟩
+        case .BACKUP_RESTORE: ⟨2⟩
+        case .CHECK: ⟨3⟩
+        case .CHECKBOX_BLANK_CIRCLE_OUTLINE: ⟨4⟩
+        case .CLOSE: ⟨5⟩
+        case .DOTS_HORIZONTAL: ⟨6⟩
+        case .INFORMATION_VARIANT: ⟨7⟩
+        case .MAGNIFY: ⟨8⟩
+        case .MINUS: ⟨9⟩
+        case .MINUS_CIRCLE_OUTLINE: ⟨10⟩
+        case .PAUSE: ⟨11⟩
+        case .PLUS: ⟨12⟩
+        case .PLUS_CIRCLE_OUTLINE: ⟨13⟩
+        case .POWER: ⟨14⟩
+        case .RECTANGLE_OUTLINE: ⟨15⟩
+        case .REDO: ⟨16⟩
+        case .RESIZE: ⟨17⟩
+        case .RESTORE: ⟨18⟩
+        case .SCREEN_ROTATION: ⟨19⟩
+        case .SHUFFLE_VARIANT: ⟨20⟩
+        case .STAR: ⟨21⟩
+        case .STAR_OUTLINE: ⟨22⟩
+        case .TABLET: ⟨23⟩
+        case .UNDO: ⟨24⟩
         case: ⟨0⟩
     }
 }

@@ -9,7 +9,7 @@ LETHAL_POISON :: 10
 // damage (always theirs, leftmost), then those they turn on in their
 // options: commander damage (on to start with), commander damage with
 // lifelink, commander damage alone (counted toward the 21, its life not
-// taken), lifelink, and poison. (Each's value is its bit in Attacks, kept
+// taken; on to start with too), lifelink, and poison. (Each's value is its bit in Attacks, kept
 // between runs: a new one goes at the end.)
 Attack :: enum u8 {
     DAMAGE
@@ -29,8 +29,8 @@ Attack :: enum u8 {
 // A player's attacks turned on: a bit for each, by Attack's value (DAMAGE's
 // always set, and always on).
 Attacks :: #alias u16
-STARTING_ATTACKS :: Attacks'3                  // damage, and commander damage
-EVERY_STARTING_ATTACKS :: [MAX_PLAYERS] Attacks⟨3, 3, 3, 3, 3, 3⟩
+STARTING_ATTACKS :: Attacks'(1 | 1 << 1 | 1 << 9)   // damage, commander damage, and commander damage alone
+EVERY_STARTING_ATTACKS :: [MAX_PLAYERS] Attacks⟨STARTING_ATTACKS, STARTING_ATTACKS, STARTING_ATTACKS, STARTING_ATTACKS, STARTING_ATTACKS, STARTING_ATTACKS⟩
 
 has_attack :: (attacks: Attacks, kind: Attack -> bool) #pure {
     if kind == .DAMAGE then return true
@@ -301,9 +301,10 @@ is_out :: (game: Game, player: i64 -> bool) #pure {
 // An attack of an amount from one player at another: damage takes life (a
 // commander's counting toward LETHAL_COMMANDER_DAMAGE from it too, and a
 // commander's alone counting only toward that), with lifelink giving the
-// attacker as much; poison gives poison counters.
+// attacker as much; poison gives poison counters. A player can be their own
+// target (their own life paid).
 deal_attack :: (game: *Game, kind: Attack, from: i64, to: i64, amount: i32) {
-    if amount <= 0 or from == to then return
+    if amount <= 0 then return
     if kind == .POISON {
         game.poison[to] += amount
         return

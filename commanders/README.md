@@ -1,14 +1,34 @@
 # Commander portraits
 
-Raza's compact card catalog is [atlas/index.json](atlas/index.json). Keep it beside its JPEG pages. Each record has three fields.
+Raza's compact card catalog is [atlas/index.json](atlas/index.json). Keep it beside its JPEG pages. Each record has four fields.
 
 | Field | Meaning |
 | --- | --- |
 | `name` | Scryfall's card name, including both face names when present |
-| `manacost` | The mana cost in Scryfall notation, such as `{2}{G}{U}`. When the printing gives costs per face, nonempty costs appear in face order separated by ` // `. An empty string means the card has no mana cost. |
+| `identity` | The card's colour identity, Scryfall's `color_identity`, as letters in WUBRG order (`["W","U","G"]`; `[]` for a colourless one). It counts the mana symbols in its rules text and its colour indicator as well as its cost. |
 | `image` | An array of `[filename, x, y, width, height]` crops in face order. Coordinates are pixels from the top left of the named JPEG. The first entry is the primary art. |
+| `avatar` | One circular crop per image, in matching face order. Each has `x`, `y`, `radius`, `width` and `height` in source pixels. |
 
 Load the named page once and draw the indicated rectangle. For normalized texture coordinates, divide by that JPEG's actual width and height. The packer trims unused space at the right and bottom of each page.
+
+Raza itself carries [atlas/index.bin](atlas/index.bin), the same catalog in a compact binary form (`compact_index` in [build_atlas.rain](build_atlas.rain) describes it), embedded in the program; it reads the pages from `atlas/` as it runs, as they're needed.
+
+## Circular avatar framing
+
+`avatar[i]` describes the circle to sample from `image[i]`. Its `x` and `y` locate the center from the top-left of the **original, unscaled art crop**; `radius` is in those same pixels. `width` and `height` are the original art dimensions. Every circle fits wholly inside its source. A double-faced card has a separate framing for each illustrated face.
+
+To render a circular avatar, draw a disk. For each point `(u, v)` inside the unit disk (center 0, edges ±1), sample the atlas at:
+
+```text
+atlasX = tileX + (x + u * radius) * tileWidth  / width
+atlasY = tileY + (y + v * radius) * tileHeight / height
+```
+
+The framing pass examined every original illustration. For recognizable faces, OpenCV's YuNet detector estimated the face bounds. The circle is centered near the chin or neck, with room for the head and shoulders. Close faces can share a circle. For illustrations without a confident face detection, U²-Net (u2netp) estimated the foreground silhouette. The framing favors a detailed area in its upper portion and uses a wider view for creatures, objects and scenery. Circular previews from a sample were visually reviewed, with hand corrections where the detector picked a prop, a secondary figure, or the wrong part of a creature.
+
+The November 2026 pass framed 3,869 images across 3,754 cards. Visual review changed 101 of the proposed circles. Every final circle was checked against the original image dimensions.
+
+[avatars.json](avatars.json) keeps the chosen circles keyed by the original artwork filename. To adjust a portrait, edit its entry and rebuild. Add an entry for each new art file when refreshing the catalog. Repacking at a different resolution reuses the same source-pixel framing.
 
 ## Where the source came from
 
@@ -23,14 +43,14 @@ The raw inputs belong beside this README as `commanders.json` and `art/`. Both p
 
 ## Rebuild
 
-With Python 3.9+ and Pillow installed, run this from the repository root.
+The builder is a 'rain program, [build_atlas.rain](build_atlas.rain), with no other tools needed. Run this from the repository root (or from this folder, with `build_atlas.rain`).
 
 ```text
-python commanders/build_atlas.py
+C:/rain/bin/rain.exe -release -run commanders/build_atlas.rain
 ```
 
-The default build fits each illustration inside 320 × 320 pixels, preserving its aspect ratio and never enlarging it. Use `--max-edge 1024` to keep more detail, or `--output build/commander-preview` to build a separate set. Use one builder per output directory. The tool writes content-named pages before replacing the index, then removes obsolete pages it generated.
+The default build fits each illustration inside 320 × 320 pixels, preserving its aspect ratio and never enlarging it. Use `-max_edge:1024` to keep more detail, or `-output:build/commander-preview` to build a separate set (`-help` lists the options). Use one builder per output directory. The tool writes content-named pages before replacing the index, then removes obsolete pages it generated.
 
-The packer sorts tiles by height and width and fits them into shelves on pages up to 2048 × 2048. Each crop has an extruded edge for bilinear filtering. Tiles start on a 16-pixel JPEG block boundary. Pages use optimized baseline JPEG, quality 86, with 4:2:0 chroma subsampling.
+The packer sorts tiles by height and width and fits them into shelves on pages up to 2048 × 2048. Each crop is scaled by Image_Files' bicubic resampler and has an extruded edge for bilinear filtering. Tiles start on a 16-pixel JPEG block boundary. Pages use optimized baseline JPEG (Image_Files' `encode_jpeg`), quality 86, with 4:2:0 chroma subsampling.
 
-On this catalog, 81 pages put 92.6% of the stored pixels inside art rectangles. The default size-first order produced 90,021,063 JPEG bytes. Grouping equal-size tiles by average hue and brightness (`--palette-order`) produced 89,966,447 bytes on the same 81 pages, a saving of 54,616 bytes (0.061%). The default skips the extra image pass.
+On this catalog, 81 pages put 92.6% of the stored pixels inside art rectangles, and the default size-first order produced 86,590,669 JPEG bytes. Grouping equal-size tiles by average hue and brightness (`-palette_order`) saved 0.061% when measured with the earlier Python builder, on the same 81 pages. The default skips the extra image pass.
