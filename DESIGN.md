@@ -178,9 +178,11 @@ throws**, each colour as its own element, as damage or commander damage.
   while the count column has the table. They
   belong to the seat, kept with the game and across a new game; Reset turns
   every seat's back to damage, commander damage and commander damage alone.
-- **Profiles** (profiles.rain). Above the options button (or, where that's
-  outside the part or too near its edge, the nearest place round the
-  button inside it), a profile button: the seat's profile's initials, or a person where it has none. It
+- **Profiles** (profiles.rain). Where the colour toggles open, a profile
+  button, half there: the seat's profile's initials, or a person where it
+  has none; the five-colour button beside it, on its right (or the nearest
+  place round it inside the part), the toggles coming out of it and
+  opening where they always have. It
   opens a panel as the options' is, each profile's initials in a circle
   (the seat's ringed) and a pencil. A profile touched goes to the seat
   (moved from any other; touched at its own seat, taken off it): the seat
@@ -191,55 +193,65 @@ throws**, each colour as its own element, as damage or commander damage.
   controls' dark slate (the pill's), piped round its edge in bronze (the
   credits' tube), turned to the player who opened it (the nearest quarter
   turn: landscape or portrait as it falls). It opens on the profiles, in
-  the middle: each's initials in a circle ringed in bronze, its name on a
-  plaque as tall reaching out from behind it, burnished steel piped round
-  in bronze (the credits' tube), the name etched into it, or lit gold for
-  the opening seat's profile; the one that adds a profile is alike, a plus
-  in its circle. A close (top right)
-  closes it. A profile touched opens its editor, an added one's with its
-  name taking the keyboard. Along the editor's top, left to right: the
-  avatar (the favourite deck's art; empty until the first deck is added,
-  which is the favourite; ringed in its colour identity's colours), the
-  initials in a circle ringed in bronze (touched, a field taking the keys;
-  typed over, kept; else made from the name's first two words as it's
-  typed), and the name, its field piped in bronze; top right, the list
-  (back: adding, to the decks; else to the profiles, as Escape does) and
-  close (back to the game). A field touched takes the keyboard (Windows'
-  touch keyboard, which comes up upright to the screen) and edits as UI's
-  text fields do (its Line_Edit: the caret, Shift selecting, Control by
-  words, Home and End, Control+A, C, X and V with the system's clipboard,
-  Control+Z, Control+Shift+Z); Enter, or a touch elsewhere, lets it go. Below, the decks as cards, scrolled by dragging: each touched is
-  enabled for the session (lit; where none is, every deck is, and they're
-  all shown plain); the favourite shows a filled bronze star; the avatar
-  touched shows every deck's empty star, and the deck touched then is the
-  favourite (an embossed bronze star). A deck held still shakes, harder
-  and harder, then pops, taken out. After the decks, a tile shaped as they
-  are adds one: adding, under the name the profile's decks as small
-  circles (each ringed in its colour identity's colours; wrapping onto as
-  many rows as they take), a filter field (emptied and taking the keys as
-  adding begins and as each deck's added), and every
-  commander whose name answers it (in any case: every space-separated word
-  held, of any comma-separated alternative), as smaller cards of their
-  thumbnails, those already decks lit: one touched is added, and Enter
-  adds the only one found. A deck's card is its art with its name on a
-  dark band over its foot; a found commander's, its name on its frame,
-  carried down below its art; each card is edged a pixel or two in its
-  frame, Magic's original frames' surface (the parts' own materials: each
-  colour's, gold for several, an artifact's for none) and casts a soft shadow, and a name
+  the middle: each a lozenge piped round in bronze (the credits' tube),
+  its initials on the dark at its left end, a groove, then its name on
+  burnished steel, etched into it, or lit gold for the opening seat's
+  profile; the one that adds a profile is its shape, flat and in shadow, a
+  plus where the initials are. A close (top right) closes it. A profile
+  touched opens its editor, an added one's with its name taking the
+  keyboard. Along the editor's top, the profile's plaque as the list draws
+  it, from the first deck's left edge to the third's right: the initials on
+  its dark end (two characters at most; typed over, kept; else made from
+  the name's first two words as it's typed), and the name etched in its
+  steel; past it (or, without the room, below it) the decks' status ("2
+  decks selected", or "All decks active") and a button that clears the
+  selection; top right, the list (back:
+  adding, to the decks; else to the profiles, as Escape does) and close
+  (back to the game). A field touched takes the keyboard (Windows' touch
+  keyboard, which comes up upright to the screen), its caret (pulsing)
+  where it's touched, a drag selecting, a second touch past its text's end
+  selecting it all; it edits as UI's text fields do (its Line_Edit: Shift
+  selecting, Control by words, Home and End, Control+A, C, X and V with the
+  system's clipboard, Control+Z, Control+Shift+Z); Enter, or a touch
+  elsewhere, lets it go. Below, the decks as cards, scrolled by dragging:
+  each touched is enabled for the session (lit; where none is, every deck
+  is, and they're all shown plain). A deck held still shakes, harder and
+  harder, then pops, taken out. After the decks, a dark tile shaped as
+  they are adds one: adding, under the name the profile's decks as small circles
+  (each framed as a card is; wrapping onto as many rows
+  as they take), a filter field (emptied and taking the keys as adding
+  begins and as each deck's added), and every commander whose name answers
+  it (in any case: every space-separated word held, of any comma-separated
+  alternative) but those already decks, as smaller cards of their
+  thumbnails, with no gaps between their touches: one touched is added; the one
+  outlined as the caret is, gold and pulsing (the first, Tab and Shift+Tab
+  moving it), is added
+  by Enter. Enter with no search, Escape, back, or a touch neither on the
+  search nor on a result stops adding. A deck's card is its art in its
+  frame, no name; a found commander's, its name on its frame, carried down
+  below its art (a pixel or two round the rest); each card, and each
+  circle of a commander (the decks under the name, the commander button
+  and its panel), is framed in Magic's original frame for its colour
+  identity (the parts' own materials, drawn toward the colour's own: each
+  colour's, gold for several, an artifact's for none) and casts a soft
+  shadow, and a name
   too long for its card scrolls through it as hud's statuses do (its start
   two seconds, along to its end, its end a second and a half, quickly
-  back). The art comes from commanders/atlas (its catalog
-  carried in Raza, its pages read on a thread of their own as they're
-  first drawn, 24 kept at most, the profiles' decks' always), with every
-  commander's thumbnail (128 pixels at most, on pages of their own) read
-  as Raza starts and kept, so any can be shown at once, small, while its
-  full art's read.
-- **Decks.** A seat whose profile has decks has a commander button beside
-  its five-colour button (on its right, or the nearest place round it
-  inside the part): the deck it plays (the one picked, else the
-  starred one, else its first) as its commander's avatar circle, ringed in
-  bronze. It opens a panel of the profile's decks, as circles (the one
-  played ringed), and a shuffle: a deck touched is picked, and the seat
+  back). While it's open, only it is drawn (the table under it left out).
+  The art comes from commanders/atlas (its catalog carried in Raza, its
+  pages read on four threads of their own as they're first drawn, one made
+  an image a frame, 24 kept at most, the open profile's decks' always),
+  with every commander's thumbnail (128 pixels at most, on pages of their
+  own) read as Raza starts and kept, so any can be shown at once, small,
+  while its full art's read; circles (decks under the name, the commander
+  button and its panel) are drawn from the thumbnails alone.
+- **Decks.** A seat whose profile has decks has a commander button in the
+  five-colour button's place, standing in for it: the deck it plays (the
+  one picked, else its first; a profile has no favourite) as its
+  commander's avatar circle, framed as a card. It opens a panel of the
+  profile's decks, as circles (the one played ringed), then the five-colour
+  button (its toggles opening as they always do), then a shuffle: a deck
+  touched is picked, and the seat
   takes its commander's colour identity; shuffle closes the panel, then
   flicks the button through the decks enabled for the session (all, where
   none is), slowing over about two seconds, onto one not played this

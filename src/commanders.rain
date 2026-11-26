@@ -37,6 +37,7 @@ Catalog :: struct {
     portraits:  [] Portrait
     pages:      [] string    // each page's file's name: the art's, then the thumbnails'
     thumbs_from: i64         // the first thumbnails' page
+    lower:      [] string    // each commander's name in lower case (what a search looks in)
 }
 
 catalog: Catalog
@@ -92,7 +93,9 @@ read_catalog :: (bytes: [] u8 -> read: Catalog) [bad_catalog] {
              source: ⟨i32'v[8], i32'v[9]⟩, thumb_page: art_pages + v[10], thumb_at: ⟨i32'v[11], i32'v[12]⟩,
              thumb_size: ⟨i32'v[13], i32'v[14]⟩⟩
     }
-    read = ⟨commanders, portraits, page_names, art_pages⟩
+    *lower: [cards] string in #arena
+    for c, i: commanders { lower[i] = String.to_lower(c.name) }
+    read = ⟨commanders, portraits, page_names, art_pages, lower⟩
 }
 
 // A commander by its name; absent if there's none of it.
@@ -107,9 +110,9 @@ commander_named :: (name: string -> index: i64) [absent] {
 commanders_matching :: (text: string -> found: [] i64) {
     *out: [..] i64
     query := `scratch String.to_lower(text)
-    for c, i: catalog.commanders {
+    for name, i: catalog.lower {
         `scratch {
-            if name_matches(String.to_lower(c.name), query) then out.add(i)
+            if name_matches(name, query) then out.add(i)
         }
     }
     found = out
@@ -150,6 +153,7 @@ names_match_words_and_alternatives :: () #test {
 // The pages, read as they're wanted
 
 ATLAS_PAGES_KEPT :: 24
+PAGE_LOADERS :: 4         // the threads reading pages, each the next asked for
 
 Page_State :: enum u8 { NONE; LOADING; READY; MISSING }
 
@@ -214,13 +218,12 @@ atlas_folder :: (program: string -> string) {
     return File.join_path("commanders", "atlas")
 }
 
-// The pages the loader has finished made images (a frame's), and those
+// A page the loaders have finished made an image (one a frame), and those
 // past ATLAS_PAGES_KEPT let go, the least lately drawn first.
 take_pages :: () {
     atlas_frame += 1
-    loop {
-        if job, decoded := decoded_pages.receive() { take_page(decoded) } else if empty or closed { break }
-    }
+    // (one a frame: each a big upload, several in one frame stalled it)
+    if job, decoded := decoded_pages.receive() { take_page(decoded) } else if empty or closed { }
     *ready: i64 = 0
     for page: atlas_pages { if page.state == .READY then ready += 1 }
     while ready > ATLAS_PAGES_KEPT {
@@ -237,7 +240,10 @@ take_pages :: () {
 }
 
 // A page the loader's decoded made an image (or marked missing).
+pages_taken: i64
+
 take_page :: (decoded: Decoded_Page) {
+    pages_taken += 1
     if decoded.page < 0 or decoded.page >= atlas_pages.count then return
     *page := ^atlas_pages[decoded.page]
     if decoded.bad {

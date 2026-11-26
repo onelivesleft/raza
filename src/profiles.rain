@@ -1,17 +1,17 @@
 ////////////////////////////////
 // Player profiles: a player's name and initials, the options they play
-// with, and their decks (each a commander from the catalog, one of them
-// starred). Each part has a profile button above its options button (the
-// part's profile's initials, or a person), opening a panel of the
-// profiles, each its initials in a circle, and a pencil for the profile
-// editor (profile_editor.rain). A profile is at one part at most: chosen at
+// with, and their decks (each a commander from the catalog). Each part has
+// a profile button where its colour toggles open (the part's profile's
+// initials, or a person, half there), the five-colour button beside it,
+// opening a panel of the profiles, each its initials in a circle, and a
+// pencil for the profile editor (profile_editor.rain). A profile is at one part at most: chosen at
 // another, it moves there. While it's at a part, its options are the
 // part's (turned on and off there, they're its own).
 //
-// A part whose profile has decks has a commander button beside its
-// five-colour button: the deck it's playing (the one picked, else the
-// starred one, else its first), as a circle of its commander's art. It
-// opens a panel of the profile's decks, as circles, and a shuffle button:
+// A part whose profile has decks has a commander button in its five-colour
+// button's place: the deck it's playing (the one picked, else its first),
+// as a circle of its commander's art in its frame. It opens a panel of the
+// profile's decks, as circles, the five-colour button, and a shuffle button:
 // a deck touched is picked (and the part takes its commander's colours);
 // shuffle closes the panel and flicks through the decks enabled for the
 // session (all, where none is) before landing on one not played this
@@ -39,7 +39,6 @@ Profile :: struct {
     attacks:        Attacks = STARTING_ATTACKS
     decks:          [MAX_DECKS] i32      // each a commander (its place in the catalog)
     deck_count:     i64
-    starred:        i32 = -1
     enabled:        [MAX_DECKS] bool     // enabled for this session (none: every deck)
     played:         [MAX_DECKS] bool     // played this session
 }
@@ -49,7 +48,7 @@ Profiles :: struct {
     count:        i64
     next_id:      i64 = 1
     seat:         [MAX_PLAYERS] i64 = ⟨-1, -1, -1, -1, -1, -1⟩   // the profile at each part (its place in list), or -1
-    deck:         [MAX_PLAYERS] i32 = ⟨-1, -1, -1, -1, -1, -1⟩   // the commander each part's picked, or -1 (its profile's starred)
+    deck:         [MAX_PLAYERS] i32 = ⟨-1, -1, -1, -1, -1, -1⟩   // the commander each part's picked, or -1 (its profile's first)
     game_started: i64                    // Unix seconds
     last_active:  i64
     changed:      bool                   // to be stored
@@ -132,13 +131,39 @@ set_name :: (p: *Profile, name: string) {
 }
 
 set_initials :: (p: *Profile, initials: string) {
-    p.initials_count = set_bytes(p.initials, initials)
+    p.initials_count = set_bytes(p.initials, first_characters(initials, MAX_INITIALS))
     p.own_initials = initials != ""
     if !p.own_initials {
         with scratch.rewind()
         p.initials_count = set_bytes(p.initials, `scratch initials_from(name_of(^p)))
     }
     profiles.changed = true
+}
+
+// Initials are two characters at most.
+MAX_INITIALS :: 2
+
+// How many characters (UTF-8's) a text has.
+characters :: (text: [] u8 -> count: i64) #pure {
+    count = 0
+    for c: text { if (c & 0xC0) != 0x80 then count += 1 }
+}
+
+// A text's first characters, at most n of them (a view of it).
+first_characters :: (text: string, n: i64 -> string) #pure {
+    *seen: i64 = 0
+    for c, i: text {
+        if (c & 0xC0) != 0x80 {
+            if seen == n then return text[:i]
+            seen += 1
+        }
+    }
+    return text
+}
+
+initials_are_two_characters :: () #test {
+    assert(first_characters("ABC", 2) == "AB" and first_characters("Ééx", 2) == "Éé" and first_characters("A", 2) == "A")
+    assert(characters([] u8'"Ééx") == 3)
 }
 
 // A new profile, its place in the list; -1 where there's no room.
@@ -186,7 +211,6 @@ toggle_deck :: (p: *Profile, commander: i32) {
     p.enabled[p.deck_count] = false
     p.played[p.deck_count] = false
     p.deck_count += 1
-    if p.starred < 0 then p.starred = commander
     profiles.changed = true
 }
 
@@ -199,7 +223,6 @@ remove_deck :: (p: *Profile, at: i64) {
         p.played[i] = p.played[i + 1]
     }
     p.deck_count -= 1
-    if p.starred == gone then p.starred = if p.deck_count > 0 then p.decks[0] else -1
     for *d, k: profiles.deck { if d == gone and profiles.seat[k] >= 0 and ^profiles.list[profiles.seat[k]] == ^p then d = -1 }
     profiles.changed = true
 }
@@ -212,14 +235,13 @@ profile_at :: (k: i64 -> ^Profile) {
     return ^profiles.list[index]
 }
 
-// The deck a part plays: the one it picked, else its profile's starred
-// one, else its first; -1 for none.
+// The deck a part plays: the one it picked, else its profile's first; -1
+// for none.
 seat_deck :: (k: i64 -> i32) {
     p := profile_at(k)
     if p == null or p.deck_count == 0 then return -1
     picked := profiles.deck[k]
     if picked >= 0 and deck_index(p, picked) >= 0 then return picked
-    if p.starred >= 0 and deck_index(p, p.starred) >= 0 then return p.starred
     return p.decks[0]
 }
 
@@ -318,7 +340,7 @@ sessions_are_kept :: () #test {
     toggle_deck(profiles.list[index], 7)
     profiles.seat[0] = index
     start_profile_game(1000)
-    assert(seat_deck(0) == 3, "the starred deck, the first added")
+    assert(seat_deck(0) == 3, "none picked: the first added")
     end_profile_game(4, 2000)
     assert(p.played[0] and !p.played[1], "the deck played")
     start_profile_game(2000 + SESSION_GAP - 1)
@@ -487,7 +509,6 @@ Stored_Profile :: struct {
     own_initials: bool
     attacks:      i64
     decks:        [..] string
-    starred:      string
     enabled:      [..] string
     played:       [..] string
 }
@@ -520,7 +541,7 @@ profiles_json :: (-> text: string) {
     `scratch {
         for *p: profiles.list[:profiles.count] {
             *s := Stored_Profile⟨id: p.id, name: name_of(^p), initials: initials_of(^p), own_initials: p.own_initials,
-                                 attacks: i64'p.attacks, starred: commander_name(p.starred)⟩
+                                 attacks: i64'p.attacks⟩
             for d, i: p.decks[:p.deck_count] {
                 s.decks.add(commander_name(d))
                 if p.enabled[i] then s.enabled.add(commander_name(d))
@@ -565,8 +586,6 @@ read_profiles :: (text: string -> read: Profiles) [bad_profiles] {
             p.played[p.deck_count] = has_name(s.played, name)
             p.deck_count += 1
         }
-        p.starred = find(s.starred)
-        if deck_index(^p, p.starred) < 0 then p.starred = if p.deck_count > 0 then p.decks[0] else -1
         read.list[read.count] = p
         read.count += 1
         read.next_id = Math.max(read.next_id, s.id + 1)
@@ -597,7 +616,6 @@ profiles_are_stored_and_read_back :: () #test {
         set_name(profiles.list[index], "Ann Smith")
         toggle_deck(profiles.list[index], 5)
         toggle_deck(profiles.list[index], 9)
-        profiles.list[index].starred = 9
         profiles.list[index].played[0] = true
         profiles.seat[2] = index
         profiles.deck[2] = 5
@@ -605,7 +623,7 @@ profiles_are_stored_and_read_back :: () #test {
         if back := read_profiles(text) {
             p := back.list[0]
             assert(back.count == 1 and string'p.name[:p.name_count] == "Ann Smith" and string'p.initials[:p.initials_count] == "AS", "the name and initials")
-            assert(p.deck_count == 2 and p.decks[0] == 5 and p.starred == 9 and p.played[0] and !p.played[1], "the decks")
+            assert(p.deck_count == 2 and p.decks[0] == 5 and p.played[0] and !p.played[1], "the decks")
             assert(back.seat[2] == 0 and back.deck[2] == 5 and back.seat[0] == -1, "the parts")
         }
         else if bad_profiles {
@@ -628,16 +646,18 @@ load_profiles :: (now: i64) {
     if now - profiles.last_active >= SESSION_GAP then new_session()
 }
 
-// Every profile's decks' pages asked for and kept (drawn or not this frame),
-// so their commanders are there the moment they're shown: called as Raza
-// starts, and each frame after.
+// The decks' full art asked for and kept (drawn or not this frame) only for
+// the profile the editor's open on, whose decks it shows large: every other
+// deck is drawn small, from the thumbnails, always there. (Every profile's
+// decks' pages kept was dozens of big JPEGs read and uploaded as Raza
+// started, frames stalling as each came.) Called each frame.
 keep_profile_pages :: () {
-    for *p: profiles.list[:profiles.count] {
-        for d: p.decks[:p.deck_count] {
-            if d < 0 or i64'd >= catalog.commanders.count then continue
-            c := catalog.commanders[d]
-            for face: 0 < c.images { _ := page_ready(catalog.portraits[c.first_image + face].page) }
-        }
+    if !editor.open or editor.profile < 0 or editor.profile >= profiles.count then return
+    p := ^profiles.list[editor.profile]
+    for d: p.decks[:p.deck_count] {
+        if d < 0 or i64'd >= catalog.commanders.count then continue
+        c := catalog.commanders[d]
+        for face: 0 < c.images { _ := page_ready(catalog.portraits[c.first_image + face].page) }
     }
 }
 
@@ -710,17 +730,16 @@ button_beside :: (layout: Layout, k: i64, anchor: V2, way: V2, avoid: V2 = ⟨1e
     return roomiest
 }
 
-// The profile button: above the options button, as its player sees it (or
-// the nearest place round it inside the part).
+// The profile button: where the colour toggles open (the five-colour
+// button beside it, on its right).
 profile_button_place :: (layout: Layout, k: i64 -> V2) {
-    return button_beside(layout, k, options_folded(layout, k), ⟨0, -1⟩)
+    return toggle_folded(layout, k)
 }
 
-// The commander button: beside the five-colour button, on its right as its
-// player sees it (or the nearest place round it inside the part, clear of
-// the profile button).
+// The commander button: in the five-colour button's place, standing in for
+// it (the colours are in its deck panel).
 commander_button_place :: (layout: Layout, k: i64 -> V2) {
-    return button_beside(layout, k, toggle_folded(layout, k), ⟨1, 0⟩, profile_button_place(layout, k))
+    return colour_button_place(layout, k)
 }
 
 // Every count of players, landscape and portrait, the lines as they start
@@ -756,7 +775,7 @@ has_commander_button :: (k: i64 -> bool) {
     return p != null and p.deck_count > 0
 }
 
-MAX_PANEL :: MAX_DECKS + 2
+MAX_PANEL :: MAX_DECKS + 3
 
 // A panel of count circles above a button, in its player's frame: their
 // places, the panel's middle, its half size; kept on the screen.
@@ -791,11 +810,12 @@ profile_panel :: (layout: Layout, k: i64 -> places: [MAX_PANEL] V2, middle: V2, 
     half = reach
 }
 
-// The deck panel's circles: each deck's, then the shuffle's.
+// The deck panel's circles: each deck's, then the colours' (the five-colour
+// button the commander button stands in for), then the shuffle's.
 deck_panel :: (layout: Layout, k: i64 -> places: [MAX_PANEL] V2, middle: V2, half: V2) {
     p := profile_at(k)
     decks := if p == null then 0 else p.deck_count
-    at, centre, reach := panel_places(layout, k, commander_button_place(layout, k), decks + 1)
+    at, centre, reach := panel_places(layout, k, commander_button_place(layout, k), decks + 2)
     places = at
     middle = centre
     half = reach
@@ -827,20 +847,20 @@ draw_profile_controls :: (canvas: *Draw.Canvas, layout: Layout, game: Game, font
     // (the buttons at the fixed cell; their panels at the widgets' scale)
     base := cell_of(layout)
     radius := FIVE_COLOURS_SIDE / 2 * base
+    // (the profile button half there, under the colours when they open; the
+    // commander button as the five-colour button is, framed as a card)
     button := profile_button_place(layout, k)
     p := profile_at(k)
     if p != null {
-        draw_initials(canvas, fonts.small, button, radius, seat.angle, initials_of(p), false, 0.8 * shows, base)
+        draw_initials(canvas, fonts.small, button, radius, seat.angle, initials_of(p), false, 0.5 * shows, base)
     }
     else {
-        draw_round_button(canvas, PERSON_ICON_SMALL, button, radius, seat.angle, 0.7 * shows)
+        draw_round_button(canvas, PERSON_ICON_SMALL, button, radius, seat.angle, 0.5 * shows)
     }
     if has_commander_button(k) {
         at := commander_button_place(layout, k)
         showing := if shuffles[k].active then shuffle_showing(k) else seat_deck(k)
-        canvas.fill_glow(at, radius * 1.8, Draw.rgba(0x000000, 0.3 * shows))
-        _ := draw_portrait(canvas, i64'showing, at, V2⟨radius, radius⟩ * 2, seat.angle, true, shows: shows)
-        draw_ring(canvas, at, radius, Math.max(1.5, base * 0.03), faded(COMMANDER_BRONZE, shows))
+        draw_card_circle(canvas, i64'showing, at, radius - 0.05 * base, seat.angle, 0.05 * base, base, shows)
     }
     r := TOGGLE_RADIUS * widget
     opened := Math.clamp(screen.profile_panels.shown[k], 0, 1)
@@ -862,14 +882,18 @@ draw_profile_controls :: (canvas: *Draw.Canvas, layout: Layout, game: Game, font
         places, middle, half := deck_panel(layout, k)
         draw_pane(canvas, middle, seat.angle, ⟨0, 0⟩, half * s, 0.17 * widget * s, ⟨0, 0, 0, 0⟩, kept_surfaces.kept.canvas, surfaces_kept_now, widget, alpha)
         chosen := seat_deck(k)
+        radius_now := r * (0.5 + 0.5 * s)
         for d, i: p.decks[:p.deck_count] {
             at := Math.mix(middle, places[i], s)
-            radius_now := r * (0.5 + 0.5 * s)
-            canvas.fill_glow(at, radius_now * 1.8, Draw.rgba(0x000000, 0.3 * alpha))
-            _ := draw_portrait(canvas, i64'd, at, V2⟨radius_now, radius_now⟩ * 2, seat.angle, true, shows: alpha)
-            if d == chosen then draw_ring(canvas, at, radius_now, Math.max(1.5, widget * 0.03), Draw.rgba(0xFFFFFF, alpha))
+            draw_card_circle(canvas, i64'd, at, radius_now - 0.04 * widget, seat.angle, 0.04 * widget, widget, alpha)
+            if d == chosen then draw_ring(canvas, at, radius_now + 0.03 * widget, Math.max(1.5, widget * 0.03), Draw.rgba(0xFFFFFF, alpha))
         }
-        draw_round_button(canvas, SHUFFLE_ICON, Math.mix(middle, places[p.deck_count], s), r * (0.5 + 0.5 * s), seat.angle, alpha)
+        // (then the colours, the five-colour button the commander button
+        // stands in for; then the shuffle)
+        colours_at := Math.mix(middle, places[p.deck_count], s)
+        canvas.fill_glow(colours_at, radius_now * 1.8, Draw.rgba(0x000000, 0.3 * alpha))
+        draw_five_colours(canvas, colours_at, 2 * radius_now, seat.angle, alpha, game.identity[k])
+        draw_round_button(canvas, SHUFFLE_ICON, Math.mix(middle, places[p.deck_count + 1], s), radius_now, seat.angle, alpha)
     }
 }
 
@@ -880,6 +904,7 @@ Profile_Touch :: union {
     profile: struct { seat: i64; index: i64 }
     edit: i64                    // the editor's, from a part's panel
     deck: struct { seat: i64; commander: i32 }
+    colours: i64                 // a part's deck panel's five-colour button
     shuffle: i64
     panel: i64                   // inside an open panel, on none of it
     none
@@ -903,7 +928,8 @@ profile_touch_at :: (layout: Layout, screen: Screen_State, at: V2 -> Profile_Tou
         if screen.deck_panels.open[k] and p != null {
             places, middle, half := deck_panel(layout, k)
             for d, i: p.decks[:p.deck_count] { if Math.length(at - places[i]) <= r then return Profile_Touch.deck(⟨k, d⟩) }
-            if Math.length(at - places[p.deck_count]) <= r then return Profile_Touch.shuffle(k)
+            if Math.length(at - places[p.deck_count]) <= r then return Profile_Touch.colours(k)
+            if Math.length(at - places[p.deck_count + 1]) <= r then return Profile_Touch.shuffle(k)
             local := local_of(middle, layout.seats[k].angle, at)
             if Math.abs(local.x) <= half.x and Math.abs(local.y) <= half.y then return Profile_Touch.panel(k)
         }
@@ -938,6 +964,9 @@ touch_profiles :: (screen: *Screen_State, timeline: *Timeline, game: *Game, spli
         shuffles[deck.seat] = ⟨⟩
         pick_deck(game, timeline, splits, deck.seat, deck.commander)
         fold_now(screen.deck_panels, deck.seat)
+    case colours:
+        fold_now(screen.deck_panels, colours)
+        unfold_toggles(screen.toggles, colours)
     case shuffle:
         fold_now(screen.deck_panels, shuffle)
         begin_shuffle(random, shuffle)

@@ -1535,7 +1535,7 @@ chips_are_where_their_commanders_sit :: () #test {
 hidden_buttons_take_no_touch :: () #test {
     layout := laid_out(4, LANDSCAPE)
     *screen: Screen_State
-    colours := toggle_folded(layout, 1)
+    colours := colour_button_place(layout, 1)
     options := options_folded(layout, 1)
     if shown_colours := five_colours_at(layout, screen, colours) { assert(shown_colours == 1, "its five-colour button: «shown_colours»") }
     else if absent { assert(false, "its five-colour button") }

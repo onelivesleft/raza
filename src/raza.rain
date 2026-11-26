@@ -1110,7 +1110,9 @@ draw_colours :: (canvas: *Draw.Canvas, layout: Layout, game: Game, fonts: Fonts,
     shows := player_controls_visibility(screen.drums[k], k) * screen.count_ui_visible
     if shows <= 0 then return
     places := toggles_of(layout, k)
-    hub := toggle_folded(layout, k)
+    // (they open where they always have, coming out of the five-colour
+    // button beside it, or the commander button that stands in for it)
+    hub := colour_button_place(layout, k)
     opened := Math.clamp(screen.toggles.shown[k], 0, 1)
     s := opened * opened * (3 - 2 * opened)
     r := TOGGLE_RADIUS * cell * (0.5 + 0.5 * s)
@@ -1130,6 +1132,7 @@ draw_colours :: (canvas: *Draw.Canvas, layout: Layout, game: Game, fonts: Fonts,
             }
         }
     }
+    if has_commander_button(k) then return
     side := FIVE_COLOURS_SIDE * cell_of(layout)
     canvas.fill_glow(hub, side * 0.8, Draw.rgba(0x000000, 0.3 * shows))
     draw_five_colours(canvas, hub, side, seat.angle, shows, game.identity[k])
@@ -1247,13 +1250,23 @@ toggle_at :: (layout: Layout, screen: Screen_State, p: V2 -> seat: i64, colour: 
 }
 
 // The five-colour icon at a point (shown whether its toggles are open or
-// not): its part; or absent.
+// not, unless its part's profile has decks: its commander button's there,
+// and the colours are in its deck panel): its part; or absent.
 five_colours_at :: (layout: Layout, screen: Screen_State, p: V2 -> i64) [absent] {
     reach := FIVE_COLOURS_SIDE / 2 * cell_of(layout)
     for k: 0 < layout.count {
-        if !controls_hidden(layout, screen, k) and Math.length(p - toggle_folded(layout, k)) <= reach then return k
+        if controls_hidden(layout, screen, k) or has_commander_button(k) then continue
+        if Math.length(p - colour_button_place(layout, k)) <= reach then return k
     }
     fail: absent
+}
+
+// The five-colour button's place: beside where the toggles open (whose own
+// place, toggle_folded's, the profile button takes), on its right as its
+// player sees it, or the nearest place round it inside the part. A part
+// whose profile has decks has its commander button here instead.
+colour_button_place :: (layout: Layout, k: i64 -> V2) {
+    return button_beside(layout, k, toggle_folded(layout, k), ⟨1, 0⟩)
 }
 
 // Whether a part's colour toggles and options are hidden, and so take no
@@ -3067,7 +3080,7 @@ draw_drum :: (canvas: *Draw.Canvas, layer: *Draw.Canvas, seat: Seat, fonts: Font
         return ⟨outline: Draw.rgba(0x00FF00, shows), outline_width: style.outline_width,
                 shadow: Draw.rgba(0x0000FF, style.shadow.a * shows), shadow_offset: style.shadow_offset, shadow_soft: style.shadow_soft⟩
     }
-    change_style := Draw.Text_Style⟨outline_width: Math.max(1.5, change_cap * LIFE_OUTLINE * 1.5)⟩
+    change_style := Draw.Text_Style⟨outline: Draw.rgb(0x000000), outline_width: Math.max(1.5, change_cap * LIFE_OUTLINE * 1.5)⟩
     source_height := Math.ceil((f32'DRUM_ROWS + 1) * pitch * 2)
     source_width := Math.ceil(shape.change_at + shape.change_half - shape.left + cap * 2)
     if !drum_source.prepare(⟨i32'source_width, i32'source_height⟩) then return
@@ -4971,8 +4984,8 @@ save_snapshots :: (folder: string) [failed: string] {
             }
             // Profiles: Ann's at the first part, its deck panel open; Bo's
             // at the second, its profile panel open. Then the editor on
-            // Ann's, turned to her: her decks, then choosing her favourite,
-            // then adding ("ar" found).
+            // Ann's, turned to her: her decks, then adding ("ar" found, the
+            // search taking the keys).
             {
                 saved := profiles
                 defer profiles = saved
@@ -4994,13 +5007,12 @@ save_snapshots :: (folder: string) [failed: string] {
                 panels.deck_panels.shown[0] = 1
                 open_options(panels.profile_panels, 1)
                 panels.profile_panels.shown[1] = 1
-                shots := [5] string⟨"profiles", "profile_list", "editor", "editor_favourite", "editor_add"⟩
+                shots := [4] string⟨"profiles", "profile_list", "editor", "editor_add"⟩
                 for shot, s: shots {
                     if s == 1 then open_profiles(layout, 0)
                     if s == 2 then editor.profile = ann
-                    if s == 3 then editor.choosing_star = true
-                    if s == 4 {
-                        editor.choosing_star = false
+                    if s == 3 {
+                        editor.field = .FILTER
                         editor.mode = .ADD
                         editor.filter_count = set_bytes(editor.filter, "ar")
                     }
@@ -5158,6 +5170,7 @@ Options :: struct {
     snapshot: string ⟦help: "draw each count of players into PNGs in this folder (raza_2.png to raza_6.png, and raza_grid.png), and quit"⟧
     quit_after: f64 = 0 ⟦help: "quit after this many seconds, as if Quit were pressed (to profile it: rain -profile raza.rain -quit_after:15)"⟧
     busy: bool ⟦help: "a busy table, to measure: a strike between two players every half second and two players dragging, nothing stored (with -quit_after)"⟧
+    adding: bool ⟦help: "open on the profile page, adding decks to the first profile, to measure it (with -quit_after)"⟧
 }
 
 apply_life_shortcut :: (timeline: *Timeline, game: *Game, lines: Lines, screen: *Screen_State, player: i64, delta: i32) {
@@ -5243,11 +5256,14 @@ main :: (args: [] string) [failed: string] {
     ensure_catalog()
     for _: catalog.pages { `global atlas_pages.add(⟨⟩) }
     atlas_path = `global atlas_folder(args[0])
-    *loader := thread(load_pages())
+    // (several loaders, each taking the next page asked for: the thumbnails'
+    // fourteen big pages read at once, not one after another)
+    *loaders: [PAGE_LOADERS] Thread
+    for *l: loaders { l = thread(load_pages()) }
     defer {
         page_requests.close()
         decoded_pages.close()
-        loader.join()
+        for *l: loaders { l.join() }
         release_pages()
     }
     if options.attack_frames != "" {
@@ -5345,6 +5361,7 @@ main :: (args: [] string) [failed: string] {
         if busy_frames > 1 {
             echo("after it, each frame's work «steady / f64'(busy_frames - 1) * 1000, ⟨precision: 2⟩» ms on average, «steady_slowest * 1000, ⟨precision: 2⟩» ms at most")
             echo("«f64'(busy_frames - 1) / (Time.since_launch().in_seconds() - first_shown), ⟨precision: 1⟩» frames a second after it")
+            echo("«pages_taken» pages read, of «atlas_pages.count»")
         }
     }
     *was_minimized := false
@@ -5413,9 +5430,13 @@ main :: (args: [] string) [failed: string] {
         take_pages()
         keep_thumb_pages()
         keep_profile_pages()
+        if options.adding and busy_frames == 0 and !editor.open and profiles.count > 0 {
+            open_editor(layout, 0, 0)
+            editor.mode = .ADD
+        }
         step_keys(input, w, screen, timeline, game, splits, volleys, pending)
         if editor.open {
-            step_editor(w, layout, pointers, game, timeline, splits)
+            step_editor(w, layout, fonts, pointers)
         }
         else {
             step_input(input, screen, timeline, game, splits, volleys, pending, layout, fonts, pointers, frame_start, random)

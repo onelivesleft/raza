@@ -221,6 +221,14 @@ draw_settings_split :: (canvas: *Draw.Canvas, layout: Layout, screen: Screen_Sta
 }
 
 draw :: (canvas: *Draw.Canvas, layer: *Draw.Canvas, layout: Layout, game: Game, fonts: Fonts, screen: Screen_State, volleys: Volleys = ⟨⟩) {
+    // (the profile page covers everything: only it's drawn, the table under
+    // it, its surfaces and the rest, left out)
+    if editor.open {
+        draw_editor(canvas, layout, fonts)
+        if screen.show_fps then draw_fps(canvas, layout, fonts, screen.fps)
+        if screen.brightness < 1 then canvas.fill_rect(⟨0, 0⟩, layout.size, Draw.rgba(0x000000, 1 - Math.max(screen.brightness, MIN_BRIGHTNESS)))
+        return
+    }
     cell := cell_of(layout)
     shift := count_split_offset(cell, screen.counts_shown)
     if screen.settings_shown > 0 and count_table.prepare(canvas.size) {
