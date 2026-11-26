@@ -5,3 +5,7 @@ build/
 # (the release build is tracked, so it's on GitHub; what else is there isn't)
 release/*
 !release/Raza.exe
+
+# Local Scryfall download. The compact index and atlas pages are tracked.
+/commanders/art/
+/commanders/commanders.json
