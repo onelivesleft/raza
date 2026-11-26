@@ -464,6 +464,16 @@ shuffle_showing :: (k: i64 -> i32) {
     return s.choices[s.step % Math.max(s.count, 1)]
 }
 
+// The game as it's shown: each part whose deck is shuffling in the colours
+// of the deck it's on now (the game's own are the one it lands on's).
+show_shuffling_colours :: (shown: *Game) {
+    for s, k: shuffles {
+        if !s.active or k >= shown.players then continue
+        showing := shuffle_showing(k)
+        if showing >= 0 and i64'showing < catalog.commanders.count then shown.identity[k] = catalog.commanders[showing].identity
+    }
+}
+
 // Each part's shuffle moved on; landed, its deck picked.
 step_shuffles :: (game: *Game, timeline: *Timeline, lines: Lines, seconds: f32) {
     for *s, k: shuffles {
@@ -775,16 +785,17 @@ has_commander_button :: (k: i64 -> bool) {
     return p != null and p.deck_count > 0
 }
 
-MAX_PANEL :: MAX_DECKS + 3
+MAX_PANEL :: 64                  // a panel's slots (its decks, the colours and the shuffle, the rest of its last row)
 
 // A panel of count circles above a button, in its player's frame: their
 // places, the panel's middle, its half size; kept on the screen.
+// (every slot of its rows is placed, those past count too: deck_panel's)
 panel_places :: (layout: Layout, k: i64, button: V2, count: i64 -> places: [MAX_PANEL] V2, middle: V2, half: V2) {
     places = ⟨⟩
     widget := widget_cell(layout)
     seat := layout.seats[k]
     n := Math.max(count, 1)
-    columns := Math.clamp(i64'Math.ceil(Math.sqrt(f32'n * 1.5)), 1, 8)
+    columns := panel_columns(n)
     rows := (n + columns - 1) / columns
     pitch := OPTION_PITCH * widget
     half = V2⟨f32'columns * pitch / 2 + 0.08 * widget, f32'rows * pitch / 2 + 0.08 * widget⟩
@@ -795,11 +806,16 @@ panel_places :: (layout: Layout, k: i64, button: V2, count: i64 -> places: [MAX_
     extent := V2⟨c * half.x + s * half.y, s * half.x + c * half.y⟩ + V2⟨0.1, 0.1⟩ * widget
     centre = Math.clamp(centre, extent, layout.size - extent)
     middle = centre
-    for i: 0 < Math.min(count, MAX_PANEL) {
+    for i: 0 < Math.min(rows * columns, MAX_PANEL) {
         column := f32'(i % columns) - f32'(columns - 1) / 2
         row := f32'(i / columns) - f32'(rows - 1) / 2
         places[i] = placed(centre, seat.angle, ⟨column * pitch, row * pitch⟩)
     }
+}
+
+// How many across a panel of count circles is.
+panel_columns :: (count: i64 -> i64) #pure {
+    return Math.clamp(i64'Math.ceil(Math.sqrt(f32'Math.max(count, 1) * 1.5)), 1, 8)
 }
 
 // The profile panel's circles: each profile's, then the editor's.
@@ -811,14 +827,45 @@ profile_panel :: (layout: Layout, k: i64 -> places: [MAX_PANEL] V2, middle: V2, 
 }
 
 // The deck panel's circles: each deck's, then the colours' (the five-colour
-// button the commander button stands in for), then the shuffle's.
+// button the commander button stands in for), then the shuffle's. However
+// many decks, the shuffle's in its bottom right slot and the colours just
+// left of it, the decks in the slots before them, in order.
 deck_panel :: (layout: Layout, k: i64 -> places: [MAX_PANEL] V2, middle: V2, half: V2) {
     p := profile_at(k)
     decks := if p == null then 0 else p.deck_count
-    at, centre, reach := panel_places(layout, k, commander_button_place(layout, k), decks + 2)
-    places = at
+    n := decks + 2
+    columns := panel_columns(n)
+    slots := Math.min((n + columns - 1) / columns * columns, MAX_PANEL)
+    at, centre, reach := panel_places(layout, k, commander_button_place(layout, k), n)
+    places = ⟨⟩
+    for d: 0 < decks { places[d] = at[d] }
+    places[decks] = at[slots - 2]
+    places[decks + 1] = at[slots - 1]
     middle = centre
     half = reach
+}
+
+// The shuffle in the deck panel's bottom right slot, the colours left of
+// it, whatever the count of decks.
+deck_panel_ends_bottom_right :: () #test {
+    saved := profiles
+    defer profiles = saved
+    profiles = ⟨⟩
+    index := new_profile()
+    profiles.seat[0] = index
+    layout := laid_out(4, LANDSCAPE)
+    for decks: 1 <= 13 {
+        toggle_deck(profiles.list[index], i32'decks)
+        places, middle, _ := deck_panel(layout, 0)
+        angle := layout.seats[0].angle
+        shuffle := local_of(middle, angle, places[decks + 1])
+        colours := local_of(middle, angle, places[decks])
+        for i: 0 < decks + 1 {
+            at := local_of(middle, angle, places[i])
+            assert(at.y <= shuffle.y + 0.01 and (at.y < shuffle.y - 0.01 or at.x < shuffle.x), "«decks» decks: the shuffle the bottom right")
+        }
+        assert(Math.abs(colours.y - shuffle.y) < 0.01 and colours.x < shuffle.x, "«decks» decks: the colours just left of it")
+    }
 }
 
 // A circle of initials, its face dark (lit, ringed, where it's the part's).

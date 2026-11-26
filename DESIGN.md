@@ -182,7 +182,8 @@ throws**, each colour as its own element, as damage or commander damage.
   button, half there: the seat's profile's initials, or a person where it
   has none; the five-colour button beside it, on its right (or the nearest
   place round it inside the part), the toggles coming out of it and
-  opening where they always have. It
+  opening where they always have, the button fading out as they open (and
+  back as they fold). It
   opens a panel as the options' is, each profile's initials in a circle
   (the seat's ringed) and a pencil. A profile touched goes to the seat
   (moved from any other; touched at its own seat, taken off it): the seat
@@ -249,13 +250,16 @@ throws**, each colour as its own element, as damage or commander damage.
   five-colour button's place, standing in for it: the deck it plays (the
   one picked, else its first; a profile has no favourite) as its
   commander's avatar circle, framed as a card. It opens a panel of the
-  profile's decks, as circles (the one played ringed), then the five-colour
-  button (its toggles opening as they always do), then a shuffle: a deck
-  touched is picked, and the seat
+  profile's decks, as circles (the one played ringed), the five-colour
+  button (its toggles opening as they always do) and a shuffle, the
+  shuffle in its bottom right slot and the five-colour button just left of
+  it however many decks there are: a deck touched is picked, and the seat
   takes its commander's colour identity; shuffle closes the panel, then
   flicks the button through the decks enabled for the session (all, where
-  none is), slowing over about two seconds, onto one not played this
-  session, while two or more of them haven't been (then any).
+  none is), the part's colours flicking with it (each deck's colour
+  identity, shown only: the game takes the one it lands on's), slowing over
+  about two seconds, onto one not played this session, while two or more
+  of them haven't been (then any).
 - **Sessions.** A game starts at a restart and ends at the next one (or
   as Raza closes); each seat's deck is played as its game ends. A session
   is the games each starting within two hours of the last one's end: the

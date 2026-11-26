@@ -1133,9 +1133,12 @@ draw_colours :: (canvas: *Draw.Canvas, layout: Layout, game: Game, fonts: Fonts,
         }
     }
     if has_commander_button(k) then return
+    // (the button fading out as the toggles open from it, back as they fold)
+    button_shows := shows * (1 - s)
+    if button_shows <= 0 then return
     side := FIVE_COLOURS_SIDE * cell_of(layout)
-    canvas.fill_glow(hub, side * 0.8, Draw.rgba(0x000000, 0.3 * shows))
-    draw_five_colours(canvas, hub, side, seat.angle, shows, game.identity[k])
+    canvas.fill_glow(hub, side * 0.8, Draw.rgba(0x000000, 0.3 * button_shows))
+    draw_five_colours(canvas, hub, side, seat.angle, button_shows, game.identity[k])
 }
 
 // A player's options, over everything else on the screen (draw's last): the
@@ -5499,7 +5502,10 @@ main :: (args: [] string) [failed: string] {
             }
         }
         steer_volleys(volleys, pending, seconds)
-        if !screen.previewing then shown = shown_game(game, pending, volleys)
+        if !screen.previewing {
+            shown = shown_game(game, pending, volleys)
+            show_shuffling_colours(shown)
+        }
         for *slide, k: screen.tax_slides { step_tax_slide(slide, shown.poison[k] > 0, seconds) }
 
         // The settings coming into the pill, or going; and a pending Reset
