@@ -1834,8 +1834,8 @@ drags_grow_then_ask :: () #test {
 }
 
 // A drag aimed half way into another part does some damage there; one in
-// its own part does too, toward its own life total, but not near its icon;
-// off the board, it misses.
+// its own part only over its own life total, asking how much; off the
+// board, it misses.
 aims_at_other_parts :: () #test {
     layout := laid_out(4, LANDSCAPE)
     game := new_game(4)
@@ -1848,12 +1848,16 @@ aims_at_other_parts :: () #test {
     }
     own := layout.seats[1]
     if self, paid := aim(layout, game, 1, own.middle) {
-        assert(self == 1 and damage_of(paid) > 0, "its own life: «self», «paid»")
+        assert(self == 1 and paid == Drag_Amount.asked, "its own life, asked: «self», «paid»")
     }
     else if missed {
         assert(false, "its own life total can be aimed at")
     }
     if _, _ := aim(layout, game, 1, attack_icon(layout, game, 1, .DAMAGE)) is not missed then assert(false, "at its own icon, none")
+    beside := placed(own.middle, own.angle, ⟨0, 0 - 1.2 * f32'layout.life_size⟩)
+    if _ := seat_at(layout, beside) is not absent {
+        if _, _ := aim(layout, game, 1, beside) is not missed then assert(false, "in its own part, off its life total, none")
+    }
     if _, _ := aim(layout, game, 1, V2⟨-50, -50⟩) is not missed then assert(false, "off the board, none")
 }
 

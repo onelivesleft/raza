@@ -186,25 +186,49 @@ throws**, each colour as its own element, as damage or commander damage.
   (moved from any other; touched at its own seat, taken off it): the seat
   takes its options, which are its own from then on (turned on or off
   there, the profile keeps them), and its deck's colours. The pencil opens
-  the editor on the seat's profile, a new one where it has none.
+  the profile page.
 - **The profile editor** (profile_editor.rain) covers the screen, on the
   controls' dark slate (the pill's), piped round its edge in bronze (the
   credits' tube), turned to the player who opened it (the nearest quarter
-  turn: landscape or portrait as it falls). Along its top: the name (its
-  initials made from its first two words as it's typed), the initials
-  (typed over, kept), and the buttons: add, remove, circles or
-  rectangles, and done; under the name, the profile's decks as small
-  circles (the starred one ringed; as many as fit, then how many more). A field touched takes the keyboard (Windows' touch
-  keyboard, which comes up upright to the screen); Enter, or a touch
-  elsewhere, lets it go. Below, the decks, scrolled by dragging: each
-  touched is enabled for the session (lit; where none is, every deck is,
-  and they're all shown plain), its star (top right) starring it. Adding,
-  a filter field and every commander whose name holds it (in any case),
-  as smaller rectangles of their thumbnails, those already decks lit: one
-  touched is added. Removing, the decks as rectangles, each touched taken out. A
-  rectangle is the commander's art with its name on a dark band over its
-  foot; a circle is its avatar circle, the name below it. Done, or
-  Escape, closes it. The art comes from commanders/atlas (its catalog
+  turn: landscape or portrait as it falls). It opens on the profiles, in
+  the middle: each's initials in a circle ringed in bronze, its name on a
+  plaque as tall reaching out from behind it, burnished steel piped round
+  in bronze (the credits' tube), the name etched into it, or lit gold for
+  the opening seat's profile; the one that adds a profile is alike, a plus
+  in its circle. A close (top right)
+  closes it. A profile touched opens its editor, an added one's with its
+  name taking the keyboard. Along the editor's top, left to right: the
+  avatar (the favourite deck's art; empty until the first deck is added,
+  which is the favourite; ringed in its colour identity's colours), the
+  initials in a circle ringed in bronze (touched, a field taking the keys;
+  typed over, kept; else made from the name's first two words as it's
+  typed), and the name, its field piped in bronze; top right, the list
+  (back: adding, to the decks; else to the profiles, as Escape does) and
+  close (back to the game). A field touched takes the keyboard (Windows'
+  touch keyboard, which comes up upright to the screen) and edits as UI's
+  text fields do (its Line_Edit: the caret, Shift selecting, Control by
+  words, Home and End, Control+A, C, X and V with the system's clipboard,
+  Control+Z, Control+Shift+Z); Enter, or a touch elsewhere, lets it go. Below, the decks as cards, scrolled by dragging: each touched is
+  enabled for the session (lit; where none is, every deck is, and they're
+  all shown plain); the favourite shows a filled bronze star; the avatar
+  touched shows every deck's empty star, and the deck touched then is the
+  favourite (an embossed bronze star). A deck held still shakes, harder
+  and harder, then pops, taken out. After the decks, a tile shaped as they
+  are adds one: adding, under the name the profile's decks as small
+  circles (each ringed in its colour identity's colours; wrapping onto as
+  many rows as they take), a filter field (emptied and taking the keys as
+  adding begins and as each deck's added), and every
+  commander whose name answers it (in any case: every space-separated word
+  held, of any comma-separated alternative), as smaller cards of their
+  thumbnails, those already decks lit: one touched is added, and Enter
+  adds the only one found. A deck's card is its art with its name on a
+  dark band over its foot; a found commander's, its name on its frame,
+  carried down below its art; each card is edged a pixel or two in its
+  frame, Magic's original frames' surface (the parts' own materials: each
+  colour's, gold for several, an artifact's for none) and casts a soft shadow, and a name
+  too long for its card scrolls through it as hud's statuses do (its start
+  two seconds, along to its end, its end a second and a half, quickly
+  back). The art comes from commanders/atlas (its catalog
   carried in Raza, its pages read on a thread of their own as they're
   first drawn, 24 kept at most, the profiles' decks' always), with every
   commander's thumbnail (128 pixels at most, on pages of their own) read
@@ -251,9 +275,9 @@ throws**, each colour as its own element, as damage or commander damage.
 
 A white arrow with a black outline starts just above the pressed attack
 button in its player's frame. It curves up from the button, over the table,
-and down onto the chosen victim's life total, or, dragged toward their own
-life total (past a little of the way from the button), onto it: their own
-life paid. A soft down-right shadow falls
+and down onto the chosen victim's life total, or, with the finger over the
+dragger's own life total (only there), onto it: their own life paid, the
+amount asked for by the number grid as it's let go. A soft down-right shadow falls
 over everything beneath it, including the table, controls and life counts.
 The arrow is drawn after those layers. Its shaft is 80% of an attack button's diameter. Before a victim is selected, its head points along the drag direction, away from the pressed button. It appears immediately on dragging, pointing at the finger until an eligible victim is selected. Its shadow lifts only through the arch, with both ends touching the table. The pending amount, on foil glass, sits just beyond the arrow's tip (its nearest edge a little past it, along the way the arrow points), in the attacker's frame, facing the attacker, and kept on the screen (near an edge it may overlap the arrowhead). The same label lies over the attack icon the drag began at, so it's read where the drag started too.
 Nothing else is drawn while selecting.

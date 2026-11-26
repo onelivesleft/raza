@@ -1,19 +1,32 @@
 ////////////////////////////////
-// The profile editor: over the whole screen, turned to face the player who
+// The profile page: over the whole screen, turned to face the player who
 // opened it (to the nearest quarter turn: landscape or portrait as it
-// falls), on the channel's steel. Along its top, the name (its initials
-// made from it as it's typed), the initials (typed over, they're kept),
-// then the buttons: add, remove, circles or rectangles, and done. Below,
-// the profile's decks: each touched is enabled for the session (lit; none
-// lit, every deck is), its star (top right) starring it. Adding, a filter
-// and every commander whose name holds it, those in the profile lit: one
-// touched is added, or taken out. Removing, one touched is taken out. Both
-// show the decks as rectangles, the art with the name over its foot; the
-// decks alone can be circles. The grid scrolls by dragging. A field
-// touched takes the keyboard (Windows' touch keyboard, where there's one);
-// Enter, or a touch elsewhere, lets it go. Escape, or done, closes it.
+// falls), on the controls' dark slate piped round in bronze. It opens on
+// the profiles, in the middle: each's initials in a circle ringed in
+// bronze, its name on a steel plaque piped in bronze reaching out from it
+// (etched; the opening part's profile's lit), and one that adds a profile,
+// alike; close closes it. A profile
+// touched opens its editor (one added, its editor with its name taking the
+// keys). Along the editor's top: the avatar (the favourite's art; touched,
+// every deck's star, to choose another), the initials (a circle; touched,
+// a field), the name; back and close at the right. Below, the profile's
+// decks: each touched is enabled for the session (lit; none lit, every deck
+// is), the favourite starred, and one held still shakes, then pops, taken
+// out; after them, a tile that adds one. Adding: the decks as small
+// circles, a filter, and every commander whose name answers it (words all
+// held, alternatives by commas), those in the profile lit, each named on
+// its frame carried down below its art: one touched is added (Enter adds
+// the only one found). Each card is edged in its frame's colour, as
+// Magic's original frames were (a circle, in its colour identity's
+// colours), and casts a shadow; a field edits as UI's do (Line_Edit); a
+// name too long for
+// its card scrolls through, as hud's statuses do. The grid scrolls by
+// dragging. A field touched takes the keyboard (Windows' touch keyboard,
+// where there's one); Enter, or a touch elsewhere, lets it go. Escape, or
+// back, goes back (adding, to the decks; from the decks, to the profiles;
+// from them, the page closed).
 
-Editor_Mode :: enum u8 { DECKS; ADD; REMOVE }
+Editor_Mode :: enum u8 { DECKS; ADD }
 Editor_Field :: enum u8 { NONE; NAME; INITIALS; FILTER }
 
 FILTER_BYTES :: 40
@@ -35,15 +48,219 @@ Editor :: struct {
     scroll_from: f32
     moved:    bool
     keyboard: bool              // the touch keyboard asked for
+    highlight: i64 = -1         // the profiles' list: the opening part's profile, lit (-1: none)
+    // (a deck held still: its place in the grid, and since when; -1, none)
+    held_deck: i64 = -1
+    choosing_star: bool         // the decks' stars shown (the avatar touched): one touched is the favourite
+    line:     UI.Line_Edit      // the field the keys go into: its caret, selection and history
+    held_since: f64
+    pop:      Deck_Pop          // the deck that last popped
+    // (what the grid shows, and since when: a long name's scroll starts then)
+    titles_key:  Titles_Key
+    titles_from: f64
 }
+
+// A deck popping as it's taken out: where (the editor's frame), how big, its
+// frame's colour, and since when (-1: none).
+Deck_Pop :: struct {
+    at:     V2
+    radius: f32
+    colour: Draw.RGBA
+    since:  f64 = -1
+}
+
+Titles_Key :: struct {
+    profile: i64
+    mode:    Editor_Mode
+    filter:  [FILTER_BYTES] u8
+    filter_count: i64
+}
+
+LONG_PRESS :: 0.35     // seconds a deck's held still before it shakes
+SHAKE_TIME :: 0.8      // ...and shakes before it pops
+POP_TIME   :: 0.3      // ...and pops
 
 editor: Editor
 
-// The editor opened at a part, on a profile.
-open_editor :: (layout: Layout, k: i64, index: i64) {
+// The profile page opened from a part: its profiles (profile -1), the
+// part's lit.
+open_profiles :: (layout: Layout, k: i64) {
     quarter := f32'Math.PI / 2
     angle := Math.round(layout.seats[k].angle / quarter) * quarter
-    editor = ⟨open: true, seat: k, profile: index, angle: angle⟩
+    editor = ⟨open: true, seat: k, profile: -1, angle: angle, highlight: profiles.seat[k]⟩
+}
+
+// The page opened at a part, straight to a profile's editor.
+open_editor :: (layout: Layout, k: i64, index: i64) {
+    open_profiles(layout, k)
+    editor.profile = index
+}
+
+// Back from a profile's editor to the profiles.
+leave_profile :: (w: ^Window) {
+    focus_field(w, .NONE)
+    editor.highlight = editor.profile
+    editor.profile = -1
+    editor.mode = .DECKS
+    editor.scroll = 0
+    editor.held = false
+    editor.held_deck = -1
+    editor.choosing_star = false
+    profiles.changed = true
+}
+
+// Escape on the page (or done): adding, back to the decks; from an editor,
+// back to the profiles; from them, closed.
+escape_editor :: (w: ^Window) {
+    if editor.profile >= 0 and editor.mode == .ADD {
+        focus_field(w, .NONE)
+        editor.mode = .DECKS
+        editor.scroll = 0
+    }
+    else if editor.profile >= 0 { leave_profile(w) }
+    else { close_editor(w) }
+}
+
+// The profiles' rows, in the page's frame (x, y, width, height): each
+// profile's, then the one that adds one (while there's room for another),
+// in columns centred on the page; and how many.
+LIST_ROW :: V2⟨6.0, 1.1⟩       // a row's size, in cells
+LIST_GAP :: 0.25
+
+profile_rows :: (layout: Layout -> rows: [MAX_PROFILES + 1] V4, count: i64) {
+    rows = ⟨⟩
+    cell := cell_of(layout)
+    size := editor_size(layout)
+    count = if profiles.count < MAX_PROFILES then profiles.count + 1 else profiles.count
+    margin := 0.4 * cell + 1.4 * cell       // (clear of the done button's bar, top and bottom alike)
+    gap := LIST_GAP * cell
+    pitch := LIST_ROW.y * cell + gap
+    per_column := Math.max(1, i64'((size.y - 2 * margin + gap) / pitch))
+    columns := (count + per_column - 1) / per_column
+    width := Math.min(LIST_ROW.x * cell, (size.x - 0.8 * cell - f32'(columns - 1) * 2 * gap) / f32'columns)
+    in_first := Math.min(count, per_column)
+    total := V2⟨f32'columns * width + f32'(columns - 1) * 2 * gap, f32'in_first * pitch - gap⟩
+    corner := (size - total) / 2
+    for i: 0 < count {
+        column := i / per_column
+        row := i % per_column
+        rows[i] = ⟨corner.x + f32'column * (width + 2 * gap), corner.y + f32'row * pitch, width, LIST_ROW.y * cell⟩
+    }
+}
+
+// The page's slate, piped round in bronze.
+draw_editor_background :: (canvas: *Draw.Canvas, layout: Layout, cell: f32) {
+    draw_control_panel(canvas, ⟨0, 0⟩, layout.size, 0, cell)
+    half := layout.size / 2
+    piping := Info_Panel_Params⟨V4⟨half.x, half.y, half.x, half.y⟩, V4⟨INFO_RADIUS * cell, INFO_PIPING * cell, cell * 6, 1⟩⟩
+    canvas.draw_shader_image(⟨0, 0⟩, layout.size, INFO_PANEL.code, INFO_PANEL.bindings.panel, piping, under_table_image,
+                             INFO_PANEL.bindings.steel, INFO_PANEL.bindings.filtering)
+}
+
+// A box of the editor's frame piped round in bronze (the credits' tube,
+// `piping` wide inside its edge), its corners `radius` round: burnished steel
+// inside it, or (steel false) what's under it, the tube's shadow over that.
+draw_piped :: (canvas: *Draw.Canvas, layout: Layout, box: V4, radius: f32, piping: f32, steel: bool, cell: f32) {
+    low, high := screen_box(layout, box)
+    middle := (low + high) / 2
+    half := (high - low) / 2
+    alone: f32 = if steel then 0 else 2
+    params := Info_Panel_Params⟨V4⟨middle.x, middle.y, half.x, half.y⟩, V4⟨radius, piping, cell * 6, alone⟩⟩
+    canvas.draw_shader_image(low - V2⟨2, 2⟩, high - low + V2⟨4, 4⟩, INFO_PANEL.code, INFO_PANEL.bindings.panel, params, under_table_image,
+                             INFO_PANEL.bindings.steel, INFO_PANEL.bindings.filtering)
+}
+
+// Text etched in the steel, from a baseline's start in the editor's frame:
+// dark, with a faint light edge below it.
+draw_etched_at :: (canvas: *Draw.Canvas, layout: Layout, font: Draw.Font, baseline: V2, text: string, cell: f32) {
+    canvas.draw_text(font, editor_place(layout, baseline + V2⟨0, Math.max(1, 0.012 * cell)⟩), text, Draw.rgba(0xFFFFFF, 0.45), ⟨⟩, editor.angle)
+    canvas.draw_text(font, editor_place(layout, baseline), text, Draw.rgba(0x1A1F25, 0.88), ⟨⟩, editor.angle)
+}
+
+PIPING :: 0.07     // the bronze tube round a field or circle, in cells
+
+// The profiles, each's initials and name, the opening part's lit; the row
+// to add one; and close.
+draw_profile_list :: (canvas: *Draw.Canvas, layout: Layout, fonts: Fonts) {
+    with scratch.rewind()
+    cell := cell_of(layout)
+    angle := editor.angle
+    draw_editor_background(canvas, layout, cell)
+    rows, count := profile_rows(layout)
+    for box, i: rows[:count] {
+        lit := i == editor.highlight
+        // (the initials' circle ringed in bronze, and its name's plaque
+        // reaching out from behind it, as tall: burnished steel piped round
+        // in bronze)
+        radius := 0.42 * cell
+        circle := V2⟨box.x + 0.65 * cell, box.y + box.w / 2⟩
+        at := editor_place(layout, circle)
+        plaque := V4⟨circle.x, circle.y - radius, box.x + box.z - circle.x, 2 * radius⟩
+        fill_editor_box(canvas, layout, ⟨plaque.x + 0.03 * cell, plaque.y + 0.06 * cell, plaque.z, plaque.w⟩, radius, Draw.rgba(0x000000, 0.4))
+        draw_piped(canvas, layout, plaque, radius, PIPING * cell, true, cell)
+        canvas.fill_circle(at + V2⟨0.03, 0.05⟩ * cell, radius, Draw.rgba(0x000000, 0.4))
+        canvas.fill_circle(at, radius, Draw.rgb(0x1B1F26))
+        draw_piped(canvas, layout, ⟨circle.x - radius, circle.y - radius, 2 * radius, 2 * radius⟩, radius, PIPING * cell, false, cell)
+        *name := ""
+        if i < profiles.count {
+            p := ^profiles.list[i]
+            draw_centred(canvas, fonts.label, at, angle, initials_of(p), Draw.rgb(0xFFFFFF))
+            name = if p.name_count > 0 then name_of(p) else "(no name)"
+        }
+        else {
+            draw_icon_at(canvas, ADD_ICON, at, 0.6 * cell, INK, angle)
+            name = "Add a profile"
+        }
+        // (its name etched in the steel; lit, glowing)
+        text_left := box.x + 1.35 * cell
+        fitted := `scratch fitted_text(fonts.label, name, plaque.x + plaque.z - 0.45 * cell - text_left)
+        baseline := V2⟨text_left, circle.y + f32'fonts.label.cap_height / 2⟩
+        if lit {
+            glow := Draw.Text_Style⟨shadow: Draw.rgba(0xFFC860, 0.95), shadow_offset: ⟨0, 0⟩, shadow_soft: 0.16 * cell⟩
+            canvas.draw_text(fonts.label, editor_place(layout, baseline), fitted, Draw.rgb(0xFFF4DA), glow, angle)
+        }
+        else {
+            draw_etched_at(canvas, layout, fonts.label, baseline, fitted, cell)
+        }
+    }
+    parts := editor_parts(layout)
+    close := editor_place(layout, parts.buttons[CLOSE_BUTTON])
+    canvas.fill_circle(close + V2⟨0.03, 0.05⟩ * cell, parts.button_radius, Draw.rgba(0x000000, 0.4))
+    canvas.fill_circle(close, parts.button_radius, CAPSULE)
+    draw_icon_at(canvas, CROSS_ICON, close, parts.button_radius * 1.3, INK, angle)
+}
+
+// A touch on the profiles: done closes the page; a profile opens its
+// editor; the last row adds one and opens its editor, its name taking the
+// keys.
+step_profile_list :: (w: ^Window, layout: Layout, pointers: [] Pointer) {
+    parts := editor_parts(layout)
+    rows, count := profile_rows(layout)
+    for pointer: pointers {
+        if !pointer.pressed then continue
+        local := editor_local(layout, pointer.at)
+        if Math.length(local - parts.buttons[CLOSE_BUTTON]) <= parts.button_radius * 1.15 {
+            close_editor(w)
+            return
+        }
+        for box, i: rows[:count] {
+            if !inside_box(box, local) then continue
+            if i < profiles.count {
+                editor.profile = i
+            }
+            else {
+                index := new_profile()
+                if index < 0 then return
+                editor.profile = index
+                focus_field(w, .NAME)
+            }
+            editor.mode = .DECKS
+            editor.scroll = 0
+            editor.held = false
+            editor.choosing_star = false
+            return
+        }
+    }
 }
 
 // The editor's frame: its size (the screen's, turned), and where a point of
@@ -64,23 +281,29 @@ editor_local :: (layout: Layout, at: V2 -> V2) {
 // Its parts, in its frame: the fields and buttons along its top, the filter
 // below them (adding), and the grid.
 Editor_Parts :: struct {
-    name:     V4                // x, y, width, height
+    avatar:   V4                // x, y, width, height
     initials: V4
-    decks:    V4                // the profile's decks, small circles under the name
-    buttons:  [4] V2            // add, remove, circles, done: their middles
+    name:     V4
+    decks:    V4                // the profile's decks, small circles under the name (adding; else none tall)
+    buttons:  [2] V2            // back, close (top right): their middles
     button_radius: f32
     filter:   V4
     grid:     V4
     tile:     V2                // a tile's size
+    strip:    f32               // ...the strip below its art its name's on (adding; else 0, the name over the art)
     gap:      f32
     columns:  i64
 }
 
-EDITOR_TILE :: 2.3           // a rectangle's width, in cells
-EDITOR_CIRCLE :: 1.35        // a circle's, with its name below it
-EDITOR_CIRCLE_SLOT :: 2.1    // ...and the width its name has
+EDITOR_TILE :: 2.3           // a card's width, in cells
 EDITOR_THUMB :: 1.6          // a commander's width while adding (its thumbnail's)
+EDITOR_STRIP :: 0.36         // ...and the strip below it its name's on
 EDITOR_DECK_DOT :: 0.3       // the decks under the name: each's radius, in cells
+EDITOR_DECK_PITCH :: 2.3     // ...and from one to the next, in radii
+EDITOR_BORDER: f32 : 2.0    // a card's edge, its frame's colour (pixels)
+CARD_CORNER :: 0.12          // a card's corners' radius, in cells
+BACK_BUTTON  :: 0
+CLOSE_BUTTON :: 1
 
 editor_parts :: (layout: Layout -> parts: Editor_Parts) {
     parts = ⟨⟩
@@ -90,30 +313,38 @@ editor_parts :: (layout: Layout -> parts: Editor_Parts) {
     bar := 1.0 * cell
     parts.button_radius = 0.42 * cell
     pitch := 1.05 * cell
-    for *b, i: parts.buttons { b = V2⟨size.x - margin - parts.button_radius - f32'(3 - i) * pitch, margin + bar / 2⟩ }
-    buttons_left := parts.buttons[0].x - parts.button_radius - 0.3 * cell
-    initials_width := 1.6 * cell
-    name_width := Math.max(2.5 * cell, Math.min(7 * cell, buttons_left - margin - initials_width - 0.3 * cell))
-    parts.name = ⟨margin, margin, name_width, bar⟩
-    parts.initials = ⟨margin + name_width + 0.3 * cell, margin, initials_width, bar⟩
-    parts.decks = ⟨margin, margin + bar + 0.15 * cell, size.x - 2 * margin, 2 * EDITOR_DECK_DOT * cell⟩
-    *top := parts.decks.y + parts.decks.w + 0.35 * cell
+    r := parts.button_radius
+    parts.buttons[CLOSE_BUTTON] = V2⟨size.x - margin - r, margin + bar / 2⟩
+    parts.buttons[BACK_BUTTON] = parts.buttons[CLOSE_BUTTON] - V2⟨pitch, 0⟩
+    buttons_left := parts.buttons[BACK_BUTTON].x - r - 0.3 * cell
+    // (the avatar, the initials, the name, left to right; the initials a
+    // circle, a field while they take the keys)
+    gap := 0.25 * cell
+    parts.avatar = ⟨margin, margin, bar, bar⟩
+    initials_width := if editor.field == .INITIALS then 1.6 * cell else bar
+    parts.initials = ⟨margin + bar + gap, margin, initials_width, bar⟩
+    name_left := parts.initials.x + initials_width + gap
+    name_width := Math.max(2.5 * cell, Math.min(7 * cell, buttons_left - name_left))
+    parts.name = ⟨name_left, margin, name_width, bar⟩
+    *top := margin + bar + 0.35 * cell
     if editor.mode == .ADD {
+        // (adding: the decks' circles, in as many rows as they take, then
+        // the filter, then the grid)
+        pitch_dot := EDITOR_DECK_PITCH * EDITOR_DECK_DOT * cell
+        across := Math.max(1, i64'((size.x - 2 * margin) / pitch_dot))
+        decks := if editor.profile >= 0 and editor.profile < profiles.count then profiles.list[editor.profile].deck_count else 0
+        deck_rows := Math.max(1, (decks + across - 1) / across)
+        parts.decks = ⟨margin, margin + bar + 0.15 * cell, size.x - 2 * margin, f32'(deck_rows - 1) * pitch_dot + 2 * EDITOR_DECK_DOT * cell⟩
+        top = parts.decks.y + parts.decks.w + 0.35 * cell
         parts.filter = ⟨margin, top, size.x - 2 * margin, bar⟩
         top += bar + 0.35 * cell
     }
     parts.grid = ⟨margin, top, size.x - 2 * margin, size.y - top - margin⟩
     parts.gap = 0.25 * cell
-    circles := editor_circles()
     width: f32 = if editor.mode == .ADD then EDITOR_THUMB else EDITOR_TILE
-    parts.tile = if circles then V2⟨EDITOR_CIRCLE_SLOT, EDITOR_CIRCLE + 0.45⟩ * cell else V2⟨width, width * 457 / 626⟩ * cell
+    parts.strip = if editor.mode == .ADD then EDITOR_STRIP * cell else 0
+    parts.tile = V2⟨width * cell, width * cell * 457 / 626 + parts.strip⟩
     parts.columns = Math.max(1, i64'((parts.grid.z + parts.gap) / (parts.tile.x + parts.gap)))
-}
-
-// Whether the grid shows circles: the profile's choice, and only its decks.
-editor_circles :: (-> bool) {
-    if editor.mode != .DECKS or editor.profile < 0 or editor.profile >= profiles.count then return false
-    return profiles.list[editor.profile].circles
 }
 
 // What the grid shows: the profile's decks, or (adding) the commanders the
@@ -139,6 +370,27 @@ tile_at :: (parts: Editor_Parts, i: i64 -> V2) {
     used := f32'parts.columns * parts.tile.x + f32'(parts.columns - 1) * parts.gap
     left := parts.grid.x + (parts.grid.z - used) / 2
     return V2⟨left + f32'column * (parts.tile.x + parts.gap), parts.grid.y + f32'row * (parts.tile.y + parts.gap) - editor.scroll⟩
+}
+
+// Whether the grid ends with the tile that adds a deck: showing the decks,
+// with room for another.
+shows_add_tile :: (-> bool) {
+    if editor.mode != .DECKS or editor.profile < 0 or editor.profile >= profiles.count then return false
+    return profiles.list[editor.profile].deck_count < MAX_DECKS
+}
+
+// How many tiles the grid has: its items, and the one that adds a deck.
+tile_count :: (items: i64 -> i64) {
+    return if shows_add_tile() then items + 1 else items
+}
+
+// The tile at a point of the editor's frame (-1: none).
+tile_under :: (parts: Editor_Parts, count: i64, local: V2 -> i64) {
+    for i: 0 < count {
+        top_left := tile_at(parts, i)
+        if inside_box(⟨top_left.x, top_left.y, parts.tile.x, parts.tile.y⟩, local) then return i
+    }
+    return -1
 }
 
 // How far the grid can scroll.
@@ -167,10 +419,7 @@ fitted_text :: (font: Draw.Font, text: string, width: f32 -> string) {
 }
 
 ADD_ICON     :: icon(Mdi.PLUS_CIRCLE_OUTLINE)
-REMOVE_ICON  :: icon(Mdi.MINUS_CIRCLE_OUTLINE)
-CIRCLES_ICON :: icon(Mdi.CHECKBOX_BLANK_CIRCLE_OUTLINE)
-TILES_ICON   :: icon(Mdi.RECTANGLE_OUTLINE)
-DONE_ICON    :: icon(Mdi.CHECK)
+BACK_ICON    :: icon(Mdi.FORMAT_LIST_BULLETED)
 STAR_ICON    :: icon(Mdi.STAR)
 STAR_OUTLINE_ICON :: icon(Mdi.STAR_OUTLINE)
 SEARCH_ICON  :: icon(Mdi.MAGNIFY)
@@ -184,154 +433,393 @@ fill_editor_box :: (canvas: *Draw.Canvas, layout: Layout, box: V4, radius: f32, 
     fill_turned_box(canvas, layout.centre, editor.angle, box.xy - editor_size(layout) / 2, box.zw, radius, colour)
 }
 
+// A box of the editor's frame outlined inside its edge, its corners
+// `radius` round (a card's).
+stroke_editor_box :: (canvas: *Draw.Canvas, layout: Layout, box: V4, radius: f32, width: f32, colour: Draw.RGBA) {
+    outer_low, outer_high := screen_box(layout, box)
+    half := width / 2
+    low := outer_low + V2⟨half, half⟩
+    high := outer_high - V2⟨half, half⟩
+    r := Math.clamp(radius - half, 0, Math.min(high.x - low.x, high.y - low.y) / 2)
+    canvas.draw_line(V2⟨low.x + r, low.y⟩, V2⟨high.x - r, low.y⟩, width, colour)
+    canvas.draw_line(V2⟨low.x + r, high.y⟩, V2⟨high.x - r, high.y⟩, width, colour)
+    canvas.draw_line(V2⟨low.x, low.y + r⟩, V2⟨low.x, high.y - r⟩, width, colour)
+    canvas.draw_line(V2⟨high.x, low.y + r⟩, V2⟨high.x, high.y - r⟩, width, colour)
+    if r <= 0 then return
+    // (each corner a quarter circle, from its centre)
+    centres := [4] V2⟨⟨high.x - r, low.y + r⟩, ⟨high.x - r, high.y - r⟩, ⟨low.x + r, high.y - r⟩, ⟨low.x + r, low.y + r⟩⟩
+    steps :: 8
+    for centre, k: centres {
+        for i: 0 < steps {
+            a := f32'Math.PI / 2 * (f32'k - 1 + f32'i / steps)
+            b := f32'Math.PI / 2 * (f32'k - 1 + f32'(i + 1) / steps)
+            canvas.draw_line(centre + V2⟨Math.cos(a), Math.sin(a)⟩ * r, centre + V2⟨Math.cos(b), Math.sin(b)⟩ * r, width, colour)
+        }
+    }
+}
+
+// A box of the editor's frame on the screen: its low and high corners (it's
+// turned by quarters, so it's upright there too).
+screen_box :: (layout: Layout, box: V4 -> low: V2, high: V2) {
+    a := editor_place(layout, box.xy)
+    b := editor_place(layout, box.xy + box.zw)
+    low = Math.min(a, b)
+    high = Math.max(a, b)
+}
+
+clip_screen :: (canvas: *Draw.Canvas, low: V2, high: V2) {
+    canvas.clip(⟨i32'low.x, i32'low.y⟩, ⟨i32'Math.max(0, high.x - low.x), i32'Math.max(0, high.y - low.y)⟩)
+}
+
+// A colour identity's frame colour, as Magic's original frames had it: its
+// colour's, gold for several, an artifact's for none.
+frame_colour :: (identity: Identity -> Draw.RGBA) #pure {
+    *count := 0
+    *colour := LOOKS.artifact.ground
+    for look, mana: LOOKS.colours {
+        if has_colour(identity, mana) {
+            count += 1
+            colour = look.ground
+        }
+    }
+    return if count > 1 then LOOKS.gold.ground else colour
+}
+
+commander_frame :: (commander: i64 -> Draw.RGBA) {
+    if commander < 0 or commander >= catalog.commanders.count then return LOOKS.artifact.ground
+    return frame_colour(catalog.commanders[commander].identity)
+}
+
+// A ring in a colour identity's colours (their frames'), an equal arc each
+// from the top clockwise in WUBRG's order; an artifact's for none.
+draw_identity_ring :: (canvas: *Draw.Canvas, at: V2, radius: f32, width: f32, identity: Identity) {
+    *colours: [5] Draw.RGBA
+    *n: i64 = 0
+    for look, mana: LOOKS.colours {
+        if has_colour(identity, mana) {
+            colours[n] = look.ground
+            n += 1
+        }
+    }
+    if n == 0 {
+        colours[0] = LOOKS.artifact.ground
+        n = 1
+    }
+    steps :: 60
+    for i: 0 < steps {
+        a := f32'Math.TAU * f32'i / steps - f32'Math.PI / 2
+        b := f32'Math.TAU * f32'(i + 1) / steps - f32'Math.PI / 2
+        canvas.draw_line(at + V2⟨Math.cos(a), Math.sin(a)⟩ * radius, at + V2⟨Math.cos(b), Math.sin(b)⟩ * radius, width, colours[i * n / steps])
+    }
+}
+
+commander_identity :: (commander: i64 -> Identity) {
+    if commander < 0 or commander >= catalog.commanders.count then return 0
+    return catalog.commanders[commander].identity
+}
+
+// A card as a circle, at a point of the screen: its soft shadow, its art,
+// and its edge, a ring in its colour identity's colours `edge` wide.
+draw_card_circle :: (canvas: *Draw.Canvas, commander: i64, at: V2, radius: f32, angle: f32, edge: f32) {
+    canvas.fill_glow(at + V2⟨0.08, 0.14⟩ * radius, radius * 1.3, Draw.rgba(0x000000, 0.7))
+    _ := draw_portrait(canvas, commander, at, V2⟨radius, radius⟩ * 2, angle, true)
+    draw_identity_ring(canvas, at, radius, edge, commander_identity(commander))
+}
+
+// A card as a rectangle, a box of the editor's frame: its shadow, its
+// frame (its colour identity's original surface, the parts' own: gold for
+// several colours) round it, and its art.
+// (strip: how much of its foot is the frame alone, below the art)
+draw_card_box :: (canvas: *Draw.Canvas, layout: Layout, commander: i64, box: V4, strip: f32, corner: f32, cell: f32, thumb_only: bool) {
+    b := EDITOR_BORDER
+    fill_editor_box(canvas, layout, ⟨box.x + 0.03 * cell, box.y + 0.08 * cell, box.z + 0.04 * cell, box.w + 0.04 * cell⟩, corner + 0.08 * cell, Draw.rgba(0x000000, 0.2))
+    fill_editor_box(canvas, layout, ⟨box.x + 0.02 * cell, box.y + 0.05 * cell, box.z, box.w⟩, corner + b, Draw.rgba(0x000000, 0.4))
+    low, high := screen_box(layout, ⟨box.x - b, box.y - b, box.z + 2 * b, box.w + 2 * b⟩)
+    middle := (low + high) / 2
+    half := (high - low) / 2
+    frame := Card_Frame_Params⟨V4⟨middle.x, middle.y, half.x, half.y⟩, V4⟨corner + b, f32'material_tile(commander_identity(commander)), 3 * cell, 0⟩⟩
+    canvas.draw_shader_image(low - V2⟨2, 2⟩, high - low + V2⟨4, 4⟩, CARD_FRAME.code, CARD_FRAME.bindings.frame, frame, material_image,
+                             CARD_FRAME.bindings.atlas, CARD_FRAME.bindings.filtering)
+    art := V2⟨box.z, box.w - strip⟩
+    _ := draw_portrait(canvas, commander, editor_place(layout, box.xy + art / 2), art, editor.angle, false, corner, thumb_only: thumb_only)
+}
+
+Card_Frame_Params :: struct {
+    box:  V4      // its middle, and its half size (pixels)
+    more: V4      // its corners' radius, its surface's tile in the materials (material_tile's), the pixels a repeat of it spans, then unused
+}
+
+// A card's frame: its colour's original surface (the materials' tile the
+// parts are made of), in a rounded box.
+card_frame_shade :: (from: Draw.Quad_Between, frame: Shader.Uniforms(Card_Frame_Params), atlas: Shader.Texture_2D, filtering: Shader.Sampler -> colour: V4) {
+    p := from.pixel - frame.box.xy
+    d := round_box_distance(p, frame.box.zw, frame.more.x)
+    if d > 1 then return ⟨0, 0, 0, 0⟩
+    coverage := Math.clamp(0.5 - d, 0, 1)
+    rgb := material_at(atlas, filtering, i32'frame.more.y, from.pixel / frame.more.z)
+    colour = V4⟨rgb.x, rgb.y, rgb.z, 1⟩ * coverage
+}
+
+Card_Frame :: shader { vertex: Draw.quad_place; fragment: card_frame_shade }
+CARD_FRAME :: Card_Frame(Draw.SHADER_TARGET)
+
+// A card's name, centred on a point of the editor's frame; one too long for
+// its width scrolls through it, cut to it, as hud's statuses do: its start
+// a moment, along to its end, its end a moment, then quickly back.
+TITLE_SCROLL_SPEED   :: 0.7     // cells a second
+TITLE_HOLD_START     :: 2.0     // seconds
+TITLE_HOLD_END       :: 1.5
+TITLE_REWIND_SPEEDUP :: 4.0
+
+draw_card_title :: (canvas: *Draw.Canvas, layout: Layout, font: Draw.Font, middle: V2, width: f32, text: string, colour: Draw.RGBA,
+                    grid_low: V2, grid_high: V2, now: f64) {
+    wide := f32'font.text_width(text)
+    if wide <= width {
+        draw_centred(canvas, font, editor_place(layout, middle), editor.angle, text, colour)
+        return
+    }
+    cell := cell_of(layout)
+    offset := title_scroll(wide - width, cell, now - editor.titles_from)
+    box_low, box_high := screen_box(layout, ⟨middle.x - width / 2, middle.y - 0.5 * cell, width, cell⟩)
+    clip_screen(canvas, Math.max(box_low, grid_low), Math.min(box_high, grid_high))
+    start := V2⟨middle.x - width / 2 - offset, middle.y + f32'font.cap_height / 2⟩
+    canvas.draw_text(font, editor_place(layout, start), text, colour, ⟨⟩, editor.angle)
+    clip_screen(canvas, grid_low, grid_high)
+}
+
+// How far a name too long by `overflow` pixels has scrolled, `t` seconds
+// after the grid last changed.
+title_scroll :: (overflow: f32, cell: f32, t: f64 -> f32) #pure {
+    if overflow <= 0 then return 0
+    speed := f64'(TITLE_SCROLL_SPEED * cell)
+    scroll_time := f64'overflow / speed
+    rewind_time := scroll_time / TITLE_REWIND_SPEEDUP
+    cycle := TITLE_HOLD_START + scroll_time + TITLE_HOLD_END + rewind_time
+    *s := Math.max(0, t) - Math.floor(Math.max(0, t) / cycle) * cycle
+    if s < TITLE_HOLD_START then return 0
+    s -= TITLE_HOLD_START
+    if s < scroll_time then return f32'(s * speed)
+    s -= scroll_time
+    if s < TITLE_HOLD_END then return overflow
+    s -= TITLE_HOLD_END
+    return f32'(f64'overflow * (1 - s / rewind_time))
+}
+
 // The editor drawn over everything.
 draw_editor :: (canvas: *Draw.Canvas, layout: Layout, fonts: Fonts) {
     with scratch.rewind()
-    if !editor.open or editor.profile < 0 or editor.profile >= profiles.count then return
+    if !editor.open then return
+    if editor.profile < 0 or editor.profile >= profiles.count {
+        draw_profile_list(canvas, layout, fonts)
+        return
+    }
     cell := cell_of(layout)
     p := ^profiles.list[editor.profile]
     parts := editor_parts(layout)
     angle := editor.angle
     // (on the controls' dark slate, as the pill is, piped round its edge in
     // bronze, as the credits are)
-    draw_control_panel(canvas, ⟨0, 0⟩, layout.size, 0, cell)
-    {
-        half := layout.size / 2
-        piping := Info_Panel_Params⟨V4⟨half.x, half.y, half.x, half.y⟩, V4⟨INFO_RADIUS * cell, INFO_PIPING * cell, cell * 6, 1⟩⟩
-        canvas.draw_shader_image(⟨0, 0⟩, layout.size, INFO_PANEL.code, INFO_PANEL.bindings.panel, piping, under_table_image,
-                                 INFO_PANEL.bindings.steel, INFO_PANEL.bindings.filtering)
-    }
-    // The fields: the name, the initials, and (adding) the filter.
+    draw_editor_background(canvas, layout, cell)
+    // Along the top: the avatar (the favourite's art; touched, the decks'
+    // stars, to choose another), the initials (a circle; touched, a field
+    // taking the keys), the name; and (adding) the filter.
     field :: (canvas: *Draw.Canvas, layout: Layout, fonts: Fonts, box: V4, text: string, hint: string, focused: bool, cell: f32) {
-        fill_editor_box(canvas, layout, box, 0.18 * cell, EDITOR_FIELD)
-        if focused then fill_editor_box(canvas, layout, ⟨box.x, box.y + box.w - 0.06 * cell, box.z, 0.06 * cell⟩, 0.03 * cell, EDITOR_LIT)
-        shown := if text == "" then hint else text
-        colour := if text == "" then Draw.rgba(0xFFFFFF, 0.4) else Draw.rgb(0xFFFFFF)
-        caret := if focused then "|" else ""
-        fitted := `scratch fitted_text(fonts.label, shown, box.z - 0.5 * cell)
-        width := f32'fonts.label.text_width(fitted)
-        left := V2⟨box.x + 0.25 * cell, box.y + box.w / 2 + f32'fonts.label.cap_height / 2⟩
-        canvas.draw_text(fonts.label, editor_place(layout, left), fitted, colour, ⟨⟩, editor.angle)
-        after: f32 = if text == "" then 0 else width
-        if focused then canvas.draw_text(fonts.label, editor_place(layout, left + V2⟨after, 0⟩), caret, EDITOR_LIT, ⟨⟩, editor.angle)
+        // (piped round in bronze; the keyboard's, its caret and selection,
+        // its text moved along to keep the caret in sight)
+        corner := box.w / 2
+        fill_editor_box(canvas, layout, box, corner, EDITOR_FIELD)
+        draw_piped(canvas, layout, box, corner, PIPING * cell, false, cell)
+        font := fonts.label
+        inner := V4⟨box.x + 0.3 * cell, box.y, box.z - 0.6 * cell, box.w⟩
+        baseline := box.y + box.w / 2 + f32'font.cap_height / 2
+        caret_box :: (at: f32, box: V4, cell: f32 -> V4) { return ⟨at, box.y + box.w * 0.24, 0.035 * cell, box.w * 0.52⟩ }
+        if text == "" {
+            canvas.draw_text(font, editor_place(layout, V2⟨inner.x, baseline⟩), hint, Draw.rgba(0xFFFFFF, 0.4), ⟨⟩, editor.angle)
+            if focused then fill_editor_box(canvas, layout, caret_box(inner.x, box, cell), 0, EDITOR_LIT)
+            return
+        }
+        if !focused {
+            fitted := `scratch fitted_text(font, text, inner.z)
+            canvas.draw_text(font, editor_place(layout, V2⟨inner.x, baseline⟩), fitted, Draw.rgb(0xFFFFFF), ⟨⟩, editor.angle)
+            return
+        }
+        cursor := Math.clamp(editor.line.cursor, 0, text.count)
+        from := Math.clamp(Math.min(editor.line.cursor, editor.line.anchor), 0, text.count)
+        to := Math.clamp(Math.max(editor.line.cursor, editor.line.anchor), 0, text.count)
+        caret_x := f32'font.text_width(text[:cursor])
+        offset := Math.clamp(caret_x - inner.z, 0, Math.max(0, f32'font.text_width(text) - inner.z))
+        low, high := screen_box(layout, inner)
+        clip_screen(canvas, low, high)
+        defer canvas.unclip()
+        if to > from {
+            start := inner.x - offset + f32'font.text_width(text[:from])
+            end := inner.x - offset + f32'font.text_width(text[:to])
+            fill_editor_box(canvas, layout, ⟨start, box.y + box.w * 0.2, end - start, box.w * 0.6⟩, 0, Draw.rgba(0xE8C27A, 0.38))
+        }
+        canvas.draw_text(font, editor_place(layout, V2⟨inner.x - offset, baseline⟩), text, Draw.rgb(0xFFFFFF), ⟨⟩, editor.angle)
+        fill_editor_box(canvas, layout, caret_box(inner.x - offset + caret_x, box, cell), 0, EDITOR_LIT)
+    }
+    {
+        avatar_at := editor_place(layout, parts.avatar.xy + parts.avatar.zw / 2)
+        radius := parts.avatar.w / 2
+        if p.starred >= 0 {
+            draw_card_circle(canvas, i64'p.starred, avatar_at, radius, angle, 0.07 * cell)
+        }
+        else {
+            canvas.fill_circle(avatar_at, radius, EDITOR_FIELD)
+        }
+        if editor.choosing_star then draw_ring(canvas, avatar_at, radius + EDITOR_BORDER + 0.03 * cell, 0.06 * cell, COMMANDER_BRONZE)
+    }
+    if editor.field == .INITIALS {
+        field(canvas, layout, fonts, parts.initials, initials_of(p), "AB", true, cell)
+    }
+    else {
+        initials_at := editor_place(layout, parts.initials.xy + parts.initials.zw / 2)
+        canvas.fill_circle(initials_at + V2⟨0.03, 0.05⟩ * cell, parts.initials.w / 2, Draw.rgba(0x000000, 0.4))
+        canvas.fill_circle(initials_at, parts.initials.w / 2, Draw.rgb(0x1B1F26))
+        draw_piped(canvas, layout, parts.initials, parts.initials.w / 2, PIPING * cell, false, cell)
+        draw_centred(canvas, fonts.label, initials_at, angle, initials_of(p), Draw.rgb(0xFFFFFF))
     }
     field(canvas, layout, fonts, parts.name, name_of(p), "Name", editor.field == .NAME, cell)
-    field(canvas, layout, fonts, parts.initials, initials_of(p), "AB", editor.field == .INITIALS, cell)
     if editor.mode == .ADD {
         field(canvas, layout, fonts, parts.filter, string'editor.filter[:editor.filter_count], "Find a commander", editor.field == .FILTER, cell)
     }
-    // The buttons: add, remove, circles or rectangles, done; the mode lit.
-    view_icon := if p.circles then TILES_ICON else CIRCLES_ICON
-    icons := [4] Icons.Icon⟨ADD_ICON, REMOVE_ICON, view_icon, DONE_ICON⟩
+    // The buttons: back (adding, to the decks; else to the profiles), and
+    // close (back to the game).
     for b, i: parts.buttons {
         at := editor_place(layout, b)
-        lit := (i == 0 and editor.mode == .ADD) or (i == 1 and editor.mode == .REMOVE)
         canvas.fill_circle(at + V2⟨0.03, 0.05⟩ * cell, parts.button_radius, Draw.rgba(0x000000, 0.4))
-        face := if lit then EDITOR_LIT else CAPSULE
-        canvas.fill_circle(at, parts.button_radius, face)
-        ink := if lit then Draw.rgb(0x1A1F25) else INK
-        draw_icon_at(canvas, icons[i], at, parts.button_radius * 1.3, ink, angle)
+        canvas.fill_circle(at, parts.button_radius, CAPSULE)
+        drawn := if i == BACK_BUTTON then BACK_ICON else CROSS_ICON
+        draw_icon_at(canvas, drawn, at, parts.button_radius * 1.3, INK, angle)
     }
-    // The profile's decks, small circles under the name (as many as fit,
-    // and how many more).
-    {
+    // Adding, the profile's decks, small circles under the name, wrapping
+    // onto as many rows as they take (the filter and grid below them).
+    if editor.mode == .ADD {
         dot := EDITOR_DECK_DOT * cell
-        pitch := 2.3 * dot
-        fit := Math.max(1, i64'(parts.decks.z / pitch))
-        shown := if p.deck_count > fit then fit - 1 else p.deck_count
-        for d, i: p.decks[:shown] {
-            at := editor_place(layout, parts.decks.xy + V2⟨dot + f32'i * pitch, dot⟩)
-            canvas.fill_circle(at + V2⟨0.02, 0.03⟩ * cell, dot, Draw.rgba(0x000000, 0.35))
-            _ := draw_portrait(canvas, i64'd, at, V2⟨dot, dot⟩ * 2, angle, true)
-            if p.starred == d then draw_ring(canvas, at, dot, 0.04 * cell, EDITOR_LIT)
-        }
-        if shown < p.deck_count {
-            more := `scratch "+«p.deck_count - shown»"
-            draw_centred(canvas, fonts.small, editor_place(layout, parts.decks.xy + V2⟨dot + f32'shown * pitch, dot⟩), angle, more, EDITOR_INK)
+        pitch := EDITOR_DECK_PITCH * dot
+        across := Math.max(1, i64'(parts.decks.z / pitch))
+        for d, i: p.decks[:p.deck_count] {
+            spot := V2⟨dot + f32'(i % across) * pitch, dot + f32'(i / across) * pitch⟩
+            at := editor_place(layout, parts.decks.xy + spot)
+            draw_card_circle(canvas, i64'd, at, dot, angle, 0.05 * cell)
         }
     }
-    // The grid, cut to its box.
+    // The grid, cut to its box: the cards, then (the decks) the tile that
+    // adds one.
+    now := Time.since_launch().in_seconds()
+    key := Titles_Key⟨editor.profile, editor.mode, editor.filter, editor.filter_count⟩
+    if key != editor.titles_key {
+        editor.titles_key = key
+        editor.titles_from = now
+    }
     items := `scratch editor_items()
-    editor.scroll = Math.clamp(editor.scroll, 0, most_scroll(parts, items.count))
-    *low := V2⟨1e30, 1e30⟩
-    *high := V2⟨-1e30, -1e30⟩
-    for corner: [4] V2⟨parts.grid.xy, parts.grid.xy + V2⟨parts.grid.z, 0⟩, parts.grid.xy + V2⟨0, parts.grid.w⟩, parts.grid.xy + parts.grid.zw⟩ {
-        at := editor_place(layout, corner)
-        low = Math.min(low, at)
-        high = Math.max(high, at)
-    }
-    canvas.clip(⟨i32'low.x, i32'low.y⟩, ⟨i32'(high.x - low.x), i32'(high.y - low.y)⟩)
+    count := tile_count(items.count)
+    editor.scroll = Math.clamp(editor.scroll, 0, most_scroll(parts, count))
+    grid_low, grid_high := screen_box(layout, parts.grid)
+    clip_screen(canvas, grid_low, grid_high)
     defer canvas.unclip()
-    circles := editor_circles()
     *any_enabled := false
     for e: p.enabled[:p.deck_count] { if e then any_enabled = true }
-    if items.count == 0 {
-        hint := if editor.mode == .ADD then "No commander's name has that in it" else "No decks yet: add one with +"
-        draw_centred(canvas, fonts.label, editor_place(layout, parts.grid.xy + V2⟨parts.grid.z / 2, 1.0 * cell⟩), angle, hint, Draw.rgba(0xE9E4DA, 0.7))
+    if count == 0 {
+        draw_centred(canvas, fonts.label, editor_place(layout, parts.grid.xy + V2⟨parts.grid.z / 2, 1.0 * cell⟩), angle, "No commander's name has that in it", Draw.rgba(0xE9E4DA, 0.7))
     }
-    for commander, i: items {
+    for i: 0 < count {
         top_left := tile_at(parts, i)
         if top_left.y + parts.tile.y < parts.grid.y or top_left.y > parts.grid.y + parts.grid.w then continue
+        if i == items.count {
+            draw_add_tile(canvas, layout, fonts, parts, top_left, cell)
+            continue
+        }
+        commander := items[i]
         at := deck_index(p, commander)
         in_profile := at >= 0
-        `scratch {
-            if circles {
-                radius := EDITOR_CIRCLE / 2 * cell
-                middle := top_left + V2⟨parts.tile.x / 2, radius⟩
-                screen_at := editor_place(layout, middle)
-                canvas.fill_circle(screen_at + V2⟨0.03, 0.05⟩ * cell, radius, Draw.rgba(0x000000, 0.35))
-                _ := draw_portrait(canvas, i64'commander, screen_at, V2⟨radius, radius⟩ * 2, angle, true)
-                enabled := in_profile and p.enabled[at]
-                if enabled then draw_ring(canvas, screen_at, radius, 0.06 * cell, EDITOR_LIT)
-                else if any_enabled then canvas.fill_circle(screen_at, radius, Draw.rgba(0x000000, 0.45))
-                name := fitted_text(fonts.small, commander_name(commander), parts.tile.x)
-                draw_centred(canvas, fonts.small, editor_place(layout, middle + V2⟨0, radius + 0.25 * cell⟩), angle, name, EDITOR_INK)
-                draw_star(canvas, layout, p, commander, middle + V2⟨radius * 0.72, 0 - radius * 0.72⟩, cell)
-            }
-            else {
-                middle := top_left + parts.tile / 2
-                screen_at := editor_place(layout, middle)
-                corner := 0.12 * cell
-                fill_editor_box(canvas, layout, ⟨top_left.x + 0.03 * cell, top_left.y + 0.05 * cell, parts.tile.x, parts.tile.y⟩, corner, Draw.rgba(0x000000, 0.35))
-                _ := draw_portrait(canvas, i64'commander, screen_at, parts.tile, angle, false, corner, thumb_only: editor.mode == .ADD)
-                // (the name over its foot, on a dark band)
-                band := 0.42 * cell
-                fill_editor_box(canvas, layout, ⟨top_left.x, top_left.y + parts.tile.y - band, parts.tile.x, band⟩, corner, Draw.rgba(0x000000, 0.55))
-                name := fitted_text(fonts.small, commander_name(commander), parts.tile.x - 0.2 * cell)
-                draw_centred(canvas, fonts.small, editor_place(layout, top_left + V2⟨parts.tile.x / 2, parts.tile.y - band / 2⟩), angle, name, Draw.rgb(0xFFFFFF))
-                lit := if editor.mode == .DECKS then in_profile and p.enabled[at] else editor.mode == .ADD and in_profile
-                if lit {
-                    for side: 0 < 4 {
-                        // (a lit frame: four bars round it)
-                        t := 0.06 * cell
-                        bar := if side is {
-                            case 0: V4⟨top_left.x, top_left.y, parts.tile.x, t⟩
-                            case 1: V4⟨top_left.x, top_left.y + parts.tile.y - t, parts.tile.x, t⟩
-                            case 2: V4⟨top_left.x, top_left.y, t, parts.tile.y⟩
-                            case: V4⟨top_left.x + parts.tile.x - t, top_left.y, t, parts.tile.y⟩
-                        }
-                        fill_editor_box(canvas, layout, bar, 0, EDITOR_LIT)
-                    }
-                }
-                else if editor.mode == .DECKS and any_enabled {
-                    fill_editor_box(canvas, layout, ⟨top_left.x, top_left.y, parts.tile.x, parts.tile.y⟩, corner, Draw.rgba(0x000000, 0.45))
-                }
-                if editor.mode == .REMOVE then draw_icon_at(canvas, REMOVE_ICON, screen_at, 0.7 * cell, Draw.rgba(0xFFFFFF, 0.85), angle)
-                if editor.mode == .DECKS then draw_star(canvas, layout, p, commander, top_left + V2⟨parts.tile.x - 0.3 * cell, 0.3 * cell⟩, cell)
+        // (held still, it shakes, more and more, till it pops)
+        *shift := V2⟨0, 0⟩
+        if editor.held and !editor.moved and editor.held_deck == i and editor.mode == .DECKS {
+            shake := f32'Math.clamp((now - editor.held_since - LONG_PRESS) / SHAKE_TIME, 0, 1)
+            if shake > 0 {
+                t := f32'(now - editor.held_since)
+                shift = V2⟨Math.sin(t * 71), Math.cos(t * 53)⟩ * (0.02 + 0.08 * shake) * cell
             }
         }
+        spot := top_left + shift
+        starred := editor.mode == .DECKS and p.starred == commander
+        star_shown := editor.mode == .DECKS and (starred or editor.choosing_star)
+        `scratch {
+            corner := CARD_CORNER * cell
+            box := V4⟨spot.x, spot.y, parts.tile.x, parts.tile.y⟩
+            frame := commander_frame(i64'commander)
+            draw_card_box(canvas, layout, i64'commander, box, parts.strip, corner, cell, editor.mode == .ADD)
+            name := commander_name(commander)
+            if parts.strip > 0 {
+                // (adding: the name on its frame, the edge carried down below the art)
+                draw_card_title(canvas, layout, fonts.card, spot + V2⟨parts.tile.x / 2, parts.tile.y - parts.strip / 2 + EDITOR_BORDER / 2⟩,
+                                parts.tile.x - 0.15 * cell, name, ink_on(frame), grid_low, grid_high, now)
+            }
+            else {
+                // (the name over its foot, on a dark band)
+                band := 0.34 * cell
+                fill_editor_box(canvas, layout, ⟨spot.x, spot.y + parts.tile.y - band, parts.tile.x, band⟩, corner, Draw.rgba(0x000000, 0.55))
+                draw_card_title(canvas, layout, fonts.card, spot + V2⟨parts.tile.x / 2, parts.tile.y - band / 2⟩, parts.tile.x - 0.2 * cell,
+                                name, Draw.rgb(0xFFFFFF), grid_low, grid_high, now)
+            }
+            lit := if editor.mode == .DECKS then in_profile and p.enabled[at] else in_profile
+            if lit then stroke_editor_box(canvas, layout, box, corner, 0.06 * cell, EDITOR_LIT)
+            else if editor.mode == .DECKS and any_enabled then fill_editor_box(canvas, layout, box, corner, Draw.rgba(0x000000, 0.45))
+            if star_shown then draw_star(canvas, layout, starred, spot + V2⟨parts.tile.x - 0.3 * cell, 0.3 * cell⟩, cell)
+        }
+    }
+    draw_pop(canvas, layout, cell, now)
+}
+
+// The tile after the decks that adds one: a plus, and "Add a deck".
+draw_add_tile :: (canvas: *Draw.Canvas, layout: Layout, fonts: Fonts, parts: Editor_Parts, top_left: V2, cell: f32) {
+    box := V4⟨top_left.x, top_left.y, parts.tile.x, parts.tile.y⟩
+    fill_editor_box(canvas, layout, box, CARD_CORNER * cell, Draw.rgba(0xFFFFFF, 0.06))
+    stroke_editor_box(canvas, layout, box, CARD_CORNER * cell, EDITOR_BORDER, Draw.rgba(0xE9E4DA, 0.35))
+    middle := top_left + parts.tile / 2
+    draw_icon_at(canvas, ADD_ICON, editor_place(layout, middle - V2⟨0, 0.15 * cell⟩), 0.8 * cell, EDITOR_INK, editor.angle)
+    draw_centred(canvas, fonts.card, editor_place(layout, middle + V2⟨0, 0.5 * cell⟩), editor.angle, "Add a deck", EDITOR_INK)
+}
+
+// The deck that popped, as it pops: a flash, a ring of its frame's colour
+// flung out, and sparks, fading.
+draw_pop :: (canvas: *Draw.Canvas, layout: Layout, cell: f32, now: f64) {
+    if editor.pop.since < 0 then return
+    age := f32'((now - editor.pop.since) / POP_TIME)
+    if age >= 1 or age < 0 {
+        editor.pop.since = -1
+        return
+    }
+    at := editor_place(layout, editor.pop.at)
+    r := editor.pop.radius
+    fade := 1 - age
+    canvas.fill_glow(at, r * (1 + 0.4 * age), Draw.rgba(0xFFFFFF, 0.5 * fade), 1)
+    draw_ring(canvas, at, r * (1 + 0.6 * age), 0.1 * cell * fade, faded(editor.pop.colour, fade))
+    for k: 0 < 10 {
+        a := f32'k * f32'Math.TAU / 10
+        out := V2⟨Math.cos(a), Math.sin(a)⟩ * r * (0.9 + 0.8 * age)
+        canvas.fill_circle(at + out, 0.07 * cell * fade, faded(EDITOR_INK, fade))
     }
 }
 
-// A deck's star at a point of the editor's frame: filled where it's the
-// starred one.
-draw_star :: (canvas: *Draw.Canvas, layout: Layout, p: ^Profile, commander: i32, local: V2, cell: f32) {
+// A deck's star at a point of the editor's frame: the favourite's filled
+// bronze, embossed (lit from the top left, its shadow below it to the
+// right); the rest (choosing one) empty, with a shadow to stand out.
+draw_star :: (canvas: *Draw.Canvas, layout: Layout, starred: bool, local: V2, cell: f32) {
     at := editor_place(layout, local)
-    starred := p.starred == commander
-    canvas.fill_circle(at, 0.24 * cell, Draw.rgba(0x000000, 0.5))
+    size := 0.42 * cell
+    step := Math.max(1, 0.022 * cell)
     drawn := if starred then STAR_ICON else STAR_OUTLINE_ICON
-    colour := if starred then EDITOR_LIT else Draw.rgba(0xFFFFFF, 0.85)
-    draw_icon_at(canvas, drawn, at, 0.36 * cell, colour, editor.angle)
+    draw_icon_at(canvas, drawn, at + V2⟨step, step⟩ * 1.5, size, Draw.rgba(0x000000, 0.6), editor.angle)
+    if starred {
+        draw_icon_at(canvas, drawn, at - V2⟨step, step⟩ * 0.8, size, Draw.rgba(0xFFE7C2, 0.75), editor.angle)
+        draw_icon_at(canvas, drawn, at, size, COMMANDER_BRONZE, editor.angle)
+    }
+    else {
+        draw_icon_at(canvas, drawn, at, size, Draw.rgba(0xFFFFFF, 0.9), editor.angle)
+    }
 }
 
 // The editor's input, while it's open: a finger on a field or button, a
@@ -341,38 +829,38 @@ step_editor :: (w: ^Window, layout: Layout, pointers: [] Pointer, game: *Game, t
     with scratch.rewind()
     if !editor.open then return
     if editor.profile < 0 or editor.profile >= profiles.count {
-        close_editor(w)
+        editor.profile = -1
+        step_profile_list(w, layout, pointers)
         return
     }
     cell := cell_of(layout)
     p := ^profiles.list[editor.profile]
     parts := editor_parts(layout)
-    // The keys: typed into the field that has them.
+    // The keys: into the field that has them, edited as UI's lines are
+    // (the caret and selection, words, copy, cut and paste with the
+    // system's clipboard, undo and redo).
     if editor.field != .NONE {
-        typed := w.typed
-        // (each Backspace, its repeats too)
-        *backspaces: i64 = 0
-        for e: w.events {
-            if e is key_down { if key_down.key == .BACKSPACE then backspaces += 1 }
-        }
-        if typed != "" or backspaces > 0 {
-            `scratch {
-                *text: [..] u8
-                current := if editor.field is {
-                    case .NAME: name_of(p)
-                    case .INITIALS: initials_of(p)
-                    case .FILTER: string'editor.filter[:editor.filter_count]
-                    case .NONE: ""
-                }
-                text.append([] u8'current)
-                for _: 0 < backspaces {
-                    // (a whole UTF-8 character taken off)
-                    while text.count > 0 {
-                        last := text.pop()
-                        if (last & 0xC0) != 0x80 then break
+        `scratch {
+            *text: [..] u8
+            text.append([] u8'field_text(editor.field))
+            *changed := false
+            for e: w.events {
+                if e is key_down {
+                    *pasted: [] u8
+                    if UI.line_pastes(key_down.key, key_down.modifiers) {
+                        if got := Window.clipboard_text() { pasted = [] u8'got } else if absent or os_error { }
+                    }
+                    *copied: [..] u8
+                    if editor.line.line_key(text, key_down.key, key_down.modifiers, copied, pasted) then changed = true
+                    if copied.count > 0 {
+                        if Window.set_clipboard_text(string'copied) is os_error { }
                     }
                 }
-                for c: typed { if c >= 0x20 and c != 0x7F then text.add(c) }
+            }
+            *typed: [..] u8
+            for c: w.typed { if c >= 0x20 and c != 0x7F then typed.add(c) }
+            if editor.line.line_type(text, typed) then changed = true
+            if changed {
                 if editor.field is {
                 case .NAME: set_name(profiles.list[editor.profile], string'text)
                 case .INITIALS: set_initials(profiles.list[editor.profile], string'text)
@@ -383,48 +871,73 @@ step_editor :: (w: ^Window, layout: Layout, pointers: [] Pointer, game: *Game, t
                 }
             }
         }
-        if w.keys[.ENTER].PRESSED then focus_field(w, .NONE)
+        if w.keys[.ENTER].PRESSED {
+            // (the only commander found, added: the search cleared for the next)
+            if editor.field == .FILTER and add_lone_match() {
+                clear_filter()
+                focus_field(w, .FILTER)
+            }
+            else {
+                focus_field(w, .NONE)
+            }
+        }
     }
     // A finger: on a field or a button at once; on the grid, a tap as it's
     // let go where it went down, or a drag scrolling it.
+    now := Time.since_launch().in_seconds()
     for pointer: pointers {
         local := editor_local(layout, pointer.at)
         if pointer.pressed and !editor.held {
+            if Math.length(local - (parts.avatar.xy + parts.avatar.zw / 2)) <= parts.avatar.w * 0.55 {
+                // (the avatar: the decks' stars shown, to choose the favourite)
+                focus_field(w, .NONE)
+                if p.deck_count > 0 {
+                    editor.choosing_star = editor.mode == .ADD or !editor.choosing_star
+                    editor.mode = .DECKS
+                }
+                continue
+            }
             if inside_box(parts.name, local) { focus_field(w, .NAME); continue }
             if inside_box(parts.initials, local) { focus_field(w, .INITIALS); continue }
             if editor.mode == .ADD and inside_box(parts.filter, local) { focus_field(w, .FILTER); continue }
             *button: i64 = -1
-            for b, i: parts.buttons { if Math.length(local - b) <= parts.button_radius * 1.15 then button = i }
+            for b, i: parts.buttons {
+                if Math.length(local - b) <= parts.button_radius * 1.15 then button = i
+            }
             if button >= 0 {
-                focus_field(w, .NONE)
-                if button is {
-                case 0: editor.mode = if editor.mode == .ADD then .DECKS else .ADD
-                case 1: editor.mode = if editor.mode == .REMOVE then .DECKS else .REMOVE
-                case 2:
-                    profiles.list[editor.profile].circles = !p.circles
-                    profiles.changed = true
-                case:
-                    close_editor(w)
-                    return
-                }
-                editor.scroll = 0
-                continue
+                if button == BACK_BUTTON { escape_editor(w) } else { close_editor(w) }
+                return
             }
             focus_field(w, .NONE)
             if !inside_box(parts.grid, local) then continue
-            // (held from here: let go in this same frame, it's a tap at once)
+            // (held from here: let go in this same frame, it's a tap at once;
+            // a deck held still shakes, then pops)
             editor.held = true
             editor.pointer = pointer.id
             editor.pressed = local
             editor.scroll_from = editor.scroll
             editor.moved = false
+            editor.held_deck = if editor.mode == .DECKS and !editor.choosing_star then tile_under(parts, p.deck_count, local) else -1
+            editor.held_since = now
         }
         if !editor.held or pointer.id != editor.pointer then continue
         if Math.abs(local.y - editor.pressed.y) > 0.15 * cell then editor.moved = true
         if editor.moved then editor.scroll = editor.scroll_from - (local.y - editor.pressed.y)
         if pointer.released {
             editor.held = false
-            if !editor.moved then tap_tile(parts, p, editor.pressed, game, timeline, lines, cell)
+            long := editor.held_deck >= 0 and now - editor.held_since >= LONG_PRESS
+            editor.held_deck = -1
+            if !editor.moved and !long {
+                // (adding begun, or a deck added: the search cleared and
+                // taking the keys, for the next)
+                was := editor.mode
+                decks := p.deck_count
+                tap_tile(parts, p, editor.pressed)
+                if (was == .DECKS and editor.mode == .ADD) or (editor.mode == .ADD and p.deck_count > decks) {
+                    clear_filter()
+                    focus_field(w, .FILTER)
+                }
+            }
         }
     }
     // (a finger gone with no release seen: let go)
@@ -433,39 +946,92 @@ step_editor :: (w: ^Window, layout: Layout, pointers: [] Pointer, game: *Game, t
         for pointer: pointers { if pointer.id == editor.pointer then still = true }
         if !still then editor.held = false
     }
-}
-
-// A tile tapped: as the mode says.
-tap_tile :: (parts: Editor_Parts, p: ^Profile, local: V2, game: *Game, timeline: *Timeline, lines: Lines, cell: f32) {
-    with scratch.rewind()
-    items := `scratch editor_items()
-    for commander, i: items {
-        top_left := tile_at(parts, i)
-        if !inside_box(⟨top_left.x, top_left.y, parts.tile.x, parts.tile.y⟩, local) then continue
-        *profile := profiles.list[editor.profile]
-        at := deck_index(p, commander)
-        if editor.mode is {
-        case .ADD: if at < 0 then toggle_deck(profile, commander)
-        case .REMOVE: remove_deck(profile, at)
-        case .DECKS:
-            // (its star, or the rest of it)
-            star := if editor_circles() then top_left + V2⟨parts.tile.x / 2 + EDITOR_CIRCLE / 2 * cell * 0.72, EDITOR_CIRCLE / 2 * cell * 0.28⟩
-                    else top_left + V2⟨parts.tile.x - 0.3 * cell, 0.3 * cell⟩
-            if Math.length(local - star) <= 0.32 * cell {
-                profile.starred = commander
-            }
-            else if at >= 0 {
-                profile.enabled[at] = !profile.enabled[at]
-            }
-            profiles.changed = true
-        }
-        return
+    if editor.held and !editor.moved and editor.held_deck >= 0 and now - editor.held_since >= LONG_PRESS + SHAKE_TIME {
+        pop_deck(parts, now, cell)
     }
 }
 
-// The field the keys go into (none: the keyboard let go).
+// A tile tapped. Showing the decks: one enabled for the session, or
+// (choosing) made the favourite; the tile after them, adding. Adding: the
+// commander added.
+tap_tile :: (parts: Editor_Parts, p: ^Profile, local: V2) {
+    with scratch.rewind()
+    items := `scratch editor_items()
+    i := tile_under(parts, tile_count(items.count), local)
+    if i < 0 then return
+    if i == items.count {
+        editor.mode = .ADD
+        editor.choosing_star = false
+        editor.scroll = 0
+        return
+    }
+    // (the profile itself changed, in the list: never a copy of it)
+    index := editor.profile
+    commander := items[i]
+    at := deck_index(p, commander)
+    if editor.mode is {
+    case .ADD: if at < 0 then toggle_deck(profiles.list[index], commander)
+    case .DECKS:
+        if editor.choosing_star {
+            profiles.list[index].starred = commander
+            editor.choosing_star = false
+        }
+        else if at >= 0 {
+            profiles.list[index].enabled[at] = !profiles.list[index].enabled[at]
+        }
+        profiles.changed = true
+    }
+}
+
+// Adding, with one commander found: it's added (Enter, in the filter).
+// Whether it was.
+add_lone_match :: (-> bool) {
+    with scratch.rewind()
+    if editor.mode != .ADD or editor.profile < 0 or editor.profile >= profiles.count then return false
+    found := `scratch editor_items()
+    if found.count != 1 or deck_index(^profiles.list[editor.profile], found[0]) >= 0 then return false
+    toggle_deck(profiles.list[editor.profile], found[0])
+    return true
+}
+
+// The deck held still long enough, taken out: it pops.
+pop_deck :: (parts: Editor_Parts, now: f64, cell: f32) {
+    deck := editor.held_deck
+    editor.held = false
+    editor.held_deck = -1
+    if editor.profile < 0 or editor.profile >= profiles.count then return
+    index := editor.profile
+    if deck < 0 or deck >= profiles.list[index].deck_count then return
+    commander := profiles.list[index].decks[deck]
+    top_left := tile_at(parts, deck)
+    editor.pop = ⟨at: top_left + parts.tile / 2, radius: parts.tile.y / 2, colour: commander_frame(i64'commander), since: now⟩
+    remove_deck(profiles.list[index], deck)
+    if profiles.list[index].deck_count == 0 then editor.choosing_star = false
+}
+
+// A field's text, as it is.
+field_text :: (field: Editor_Field -> string) {
+    if editor.profile < 0 or editor.profile >= profiles.count then return ""
+    p := ^profiles.list[editor.profile]
+    return if field is {
+        case .NAME: name_of(p)
+        case .INITIALS: initials_of(p)
+        case .FILTER: string'editor.filter[:editor.filter_count]
+        case .NONE: ""
+    }
+}
+
+// The search emptied (every commander found again).
+clear_filter :: () {
+    editor.filter_count = 0
+    editor.scroll = 0
+}
+
+// The field the keys go into (none: the keyboard let go), its caret at its
+// end and its history begun again.
 focus_field :: (w: ^Window, field: Editor_Field) {
     editor.field = field
+    editor.line.line_reset([] u8'field_text(field))
     want := field != .NONE
     if want != editor.keyboard {
         editor.keyboard = want
@@ -477,6 +1043,104 @@ close_editor :: (w: ^Window) {
     focus_field(w, .NONE)
     editor.open = false
     profiles.changed = true
+}
+
+// A commander touched while adding is added to the profile (the profile in
+// the list, not a copy of it); touched again, it stays; removing takes it out.
+tapping_adds_decks :: () #test {
+    with scratch.rewind()
+    ensure_catalog()
+    saved := profiles
+    defer profiles = saved
+    saved_editor := editor
+    defer editor = saved_editor
+    profiles = ⟨⟩
+    index := new_profile()
+    layout := laid_out(4, LANDSCAPE)
+    editor = ⟨open: true, profile: index, mode: .ADD⟩
+    editor.filter_count = set_bytes(editor.filter, "Aang and Katara")
+    parts := editor_parts(layout)
+    middle := tile_at(parts, 0) + parts.tile / 2
+    cell := cell_of(layout)
+    tap_tile(parts, ^profiles.list[index], middle)
+    p := profiles.list[index]
+    assert(p.deck_count == 1 and commander_name(p.decks[0]) == "Aang and Katara", "added: «p.deck_count» decks")
+    assert(p.starred == p.decks[0], "the first deck added is the favourite (the avatar)")
+    tap_tile(parts, ^profiles.list[index], middle)
+    assert(profiles.list[index].deck_count == 1, "touched again, still one")
+    // (a search with one commander found: Enter adds it)
+    editor.filter_count = set_bytes(editor.filter, "krenko mob")
+    assert(add_lone_match() and profiles.list[index].deck_count == 2, "the one found, added")
+    assert(!add_lone_match(), "already a deck")
+    // (adding: the name on a strip below the art)
+    assert(parts.strip > 0)
+    // (the decks: the tile after them adds one)
+    editor.mode = .DECKS
+    decks := editor_parts(layout)
+    tap_tile(decks, ^profiles.list[index], tile_at(decks, 2) + decks.tile / 2)
+    assert(editor.mode == .ADD, "the tile after the decks adds one")
+    // (held still long enough, it pops)
+    editor.mode = .DECKS
+    editor.held = true
+    editor.held_deck = 0
+    pop_deck(decks, 5.0, cell)
+    assert(profiles.list[index].deck_count == 1 and editor.pop.since == 5.0 and !editor.held, "popped")
+}
+
+// The avatar touched shows the stars: a deck touched then is the favourite.
+choosing_the_favourite :: () #test {
+    saved := profiles
+    defer profiles = saved
+    saved_editor := editor
+    defer editor = saved_editor
+    profiles = ⟨⟩
+    index := new_profile()
+    for c: 0 < 3 { toggle_deck(profiles.list[index], i32'c) }
+    layout := laid_out(4, LANDSCAPE)
+    editor = ⟨open: true, profile: index, choosing_star: true⟩
+    parts := editor_parts(layout)
+    tap_tile(parts, ^profiles.list[index], tile_at(parts, 2) + parts.tile / 2)
+    assert(profiles.list[index].starred == 2 and !editor.choosing_star, "the third the favourite")
+    tap_tile(parts, ^profiles.list[index], tile_at(parts, 1) + parts.tile / 2)
+    assert(profiles.list[index].starred == 2 and profiles.list[index].enabled[1], "not choosing: touched, enabled")
+}
+
+// A name too long for its card shows its start, scrolls to its end, waits,
+// then comes back, over and over.
+titles_scroll_as_hud_does :: () #test {
+    cell: f32 = 100
+    assert(title_scroll(0, cell, 10) == 0)
+    assert(title_scroll(140, cell, 1) == 0, "its start a moment")
+    along := title_scroll(140, cell, TITLE_HOLD_START + 1)
+    assert(Math.abs(along - TITLE_SCROLL_SPEED * cell) < 0.01, "along at its speed: «along»")
+    assert(title_scroll(140, cell, TITLE_HOLD_START + 2 + 0.5) == 140, "its end a moment")
+    cycle := TITLE_HOLD_START + 2 + TITLE_HOLD_END + 2 / TITLE_REWIND_SPEEDUP
+    assert(title_scroll(140, cell, cycle + 0.5) == 0, "round again")
+}
+
+// The decks under the name (adding) wrap: a profile with more than fit
+// across takes another row, and the grid starts below it. Showing the decks,
+// there are none: the grid starts under the name.
+deck_circles_wrap :: () #test {
+    saved := profiles
+    defer profiles = saved
+    saved_editor := editor
+    defer editor = saved_editor
+    profiles = ⟨⟩
+    index := new_profile()
+    layout := laid_out(4, LANDSCAPE)
+    editor = ⟨open: true, profile: index⟩
+    showing := editor_parts(layout)
+    assert(showing.decks.w == 0 and showing.grid.y < showing.name.y + showing.name.w + cell_of(layout), "no circles showing the decks")
+    editor.mode = .ADD
+    few := editor_parts(layout)
+    for c: 0 < MAX_DECKS { toggle_deck(profiles.list[index], i32'c) }
+    many := editor_parts(layout)
+    pitch := EDITOR_DECK_PITCH * EDITOR_DECK_DOT * cell_of(layout)
+    across := i64'(many.decks.z / pitch)
+    rows := (MAX_DECKS + across - 1) / across
+    assert(rows >= 2 and many.decks.w > few.decks.w + pitch * 0.9, "«MAX_DECKS» decks: «rows» rows, «many.decks.w» tall")
+    assert(many.grid.y > few.grid.y + pitch * 0.9, "the grid below them")
 }
 
 editor_tiles_fill_its_width :: () #test {

@@ -42,7 +42,6 @@ Profile :: struct {
     starred:        i32 = -1
     enabled:        [MAX_DECKS] bool     // enabled for this session (none: every deck)
     played:         [MAX_DECKS] bool     // played this session
-    circles:        bool                 // its decks shown as circles in the editor (else as rectangles)
 }
 
 Profiles :: struct {
@@ -491,7 +490,6 @@ Stored_Profile :: struct {
     starred:      string
     enabled:      [..] string
     played:       [..] string
-    circles:      bool
 }
 
 Stored_Profiles :: struct {
@@ -522,7 +520,7 @@ profiles_json :: (-> text: string) {
     `scratch {
         for *p: profiles.list[:profiles.count] {
             *s := Stored_Profile⟨id: p.id, name: name_of(^p), initials: initials_of(^p), own_initials: p.own_initials,
-                                 attacks: i64'p.attacks, starred: commander_name(p.starred), circles: p.circles⟩
+                                 attacks: i64'p.attacks, starred: commander_name(p.starred)⟩
             for d, i: p.decks[:p.deck_count] {
                 s.decks.add(commander_name(d))
                 if p.enabled[i] then s.enabled.add(commander_name(d))
@@ -556,7 +554,7 @@ read_profiles :: (text: string -> read: Profiles) [bad_profiles] {
         return -1
     }
     for s: stored.profiles[:Math.min(stored.profiles.count, MAX_PROFILES)] {
-        *p := Profile⟨id: s.id, own_initials: s.own_initials, attacks: Attacks's.attacks, circles: s.circles⟩
+        *p := Profile⟨id: s.id, own_initials: s.own_initials, attacks: Attacks's.attacks⟩
         p.name_count = set_bytes(p.name, s.name)
         p.initials_count = set_bytes(p.initials, s.initials)
         for name: s.decks {
@@ -935,13 +933,7 @@ touch_profiles :: (screen: *Screen_State, timeline: *Timeline, game: *Game, spli
         fold_now(screen.profile_panels, profile.seat)
     case edit:
         fold_now(screen.profile_panels, edit)
-        *index := profiles.seat[edit]
-        if index < 0 {
-            index = new_profile()
-            if index < 0 then return true
-            choose_profile(game, timeline, splits, edit, index)
-        }
-        open_editor(layout, edit, index)
+        open_profiles(layout, edit)
     case deck:
         shuffles[deck.seat] = ⟨⟩
         pick_deck(game, timeline, splits, deck.seat, deck.commander)

@@ -101,21 +101,49 @@ commander_named :: (name: string -> index: i64) [absent] {
     fail: absent
 }
 
-// The commanders whose names hold the text (in any case), in the catalog's
-// order (by name), in the current arena; all of them for no text.
+// The commanders whose names answer the text (in any case, name_matches'),
+// in the catalog's order (by name), in the current arena; all of them for
+// no words.
 commanders_matching :: (text: string -> found: [] i64) {
     *out: [..] i64
-    needle := `scratch String.to_lower(String.trim(text))
+    query := `scratch String.to_lower(text)
     for c, i: catalog.commanders {
-        if needle == "" {
-            out.add(i)
-            continue
-        }
         `scratch {
-            if _ := String.first_index(String.to_lower(c.name), needle) is not absent then out.add(i)
+            if name_matches(String.to_lower(c.name), query) then out.add(i)
         }
     }
     found = out
+}
+
+// Whether a name answers a query: any of its comma-separated alternatives,
+// each of whose space-separated words the name holds ("elf king, atraxa":
+// a name with both "elf" and "king" in it, or one with "atraxa"). A query
+// with no words answers every name.
+name_matches :: (name: string, query: string -> bool) {
+    *any_words := false
+    for alternative: String.split(query, ",") {
+        *words := 0
+        *all := true
+        for word: String.split(alternative, " ") {
+            if word == "" then continue
+            words += 1
+            if _ := String.first_index(name, word) is absent { all = false }
+        }
+        if words == 0 then continue
+        any_words = true
+        if all then return true
+    }
+    return !any_words
+}
+
+names_match_words_and_alternatives :: () #test {
+    assert(name_matches("krenko, mob boss", ""))
+    assert(name_matches("krenko, mob boss", " , "), "no words: every name")
+    assert(name_matches("krenko, mob boss", "mob krenko"), "every word, in any order")
+    assert(!name_matches("krenko, mob boss", "mob atraxa"), "not every word")
+    assert(name_matches("atraxa, praetors' voice", "mob krenko, atraxa"), "one alternative")
+    assert(!name_matches("edgar markov", "mob krenko, atraxa"), "neither")
+    assert(!name_matches("edgar markov", "zzz,  "), "an empty alternative adds nothing")
 }
 
 ////////////////////////////////

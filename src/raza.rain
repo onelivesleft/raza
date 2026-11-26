@@ -51,6 +51,7 @@ Raza :: program {
 #import File
 #import String
 #import Json
+#import UI
 #include "icons/icons.rain"
 
 #include "layout.rain"
@@ -1308,6 +1309,7 @@ Fonts :: struct {
     change:    Draw.Font         // a life drum's change, DRUM_CHANGE of the life's size
     title:     Draw.Font         // the credits' name, large
     credits:   Draw.Font         // the credits' lines
+    card:      Draw.Font         // a card's name, on the profile page
     widget:    Widget_Fonts      // the players' widgets' (attack, commander_badge, mana, option_badge and small at widget_cell's size)
 }
 
@@ -1456,6 +1458,7 @@ load_fonts :: (family: string, layout: Layout -> fonts: Fonts) [os_error: Draw.D
     if widget := load_widget_fonts(family, layout) { fonts.widget = widget } else if os_error { fail: os_error }
     if title := Draw.load_font(family, i32'(cell * 2.6), 600) { fonts.title = title } else if os_error { fail: os_error }
     if credits := Draw.load_font(family, i32'(cell * 0.36), 500) { fonts.credits = credits } else if os_error { fail: os_error }
+    if card := Draw.load_font(family, i32'(cell * 0.22), 600) { fonts.card = card } else if os_error { fail: os_error }
 }
 
 // The fonts made again, for a new layout.
@@ -1472,6 +1475,7 @@ reload_fonts :: (fonts: *Fonts, family: string, layout: Layout) [os_error: Draw.
     fonts.change.destroy()
     fonts.title.destroy()
     fonts.credits.destroy()
+    fonts.card.destroy()
     destroy_widget_fonts(fonts.widget)
     if loaded := load_fonts(family, layout) { fonts = loaded } else if os_error { fail: os_error }
 }
@@ -1700,22 +1704,39 @@ entry_point :: (from: V2, to: V2, points: [] V2 -> V2) #pure {
 // What a drag from a player's icon to a point does: the player whose part
 // it's in, and how far along the source-to-life line, starting at its
 // crossing into the target. Sideways motion does not change the damage.
-// A player's own part can be aimed at too (their own life: a pain land, a
-// spell's cost), from their icon toward their life total, once the finger's
-// SELF_AIM_FROM of the way there (so a drag let go near the icon is none).
-SELF_AIM_FROM :: 0.15
+// A player's own life total can be aimed at too (their own life: a pain
+// land, a spell's cost), only with the finger over it (on_own_life's), its
+// amount then asked for (the number grid, as past another's life total).
 aim :: (layout: Layout, game: Game, from: i64, at: V2, kind: Attack = .DAMAGE -> to: i64, amount: Drag_Amount) [missed] {
     to = -1
     amount = Drag_Amount.damage(1)
     if target := seat_at(layout, at) is absent then fail: missed
     if is_out(game, target) then fail: missed
+    if target == from {
+        if !on_own_life(layout, game, from, at) then fail: missed
+        to = from
+        amount = Drag_Amount.asked
+        return
+    }
     seat := layout.seats[target]
     entry := entry_point(layout.seats[from].icon, seat.middle, seat.outline[:seat.count])
     axis := seat.middle - entry
     share := Math.dot(at - entry, axis) / Math.max(Math.dot(axis, axis), 1)
-    if target == from and share < SELF_AIM_FROM then fail: missed
     to = target
     amount = amount_for(share, kind)
+}
+
+// Whether a point is over a player's life total (its digits' place, as
+// life_at's, from the life font's size: two digits at least, a little past
+// them).
+on_own_life :: (layout: Layout, game: Game, k: i64, at: V2 -> bool) #pure {
+    seat := layout.seats[k]
+    size := f32'layout.life_size
+    cap := size * LIFE_CAP_SHARE
+    digits := f32'Math.max(digits_in(game.life[k]), 2)
+    half := Math.max(digits * size * LIFE_DIGIT_SHARE / 2, cap * 0.6) + cap * 0.25
+    l := local_of(seat.middle, seat.angle, at)
+    return Math.abs(l.x) <= half and Math.abs(l.y) <= cap * 0.85
 }
 
 // The number grid, asked for by a drag let go past the life total along
@@ -4370,7 +4391,7 @@ INFO_PADDING :: 0.75
 
 Info_Panel_Params :: struct {
     box:  V4      // its middle, and its half size (pixels)
-    more: V4      // its corners' radius, its piping's width, the steel's scale (pixels), and 1 for the piping alone (its shadow over what's under it)
+    more: V4      // its corners' radius, its piping's width, the steel's scale (pixels), and 1 for the piping alone round a screen (its shadow over what's under it, black past it), 2 the piping alone round something (nothing past it)
 }
 
 // The panel: the channel's brushed steel inside a round bronze tube (lit
@@ -4380,7 +4401,14 @@ info_panel_shade :: (from: Draw.Quad_Between, panel: Shader.Uniforms(Info_Panel_
     p := from.pixel - panel.box.xy
     radius := panel.more.x
     d := round_box_distance(p, panel.box.zw, radius)
-    if d > 1 then return ⟨0, 0, 0, 0⟩
+    // (the piping alone, round a screen: black past it, so its corners are
+    // the screen's black)
+    piping_alone := panel.more.w > 0.5
+    black_past := piping_alone and panel.more.w < 1.5
+    if d > 1 {
+        if black_past then return ⟨0, 0, 0, 1⟩
+        return ⟨0, 0, 0, 0⟩
+    }
     coverage := Math.clamp(0.5 - d, 0, 1)
     width := panel.more.y
     *rgb := control_material(steel, filtering, from.pixel / panel.more.z) * 1.06
@@ -4389,7 +4417,7 @@ info_panel_shade :: (from: Draw.Quad_Between, panel: Shader.Uniforms(Info_Panel_
     shadow := 0.45 * Math.exp(0 - Math.pow(Math.max(within, 0) / Math.max(width * 0.6, 1), 2))
     rgb = rgb * (1 - shadow)
     // (the piping alone: inside it, only its shadow, over what's there)
-    if panel.more.w > 0.5 and d <= 0 - width - 0.5 then return V4⟨0, 0, 0, shadow * coverage⟩
+    if piping_alone and d <= 0 - width - 0.5 then return V4⟨0, 0, 0, shadow * coverage⟩
     if d > 0 - width {
         gx := round_box_distance(p + V2⟨0.5, 0⟩, panel.box.zw, radius) - round_box_distance(p - V2⟨0.5, 0⟩, panel.box.zw, radius)
         gy := round_box_distance(p + V2⟨0, 0.5⟩, panel.box.zw, radius) - round_box_distance(p - V2⟨0, 0.5⟩, panel.box.zw, radius)
@@ -4403,6 +4431,9 @@ info_panel_shade :: (from: Draw.Quad_Between, panel: Shader.Uniforms(Info_Panel_
         tube := V3⟨0.55, 0.37, 0.19⟩ * (0.32 + 0.78 * diffuse) + V3⟨1.0, 0.86, 0.62⟩ * (shine * 0.7)
         rgb = Math.mix(rgb, tube, Math.clamp(d + width + 0.5, 0, 1))
     }
+    // (its outer edge fading to black, not to what's under it, piped alone
+    // round a screen)
+    if black_past then return V4⟨rgb.x * coverage, rgb.y * coverage, rgb.z * coverage, 1⟩
     colour = V4⟨rgb.x, rgb.y, rgb.z, 1⟩ * coverage
 }
 
@@ -4940,8 +4971,8 @@ save_snapshots :: (folder: string) [failed: string] {
             }
             // Profiles: Ann's at the first part, its deck panel open; Bo's
             // at the second, its profile panel open. Then the editor on
-            // Ann's, turned to her: her decks, as rectangles and as
-            // circles, then adding ("ar" found).
+            // Ann's, turned to her: her decks, then choosing her favourite,
+            // then adding ("ar" found).
             {
                 saved := profiles
                 defer profiles = saved
@@ -4963,11 +4994,13 @@ save_snapshots :: (folder: string) [failed: string] {
                 panels.deck_panels.shown[0] = 1
                 open_options(panels.profile_panels, 1)
                 panels.profile_panels.shown[1] = 1
-                shots := [4] string⟨"profiles", "editor", "editor_circles", "editor_add"⟩
+                shots := [5] string⟨"profiles", "profile_list", "editor", "editor_favourite", "editor_add"⟩
                 for shot, s: shots {
-                    if s == 1 then open_editor(layout, 0, ann)
-                    if s == 2 then profiles.list[ann].circles = true
-                    if s == 3 {
+                    if s == 1 then open_profiles(layout, 0)
+                    if s == 2 then editor.profile = ann
+                    if s == 3 then editor.choosing_star = true
+                    if s == 4 {
+                        editor.choosing_star = false
                         editor.mode = .ADD
                         editor.filter_count = set_bytes(editor.filter, "ar")
                     }

@@ -141,7 +141,7 @@ step_keys :: (input: *Input, w: ^Window, screen: *Screen_State, timeline: *Timel
         }
     }
     if w.keys[.ESCAPE].PRESSED {
-        if editor.open { close_editor(w) }
+        if editor.open { escape_editor(w) }
         else if !escape_overlay(screen) and w.is_fullscreen then w.set_fullscreen(false)
     }
     if w.modifiers.CONTROL and (w.keys[.Z].PRESSED or w.keys[.Y].PRESSED) {
